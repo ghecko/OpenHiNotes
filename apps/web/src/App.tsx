@@ -6,23 +6,35 @@ import { Recordings } from '@/pages/Recordings';
 import { Transcription } from '@/pages/Transcription';
 import { Settings } from '@/pages/Settings';
 import { useAppStore } from '@/store/useAppStore';
-import { geminiService } from '@/services/geminiService';
+import { transcriptionService } from '@/services/transcriptionService';
 
 function App() {
-  const { settings, setError } = useAppStore();
+  const { settings } = useAppStore();
 
   useEffect(() => {
-    // Initialize Gemini service if API key is available
-    if (settings.geminiApiKey) {
-      try {
-        geminiService.initialize(settings.geminiApiKey);
-      } catch (error) {
-        console.error('Failed to initialize Gemini service:', error);
-        // Temporarily comment out to avoid blocking the app
-        // setError(error instanceof Error ? error.message : 'Failed to initialize AI service');
+    // Initialize transcription service with the configured provider
+    try {
+      const { providerType, providerBaseUrl, providerApiKey, providerModel } = settings;
+
+      // Only initialize if minimal config is present
+      const canInit =
+        (providerType === 'whisperx' && providerBaseUrl) ||
+        (providerType === 'openai' && providerApiKey) ||
+        (providerType === 'gemini' && providerApiKey);
+
+      if (canInit) {
+        transcriptionService.initialize({
+          type: providerType,
+          name: providerType,
+          baseUrl: providerBaseUrl || undefined,
+          apiKey: providerApiKey || undefined,
+          model: providerModel || undefined,
+        });
       }
+    } catch (error) {
+      console.error('Failed to initialize transcription service:', error);
     }
-  }, [settings.geminiApiKey, setError]);
+  }, [settings.providerType, settings.providerBaseUrl, settings.providerApiKey, settings.providerModel]);
 
   return (
     <Layout>

@@ -1,274 +1,119 @@
-# HiDock Next 🎵
+# OpenHiNotes
 
-Desktop & Web Applications for Managing Files on HiDock® Devices
+**Local-first audio transcription for HiDock devices.**
 
-> **Disclaimer:** This is an unofficial, third-party application not affiliated with or endorsed by HiDock or its manufacturers. HiDock® is a trademark of its respective owners.
+> 🔱 Fork of [sgeraldes/hidock-next](https://github.com/sgeraldes/hidock-next) — only the web app is retained. The desktop app, Electron app, meeting recorder, and audio-insights tools have been removed. The goal is to maintain a lightweight, browser-based tool for transcribing audio locally without depending on any specific cloud provider.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/) [![TypeScript](https://img.shields.io/badge/typescript-5.0+-blue.svg)](https://www.typescriptlang.org/) [![Version](https://img.shields.io/badge/version-1.0--RC1-green.svg)](https://github.com/sgeraldes/hidock-next/releases)
+## Features
 
-![Desktop Application Screenshot](docs/hidock-desktop-app.png)
-_Desktop file manager for HiDock® devices - Download, organize, and transcribe audio files_
+- **🎤 HiDock Device Integration** — Connect your HiDock H1, H1E, P1, or P1 Mini via WebUSB to browse and download recordings directly in the browser.
+- **📝 Multi-Provider Transcription** — Choose between:
+  - **Local WhisperX** — Self-hosted, OpenAI-compatible transcription (e.g., [whisperx-api-server](https://github.com/Nyralei/whisperx-api-server))
+  - **OpenAI Cloud** — Official OpenAI Whisper API
+  - **Google Gemini** — Transcription + AI-powered insight extraction (summary, sentiment, action items)
+- **🎵 Audio Upload & Recording** — Upload audio files or record directly in the browser.
+- **📋 Copy & Export** — Copy transcriptions to clipboard or export results.
 
-## ✨ Features
+## Quick Start
 
-- 🎙️ **Device File Management** - Browse, download, and organize files from HiDock® devices
-- 🎵 **Advanced Audio Player** - Built-in player with waveform visualization
-- 🤖 **AI Transcription** - Support for 11+ AI providers (OpenAI, Gemini, Claude, etc.)
-- 📅 **Calendar Integration** - Automatic meeting correlation (Windows)
-- 📁 **Smart File Management** - Batch operations, filtering, and organization
-- 🌐 **Cross-Platform** - Windows, macOS, and Linux support
-- 🚀 **High Performance** - Optimized for large file collections
+### Prerequisites
 
-## 🚀 Quick Start
+- **Node.js** 18+ and **npm**
+- A transcription server (for local transcription):
+  - [whisperx-api-server](https://github.com/Nyralei/whisperx-api-server) — recommended
+  - Any OpenAI-compatible `/v1/audio/transcriptions` endpoint
+  - Or use cloud providers (OpenAI, Gemini) with an API key
 
-### Windows
-
-```cmd
-git clone https://github.com/sgeraldes/hidock-next.git
-cd hidock-next
-setup-windows.bat
-run-desktop.bat
-```
-
-### macOS / Linux
+### Install & Run
 
 ```bash
-git clone https://github.com/sgeraldes/hidock-next.git
-cd hidock-next
-./setup-unix.sh
-./run-desktop.sh
+# Clone the repository
+git clone https://github.com/YOUR_USERNAME/OpenHiNotes.git
+cd OpenHiNotes
+
+# Install dependencies
+cd apps/web
+npm install
+
+# Start the development server
+npm run dev
 ```
 
-## 📦 Applications
+Then open [http://localhost:5173](http://localhost:5173) in your browser.
 
-### [Desktop App](apps/desktop/) - Full-Featured Management
+### Configure a Provider
 
-- Complete USB device control
-- Advanced audio playback with visualization
-- AI transcription with multiple providers
-- Calendar integration (Windows)
-- Batch file operations
+1. Go to **Settings** → **Transcription Provider**
+2. Select your provider (Local WhisperX, OpenAI Cloud, or Google Gemini)
+3. Enter the server URL and/or API key
+4. Click **Test Connection** to verify
+5. Save settings
 
-### [Web App](apps/web/) - Modern Web Interface
+## Docker Support
 
-- React/TypeScript implementation
-- Real-time device monitoring
-- Responsive design
-- Cross-browser support
+OpenHiNotes includes both development and production Docker setups. **Caddy** is used in both environments because the **WebUSB API (used to connect to HiDock devices) strictly requires a secure context (HTTPS)** if you are accessing the app from anywhere other than `localhost`.
 
-### [Audio Insights](apps/audio-insights/) - AI Analysis Tool
+### Production Setup
 
-- Audio file analysis
-- Transcription extraction
-- Insights generation
-
-## 🛠️ Requirements
-
-- **Python** 3.12 or higher
-- **Node.js** 18 or higher (for web apps)
-- **USB Driver** for HiDock devices
-- **OS**: Windows 10+, macOS 12+, Ubuntu 20.04+
-
-## 📊 Platform Support
-
-| Feature              | Windows          | macOS            | Linux            |
-| -------------------- | ---------------- | ---------------- | ---------------- |
-| Device Management    | ✅ Full          | ✅ Full          | ✅ Full          |
-| Audio Processing     | ✅ Full          | ✅ Full          | ✅ Full          |
-| Calendar Integration | ✅ Outlook       | ❌               | ❌               |
-| AI Transcription     | ✅ All Providers | ✅ All Providers | ✅ All Providers |
-
-## 📂 Project Structure
-
-```folder
-hidock-next/
-├── apps/               # Applications
-│   ├── desktop/        # Desktop application (Python/Tkinter)
-│   ├── web/            # Web application (React/TypeScript)
-│   └── audio-insights/ # Audio analysis tool
-├── research/           # Research and reverse engineering tools
-├── firmware/           # Device firmware files
-├── docs/               # Documentation
-├── scripts/            # Utility scripts
-└── config/             # Configuration files
-```
-
-## 🔧 Development
-
-### Setup Development Environment
+To run a highly-optimized, compiled build of the app using a multi-stage Docker build:
 
 ```bash
-python setup.py
-# Choose option 2 (Developer)
+# Build and run the production container in the background
+docker-compose -f docker-compose.prod.yml up -d --build
 ```
 
-### Running Tests
+This will serve the production build on port 80. *If you need local network HTTPS (for WebUSB on other devices), you can pass a custom `Caddyfile` in the `docker-compose.prod.yml` to override the default `:80` configuration and use `tls internal`.*
+
+### Development Setup (Hot-Reloading)
+
+For easy local development with live hot-reloading (changes to `apps/web/src` update instantly without a rebuild):
 
 ```bash
-cd apps/desktop
-pytest tests/
+# Start the web app and Caddy dev proxy in the background
+docker-compose up -d
+
+# View live logs
+docker-compose logs -f web
 ```
 
-#### Test Markers & Fast vs Full Suite
+- Access via HTTP: [http://localhost:5173](http://localhost:5173) (Direct Vite server)
+- Access via HTTPS: [https://localhost](https://localhost) (Proxied via Caddy)
 
-By default the repository defines markers to classify tests:
+*Note: If you want to access the dev app from another device on your local network (e.g., `192.168.x.x`) and still use WebUSB, check the `Caddyfile` in the root folder for instructions on enabling local HTTPS.*
 
-- `unit` – fast, pure-Python or lightweight logic
-- `integration` – touches external systems, heavier setup
-- `gui` – requires a display / GUI toolkits
-- `slow` – long-running or large dataset processing
+## Project Structure
 
-The default invocation (no args) in local dev or CI (fast lane) skips
-`integration`, `gui`, and `slow` to keep feedback loops tight.
+```
+OpenHiNotes/
+├── apps/web/          # React + Vite web application
+│   ├── src/
+│   │   ├── components/    # Reusable UI components
+│   │   ├── pages/         # Dashboard, Recordings, Transcription, Settings
+│   │   ├── services/      # Transcription service & providers
+│   │   │   └── providers/ # WhisperX, OpenAI, Gemini provider implementations
+│   │   ├── store/         # Zustand state management
+│   │   ├── types/         # TypeScript type definitions
+│   │   └── utils/         # Utility functions
+│   └── package.json
+├── run-web.sh         # Convenience launcher (Linux/macOS)
+├── run-web.bat        # Convenience launcher (Windows)
+└── Makefile           # Build targets
+```
 
-Fast subset (default behavior via `pytest.ini`):
+## Development
 
 ```bash
-pytest -q
+cd apps/web
+npm run dev          # Start dev server
+npm run build        # Production build
+npm run test         # Run tests
+npm run lint         # Lint code
 ```
 
-Run only integration tests:
+## License
 
-```bash
-pytest -m integration
-```
+MIT License — see [LICENSE](LICENSE) for details.
 
-Run full test suite (all markers):
+## Credits
 
-```bash
-pytest -m "unit or integration or gui or slow"
-```
-
-Or simply clear filtering by overriding `-m`:
-
-```bash
-pytest -m ""
-```
-
-Run everything including verbose output:
-
-```bash
-pytest -vv -m ""
-```
-
-Example: run unit + slow (e.g., for a targeted performance check):
-
-```bash
-pytest -m "unit or slow"
-```
-
-If you maintain custom CI stages, you can mirror this split:
-
-| Stage        | Command                                |
-|--------------|-----------------------------------------|
-| fast (default)| `pytest -q`                            |
-| integration  | `pytest -m integration -q`             |
-| gui          | `pytest -m gui`                        |
-| full         | `pytest -m "unit or integration or gui or slow"` |
-
-Tip: Keep the quick path green before running the heavier suites.
-
-### Building for Distribution
-
-```bash
-python scripts/build/build_desktop.py
-```
-
-### Virtual Environments
-
-See `docs/VENV.md` for the per-platform virtual environment strategy (separate `.venv.<tag>` per OS/WSL). The runtime scripts (`run-desktop.*`) and setup logic auto-select or create the correct one via `scripts/env/select_venv.py`.
-
-Common setup flags:
-
-```bash
-# Non-interactive full developer setup (auto-skip migration unless specified)
-python setup.py --non-interactive
-
-# Force legacy migration strategy
-python setup.py --migrate=copy      # or --migrate=rebuild / --migrate=skip
-
-# Explicit end-user minimal mode
-python setup.py --mode=end-user
-
-# Recreate tagged environment even if it exists
-python setup.py --force-new-env
-
-# Diagnose virtual environment only (no installs)
-python setup.py --diagnose-venv
-
-# Auto-install missing Debian/Ubuntu system dependencies (tk, ffmpeg, libusb, build tools)
-python setup.py --auto-install-missing
-```
-
-Environment variable alternative for migration:
-
-```bash
-HIDOCK_AUTO_MIGRATE=c python setup.py   # c=copy, r=rebuild, s=skip
-```
-
-Environment variable alternative for auto-install (CI / scripted):
-
-```bash
-HIDOCK_AUTO_INSTALL_MISSING=1 python setup.py --non-interactive
-```
-
-### Linux System Dependencies
-
-On Debian/Ubuntu based systems the setup script can detect and help resolve missing packages:
-
-- python3-tk / python3-dev (Tkinter UI)
-- ffmpeg / libavcodec-extra (audio transcoding)
-- libusb-1.0-0-dev / libudev-dev / pkg-config (device communications)
-- build-essential (compilation toolchain)
-- dialout group membership (USB access)
-
-If you see a prompt listing missing dependencies you can:
-
-1. Run the bundled automated installer
-2. View manual apt commands
-3. Continue anyway (not recommended)
-
-To skip prompts and let the script attempt installation automatically:
-
-```bash
-python setup.py --auto-install-missing --non-interactive
-```
-
-If packages fail to install you will still be able to continue, but Python dependency installation may later fail until system requirements are met.
-
-## 📝 Documentation
-
-- [Getting Started](docs/getting-started/QUICK_START.md)
-- [Desktop App Guide](apps/desktop/README.md)
-- [Web App Guide](apps/web/README.md)
-- [API Documentation](docs/api/)
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- HiDock hardware team for device specifications
-- Open source community for libraries and tools
-- All contributors and testers
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/sgeraldes/hidock-next/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/sgeraldes/hidock-next/discussions)
-- **Documentation**: [Full Docs](docs/)
-
----
-
-**HiDock Next v1.0-RC1** - Ready for production use!
+This project is a fork of [HiDock Next](https://github.com/sgeraldes/hidock-next) by sgeraldes, adapted for local-first transcription workflows.

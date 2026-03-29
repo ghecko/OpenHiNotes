@@ -1,3 +1,5 @@
+import type { ProviderType } from '@/services/providers/types';
+
 // Device Types
 export interface HiDockDevice {
   id: string;
@@ -46,6 +48,7 @@ export type AudioFormat = 'audio/wav' | 'audio/mp3' | 'audio/m4a' | 'audio/ogg' 
 
 export interface AudioData {
   fileName: string;
+  blob: Blob;
   base64: string;
   mimeType: AudioFormat;
   size: number;
@@ -84,10 +87,15 @@ export interface AppSettings {
   autoConnect: boolean;
   autoDownload: boolean;
   downloadDirectory: string;
-  geminiApiKey: string;
-  transcriptionLanguage: string;
-  audioQuality: 'low' | 'medium' | 'high';
   notifications: boolean;
+  audioQuality: 'low' | 'medium' | 'high';
+  transcriptionLanguage: string;
+
+  // --- Provider settings ---
+  providerType: ProviderType;
+  providerBaseUrl: string;   // for whisperx / openai
+  providerApiKey: string;    // for openai / gemini
+  providerModel: string;     // model identifier
 }
 
 // WebUSB Types

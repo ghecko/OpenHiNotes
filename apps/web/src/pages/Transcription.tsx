@@ -1,6 +1,7 @@
 import { AudioRecorder } from '@/components/AudioRecorder';
 import { FileUpload } from '@/components/FileUpload';
-import { geminiService, TranscriptionProgress, CancellationToken } from '@/services/geminiService';
+import { transcriptionService } from '@/services/transcriptionService';
+import type { TranscriptionProgress, CancellationToken } from '@/services/providers/types';
 import { useAppStore } from '@/store/useAppStore';
 import type { AudioData, InsightData, TranscriptionResult } from '@/types';
 import {
@@ -11,14 +12,17 @@ import {
   Lightbulb,
   MessageSquare,
   Mic,
+  Server,
   X
 } from 'lucide-react';
 import React, { useCallback, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 type TranscriptionStep = 'upload' | 'transcribing' | 'transcribed' | 'analyzing' | 'complete';
 
 export const Transcription: React.FC = () => {
   const { settings, setError, setLoading } = useAppStore();
+  const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState<TranscriptionStep>('upload');
   const [audioData, setAudioData] = useState<AudioData | null>(null);
   const [transcription, setTranscription] = useState<TranscriptionResult | null>(null);
@@ -27,6 +31,9 @@ export const Transcription: React.FC = () => {
   const [progress, setProgress] = useState<TranscriptionProgress | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const cancellationTokenRef = useRef<CancellationToken | null>(null);
+
+  const isConfigured = transcriptionService.isInitialized();
+  const supportsInsights = transcriptionService.supportsInsights();
 
   const handleFileSelect = useCallback((data: AudioData) => {
     setAudioData(data);
@@ -39,8 +46,8 @@ export const Transcription: React.FC = () => {
   }, []);
 
   const handleTranscribe = useCallback(async () => {
-    if (!audioData || !geminiService.isInitialized()) {
-      setError('Audio data or API key missing');
+    if (!audioData || !isConfigured) {
+      setError('Audio data or transcription provider not configured');
       return;
     }
 
@@ -49,17 +56,22 @@ export const Transcription: React.FC = () => {
     setIsProcessing(true);
     setProgress(null);
 
-    // Create cancellation token
-    const token = geminiService.createCancellationToken();
+    const token = transcriptionService.createCancellationToken();
     cancellationTokenRef.current = token;
 
     try {
-      const result = await geminiService.transcribeAudio(
-        audioData.base64,
-        audioData.mimeType,
-        'Transcribe the following audio. Provide the spoken text as accurately as possible.',
+      // Build a File/Blob from the audio data
+      const blob = audioData.blob
+        || base64ToBlob(audioData.base64, audioData.mimeType);
+
+      const result = await transcriptionService.transcribe(
+        blob,
+        {
+          language: settings.transcriptionLanguage,
+          fileName: audioData.fileName,
+        },
         (progressData) => setProgress(progressData),
-        token
+        token,
       );
 
       setTranscription(result);
@@ -78,7 +90,7 @@ export const Transcription: React.FC = () => {
       setIsProcessing(false);
       cancellationTokenRef.current = null;
     }
-  }, [audioData, setError, setLoading]);
+  }, [audioData, isConfigured, settings.transcriptionLanguage, setError, setLoading]);
 
   const handleAnalyze = useCallback(async () => {
     if (!transcription) {
@@ -91,16 +103,14 @@ export const Transcription: React.FC = () => {
     setIsProcessing(true);
     setProgress(null);
 
-    // Create cancellation token
-    const token = geminiService.createCancellationToken();
+    const token = transcriptionService.createCancellationToken();
     cancellationTokenRef.current = token;
 
     try {
-      const result = await geminiService.extractInsights(
+      const result = await transcriptionService.extractInsights(
         transcription.text,
-        undefined,
         (progressData) => setProgress(progressData),
-        token
+        token,
       );
       setInsights(result);
       setCurrentStep('complete');
@@ -133,11 +143,9 @@ export const Transcription: React.FC = () => {
   }, []);
 
   const resetTranscription = () => {
-    // Cancel any ongoing operations
     if (cancellationTokenRef.current) {
       cancellationTokenRef.current.cancel();
     }
-
     setCurrentStep('upload');
     setAudioData(null);
     setTranscription(null);
@@ -147,20 +155,29 @@ export const Transcription: React.FC = () => {
     setLoading(false);
   };
 
-  if (!settings.geminiApiKey) {
+  // Not configured guard
+  if (!isConfigured) {
     return (
       <div className="flex items-center justify-center min-h-96">
         <div className="text-center">
-          <MessageSquare className="w-16 h-16 text-slate-500 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-slate-100 mb-2">API Key Required</h3>
+          <Server className="w-16 h-16 text-slate-500 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-slate-100 mb-2">Transcription Provider Required</h3>
           <p className="text-slate-400 mb-4">
-            Please configure your Gemini API key in Settings to use transcription features.
+            Configure a transcription provider in Settings to use this feature.
+            <br />
+            <span className="text-slate-500 text-sm">
+              Supports local WhisperX, OpenAI Cloud, or Google Gemini.
+            </span>
           </p>
-          <button className="btn-primary">Go to Settings</button>
+          <button onClick={() => navigate('/settings')} className="btn-primary">
+            Go to Settings
+          </button>
         </div>
       </div>
     );
   }
+
+  const providerName = transcriptionService.getProvider()?.name || 'Unknown';
 
   return (
     <div className="space-y-6">
@@ -168,7 +185,11 @@ export const Transcription: React.FC = () => {
       <div>
         <h1 className="text-2xl font-bold text-slate-100">AI Transcription</h1>
         <p className="text-slate-400">
-          Upload audio files or record directly to get AI-powered transcriptions and insights
+          Upload audio files or record directly to get transcriptions
+          {supportsInsights && ' and AI-powered insights'}
+          <span className="text-slate-500 text-sm ml-2">
+            — using {providerName}
+          </span>
         </p>
       </div>
 
@@ -181,7 +202,6 @@ export const Transcription: React.FC = () => {
 
         {!audioData ? (
           <div className="space-y-6">
-            {/* File Upload */}
             <div>
               <h3 className="text-lg font-medium text-slate-100 mb-4 flex items-center space-x-2">
                 <FileAudio className="w-5 h-5" />
@@ -194,7 +214,6 @@ export const Transcription: React.FC = () => {
               />
             </div>
 
-            {/* Divider */}
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
                 <div className="w-full border-t border-slate-600" />
@@ -204,7 +223,6 @@ export const Transcription: React.FC = () => {
               </div>
             </div>
 
-            {/* Audio Recording */}
             <div>
               <h3 className="text-lg font-medium text-slate-100 mb-4 flex items-center space-x-2">
                 <Mic className="w-5 h-5" />
@@ -254,7 +272,6 @@ export const Transcription: React.FC = () => {
 
           {currentStep === 'transcribing' ? (
             <div className="space-y-4">
-              {/* Progress Display */}
               {progress && (
                 <div className="bg-slate-700/50 rounded-lg p-4">
                   <div className="flex items-center justify-between mb-2">
@@ -273,14 +290,12 @@ export const Transcription: React.FC = () => {
                 </div>
               )}
 
-              {/* Loading Animation */}
               <div className="text-center py-8">
                 <div className="animate-spin w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full mx-auto mb-4"></div>
                 <p className="text-slate-400">
                   {progress?.message || 'Transcribing audio...'}
                 </p>
 
-                {/* Cancel Button */}
                 {isProcessing && (
                   <button
                     onClick={handleCancel}
@@ -311,7 +326,8 @@ export const Transcription: React.FC = () => {
                 <p className="text-slate-100 leading-relaxed">{transcription.text}</p>
               </div>
 
-              {currentStep === 'transcribed' && (
+              {/* Show "Extract Insights" only if provider supports it */}
+              {currentStep === 'transcribed' && supportsInsights && (
                 <button onClick={handleAnalyze} className="btn-primary w-full">
                   <Lightbulb className="w-4 h-4 mr-2" />
                   Extract Insights
@@ -322,8 +338,8 @@ export const Transcription: React.FC = () => {
         </div>
       )}
 
-      {/* Step 3: Insights */}
-      {(currentStep === 'analyzing' || insights) && (
+      {/* Step 3: Insights (only shown when provider supports it) */}
+      {supportsInsights && (currentStep === 'analyzing' || insights) && (
         <div className="card p-6">
           <div className="flex items-center mb-4">
             <Lightbulb className="w-6 h-6 text-accent-500 mr-3" />
@@ -332,7 +348,6 @@ export const Transcription: React.FC = () => {
 
           {currentStep === 'analyzing' ? (
             <div className="space-y-4">
-              {/* Progress Display */}
               {progress && (
                 <div className="bg-slate-700/50 rounded-lg p-4">
                   <div className="flex items-center justify-between mb-2">
@@ -351,14 +366,12 @@ export const Transcription: React.FC = () => {
                 </div>
               )}
 
-              {/* Loading Animation */}
               <div className="text-center py-8">
                 <div className="animate-spin w-8 h-8 border-2 border-accent-500 border-t-transparent rounded-full mx-auto mb-4"></div>
                 <p className="text-slate-400">
                   {progress?.message || 'Analyzing insights...'}
                 </p>
 
-                {/* Cancel Button */}
                 {isProcessing && (
                   <button
                     onClick={handleCancel}
@@ -372,7 +385,6 @@ export const Transcription: React.FC = () => {
             </div>
           ) : insights ? (
             <div className="space-y-6">
-              {/* Summary */}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="font-semibold text-slate-100">Summary</h3>
@@ -390,7 +402,6 @@ export const Transcription: React.FC = () => {
                 <p className="text-slate-300 bg-slate-700/50 rounded-lg p-4">{insights.summary}</p>
               </div>
 
-              {/* Key Points */}
               {insights.keyPoints.length > 0 && (
                 <div>
                   <h3 className="font-semibold text-slate-100 mb-2">Key Points</h3>
@@ -405,7 +416,6 @@ export const Transcription: React.FC = () => {
                 </div>
               )}
 
-              {/* Action Items */}
               {insights.actionItems.length > 0 && (
                 <div>
                   <h3 className="font-semibold text-slate-100 mb-2">Action Items</h3>
@@ -420,7 +430,6 @@ export const Transcription: React.FC = () => {
                 </div>
               )}
 
-              {/* Sentiment */}
               <div>
                 <h3 className="font-semibold text-slate-100 mb-2">Sentiment</h3>
                 <span className={`px-3 py-1 rounded-full text-sm font-medium ${insights.sentiment === 'Positive'
@@ -438,7 +447,7 @@ export const Transcription: React.FC = () => {
       )}
 
       {/* Actions */}
-      {currentStep === 'complete' && (
+      {(currentStep === 'complete' || (currentStep === 'transcribed' && !supportsInsights)) && (
         <div className="flex items-center space-x-4">
           <button onClick={resetTranscription} className="btn-secondary">
             Start Over
@@ -452,3 +461,14 @@ export const Transcription: React.FC = () => {
     </div>
   );
 };
+
+// ── Utility ─────────────────────────────────────────────────────────────────────
+
+function base64ToBlob(base64: string, mimeType: string): Blob {
+  const byteCharacters = atob(base64);
+  const byteNumbers = new Array(byteCharacters.length);
+  for (let i = 0; i < byteCharacters.length; i++) {
+    byteNumbers[i] = byteCharacters.charCodeAt(i);
+  }
+  return new Blob([new Uint8Array(byteNumbers)], { type: mimeType });
+}

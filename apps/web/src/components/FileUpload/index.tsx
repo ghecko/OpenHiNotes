@@ -58,6 +58,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
 
         const audioData: AudioData = {
           fileName: file.name,
+          blob: file,
           base64: base64Data,
           mimeType: file.type as AudioFormat,
           size: file.size,

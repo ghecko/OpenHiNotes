@@ -1,78 +1,47 @@
-# Gemini Project Context: HiDock Next
-
-This document provides context for the HiDock Next project, a suite of applications for managing HiDock® devices.
+# OpenHiNotes — AI Agent Context
 
 ## Project Overview
+OpenHiNotes is a local-first audio transcription web app for HiDock devices.
+Fork of [sgeraldes/hidock-next](https://github.com/sgeraldes/hidock-next) — web app only.
 
-HiDock Next is a community-driven, open-source project that provides desktop and web applications for managing files on HiDock® devices. It is not affiliated with the official HiDock brand. The project is a monorepo containing a desktop application, a web application, and an audio analysis tool.
+## Architecture
+- **Framework**: React + TypeScript + Vite
+- **Styling**: TailwindCSS
+- **State**: Zustand (persisted to localStorage)
+- **Routing**: React Router DOM
 
-The core functionalities include:
--   **Device File Management**: Browse, download, and organize files from HiDock® devices.
--   **AI Transcription**: Integrated with over 11 AI providers, including Google Gemini.
--   **Advanced Audio Player**: Features waveform visualization.
--   **Calendar Integration**: Correlates audio files with meetings (Windows only).
+## Key Directories
+```
+apps/web/src/
+├── services/providers/   # Multi-provider transcription (WhisperX, OpenAI, Gemini)
+├── services/             # Device service, audio processing, transcription orchestrator
+├── pages/                # Dashboard, Recordings, Transcription, Settings
+├── components/           # UI components (Layout, AudioPlayer, FileUpload, etc.)
+├── store/                # Zustand app store
+├── types/                # TypeScript interfaces
+├── constants/            # App-wide constants, defaults, error messages
+└── utils/                # Formatters, audio utilities
+```
 
-### Applications
+## Provider Architecture
+The transcription system uses a pluggable provider pattern:
+- `TranscriptionProvider` interface in `services/providers/types.ts`
+- Implementations: `WhisperXProvider`, `OpenAIProvider`, `GeminiProvider`
+- Factory: `createProvider(config)` in `services/providers/index.ts`
+- Orchestrator: `transcriptionService` singleton in `services/transcriptionService.ts`
 
--   **Desktop App**: A full-featured desktop application built with Python and CustomTkinter for Windows, macOS, and Linux.
--   **Web App**: A modern, browser-based interface built with React and TypeScript, using the WebUSB API for device communication.
--   **Audio Insights**: A tool for AI-powered analysis and transcription of audio files.
+Providers declare capabilities (`{ transcription, insights }`). The UI conditionally
+shows features based on these capabilities (e.g., insights only shown for Gemini).
 
-## Building and Running
+## Device Integration
+HiDock hardware communicates via WebUSB. The protocol is implemented in:
+- `services/deviceService.ts` — full WebUSB protocol (file listing, download, firmware)
+- `adapters/webDeviceAdapter.ts` — browser WebUSB adapter
+- `interfaces/deviceInterface.ts` — device abstraction layer
 
-### Desktop Application
-
-**Technology Stack:**
--   **Python**: 3.12+
--   **GUI**: CustomTkinter
--   **Device Communication**: PyUSB
--   **Audio**: Pygame
--   **Dependencies**: `pyproject.toml`
-
-**Commands:**
--   **Setup (Windows):** `setup-windows.bat`
--   **Setup (macOS/Linux):** `./setup-unix.sh`
--   **Run (Windows):** `run-desktop.bat`
--   **Run (macOS/Linux):** `./run-desktop.sh`
--   **Run Tests:** `cd apps/desktop && pytest tests/`
-
-### Web Application
-
-**Technology Stack:**
--   **Framework**: React 18 with TypeScript
--   **Build Tool**: Vite
--   **Styling**: Tailwind CSS
--   **State Management**: Zustand
--   **Dependencies**: `package.json`
-
-**Commands:**
--   **Install Dependencies:** `cd apps/web && npm install`
--   **Run Dev Server:** `npm run dev`
--   **Build:** `npm run build`
--   **Run Tests:** `npm run test`
-
-## Development Conventions
-
-### Code Style
-
--   **Line Length**: 120 characters for all languages.
--   **Python**:
-    -   **Formatting**: Black
-    -   **Linting**: Flake8, Pylint
-    -   **Import Sorting**: isort
-    -   **Type Checking**: mypy
--   **TypeScript/JavaScript**:
-    -   **Linting**: ESLint with React hooks rules.
-
-### Testing
-
--   The project has a strong emphasis on testing, with over 581 tests.
--   **Desktop App**:
-    -   Uses `pytest` for unit, integration, performance, and device tests.
-    -   Aims for 80% minimum test coverage.
--   **Web App**:
-    -   Uses `vitest` and `React Testing Library` for component, service, and integration tests.
-
-### Pre-commit Hooks
-
-The project uses pre-commit hooks to automate code quality checks before commits. These are configured in `.pre-commit-config.yaml` and are installed as part of the developer setup.
+## Settings
+Stored in `localStorage` under key `hidock_settings`. Provider config includes:
+- `providerType`: 'whisperx' | 'openai' | 'gemini'
+- `providerBaseUrl`: server URL for whisperx/openai
+- `providerApiKey`: API key for openai/gemini
+- `providerModel`: model identifier

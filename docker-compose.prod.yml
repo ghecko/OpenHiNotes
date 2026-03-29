@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  web-prod:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    image: openhinotes:production
+    container_name: openhinotes-prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Optional: To enable HTTPS for specific local IP (WebUSB requirement),
+      # you can override the internal Caddyfile with a custom host Caddyfile 
+      # by uncommenting the line below:
+      # - ./Caddyfile.prod:/etc/caddy/Caddyfile
+      
+      # Persist Caddy's auto-generated TLS certificates
+      - caddy_data_prod:/data
+      - caddy_config_prod:/config
+
+volumes:
+  caddy_data_prod:
+  caddy_config_prod:

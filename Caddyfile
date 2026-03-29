@@ -1,0 +1,24 @@
+# OpenHiNotes Caddyfile
+#
+# Caddy acts as a reverse proxy to your Vite development server.
+# It is highly recommended if you need a secure context (HTTPS), which is strictly
+# required by the browser to use WebUSB (connecting to HiDock devices) when accessing
+# the app via a local network IP instead of 'localhost'.
+
+localhost {
+	reverse_proxy web:5173
+}
+
+# --- Local Network Access (WebUSB requires HTTPS) ---
+# To access OpenHiNotes from another device on your network and use WebUSB:
+# 1. Find your router-assigned local IP (e.g., 192.168.1.50)
+# 2. Replace the IP below with yours
+# 3. Uncomment the block
+# 4. Restart docker-compose
+# 
+# Caddy will automatically generate a self-signed TLS certificate for that IP.
+#
+# 192.168.1.50 {
+# 	tls internal
+# 	reverse_proxy web:5173
+# }

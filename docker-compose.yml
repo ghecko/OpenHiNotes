@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile.dev
+    # Expose Vite's port for direct HTTP access (bypassing Caddy if desired)
+    ports:
+      - "5173:5173"
+    volumes:
+      # Mount the source code dynamically for hot-reloading
+      - ./apps/web:/app
+      # Create an anonymous volume for node_modules to prefer the container's
+      # isolated dependencies over the host's, preventing OS-mismatch issues.
+      - /app/node_modules
+    environment:
+      # Enable file polling for consistent hot-reloading across different host OSes (Windows/macOS)
+      - CHOKIDAR_USEPOLLING=true
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Mount the custom Caddy config
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      # Persist Caddy's auto-generated TLS certificates
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+volumes:
+  caddy_data:
+  caddy_config:
