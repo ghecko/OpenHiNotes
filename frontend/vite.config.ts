@@ -12,6 +12,11 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5173,
+    // @ts-ignore - process.env is provided by Vite/Node during config evaluation
+    allowedHosts: [process.env.SITE_HOST || 'localhost', 'localhost'],
+    hmr: {
+      clientPort: 8443,
+    },
     proxy: {
       '/api': {
         target: 'http://backend:8000',

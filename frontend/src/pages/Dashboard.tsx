@@ -11,6 +11,7 @@ export function Dashboard() {
   const device = useAppStore((s) => s.device);
   const { connectDevice, isLoading: deviceLoading } = useDeviceConnection();
   const [transcriptions, setTranscriptions] = useState<Transcription[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -20,7 +21,8 @@ export function Dashboard() {
   const loadTranscriptions = async () => {
     try {
       const response = await transcriptionsApi.getTranscriptions(0, 5);
-      setTranscriptions(response.items);
+      setTranscriptions(response.items || []);
+      setTotalCount(response.total || 0);
     } catch (error) {
       console.error('Failed to load transcriptions:', error);
     } finally {
@@ -80,7 +82,7 @@ export function Dashboard() {
             Transcriptions
           </h3>
           <p className="text-3xl font-bold text-gray-900 dark:text-white">
-            {transcriptions.length}
+            {totalCount}
           </p>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">Recent activity</p>
         </div>

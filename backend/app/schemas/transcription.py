@@ -54,3 +54,11 @@ class TranscriptionUpdate(BaseModel):
     """Schema for transcription updates."""
     speakers: Optional[Dict[str, str]] = None
     notes: Optional[str] = None
+
+
+class PaginatedTranscriptionResponse(BaseModel):
+    """Schema for a paginated list of transcriptions."""
+    items: List[TranscriptionResponse]
+    total: int
+    skip: int
+    limit: int

@@ -40,7 +40,7 @@ services:
     volumes:
       - uploads_data:/app/uploads
     ports:
-      - "8000:8000"
+      - "8200:8000"
 
   frontend:
     build:
@@ -49,6 +49,8 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    environment:
+      - SITE_HOST=${SITE_HOST:-localhost}
     ports:
       - "5173:5173"
 
@@ -58,9 +60,11 @@ services:
     depends_on:
       - frontend
       - backend
+    environment:
+      - SITE_HOST=${SITE_HOST:-localhost}
     ports:
-      - "80:80"
-      - "443:443"
+      - "8880:80"
+      - "8443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data

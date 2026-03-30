@@ -64,46 +64,91 @@ function concatBuffers(a: Uint8Array, b: Uint8Array): Uint8Array {
 // HiDock file record format (from GET_FILE_LIST body):
 //   [0]       fileVersion   (uint8)
 //   [1]       filenameLen   (uint8)  — single byte; filenames are ≤ 255 chars
-//   [2 .. 2+N-1]  filename  (ASCII)
-//   [2+N .. 5+N]  fileSize  (uint32 BE)
-//   [6+N .. 11+N] reserved  (6 bytes — timestamps / flags)
-//   [12+N .. 27+N] signature (16 bytes)
-//   Total per record = 28 + filenameLen
+//   [0]           fileVersion   (uint8)
+//   [1 .. 3]      filenameLen   (uint24 BE)
+//   [4 .. 4+N-1]  filename      (ASCII/UTF-16)
+//   [4+N .. 7+N]  fileSize      (uint32 BE)
+//   [8+N .. 13+N] reserved      (6 bytes)
+//   [14+N .. 29+N] signature    (16 bytes)
+//   Total per record = 30 + filenameLen
 
-const FILE_RECORD_OVERHEAD = 28; // 1 + 1 + 4 + 6 + 16
+const FILE_RECORD_OVERHEAD = 30;
 
 function parseFileRecord(
   data: Uint8Array,
   offset: number,
+  isFirst: boolean = false
 ): { recording: AudioRecording; bytesRead: number } | null {
-  // Need at least the version + length byte
-  if (offset + 2 > data.length) return null;
+  // Discard leading 0xFF bytes (flash padding)
+  while (offset < data.length && data[offset] === 0xff) {
+    // If we hit 0xFFFF, it's the header, not a record.
+    if (data[offset + 1] === 0xff) return null;
+    offset++;
+  }
+
+  // Need at least version + 3-byte length
+  if (offset + 4 > data.length) return null;
 
   const version = data[offset];
-  const filenameLen = data[offset + 1];
+  // Filename length is 3 bytes Big Endian in newer firmwares
+  const filenameLen = (data[offset + 1] << 16) | (data[offset + 2] << 8) | data[offset + 3];
 
-  const recordLen = FILE_RECORD_OVERHEAD + filenameLen;
-  if (offset + recordLen > data.length) return null; // incomplete record
-  if (filenameLen === 0) return null; // bad record
+  if (isFirst) {
+    console.log('[OpenHiNotes] First record header at offset %d: v=%d len=%d total_bytes=%d', 
+      offset, version, filenameLen, data.length - offset);
+  }
 
-  const filenameStart = offset + 2;
-  const fileName = new TextDecoder('ascii').decode(
-    data.slice(filenameStart, filenameStart + filenameLen),
-  );
+  // Sanity check
+  if (version === 255 || filenameLen === 0 || filenameLen > 512) {
+     return null; 
+  }
 
+  const recordLen = 1 + 3 + 4 + 6 + 16 + filenameLen; 
+  if (offset + recordLen > data.length) return null;
+
+  const filenameStart = offset + 4;
   const sizeOffset = filenameStart + filenameLen;
   const size = readU32BE(data, sizeOffset);
+  
+  // Calculate duration (Hz heuristic)
+  const duration = version === 2 ? size / 32000 : size / 16000;
 
-  // Duration estimate based on raw PCM sample rate
-  const duration =
-    version === 2 ? size / 32000 : size / 16000;
+  const rawFilename = data.slice(filenameStart, filenameStart + filenameLen);
+  
+  if (isFirst) {
+    console.log('[OpenHiNotes] Raw filename bytes:', Array.from(rawFilename).map(b => b.toString(16).padStart(2, '0')).join(' '));
+  }
+
+  // Detect if UTF-16LE or ASCII
+  let fileName = '';
+  let nullCount = 0;
+  if (rawFilename.length >= 4) {
+    for (let i = 1; i < rawFilename.length; i += 2) {
+      if (rawFilename[i] === 0) nullCount++;
+    }
+    
+    if (nullCount > rawFilename.length / 4) {
+      fileName = new TextDecoder('utf-16le').decode(rawFilename);
+    } else {
+      fileName = new TextDecoder('utf-8').decode(rawFilename);
+    }
+  } else {
+    fileName = new TextDecoder('utf-8').decode(rawFilename);
+  }
+
+  // Strip non-printable characters and leading nulls
+  fileName = fileName.replace(/[\x00-\x1F\x7F-\x9F]/g, '').trim();
+
+  if (fileName.length < 3) {
+    fileName = `Recording_${offset}_${Math.floor(size / 1024)}KB`;
+  }
 
   const sigOffset = sizeOffset + 4 + 6;
-  const signature = data.slice(sigOffset, sigOffset + 16);
+  const signature = data.slice(sigOffset, Math.min(sigOffset + 16, data.length));
 
   return {
     recording: {
-      id: fileName,
+      id: `${fileName}_${offset}`,
       fileName,
       size,
       duration,
@@ -121,6 +166,7 @@ class DeviceService {
   private device: USBDevice | null = null;
   private sequenceId = 0;
   private receiveBuffer = new Uint8Array(0);
+  private connectingPromise: Promise<HiDockDevice> | null = null;
 
   // ---- Public API ----
 
@@ -142,31 +188,41 @@ class DeviceService {
   }
 
   async connectDevice(device: USBDevice): Promise<HiDockDevice> {
-    try {
-      this.device = device;
-      this.sequenceId = 0;
-      this.receiveBuffer = new Uint8Array(0);
+    if (this.connectingPromise) return this.connectingPromise;
 
-      await device.open();
-      await device.selectConfiguration(1);
-      await device.claimInterface(INTERFACE_NUMBER);
+    this.connectingPromise = (async () => {
+      try {
+        this.device = device;
+        this.sequenceId = 0;
+        this.receiveBuffer = new Uint8Array(0);
 
-      const info = await this.getDeviceInfo();
-      const storage = await this.getStorageInfo();
+        if (!device.opened) {
+          await device.open();
+        }
+        await device.selectConfiguration(1);
+        await device.claimInterface(INTERFACE_NUMBER);
 
-      return {
-        id: `${device.vendorId}-${device.productId}-${info.serialNumber}`,
-        name: `HiDock ${info.model}`,
-        model: info.model,
-        serialNumber: info.serialNumber,
-        firmwareVersion: info.firmwareVersion,
-        connected: true,
-        storageInfo: storage,
-      };
-    } catch (error) {
-      await this.disconnectDevice();
-      throw error;
-    }
+        const info = await this.getDeviceInfo();
+        const storage = await this.getStorageInfo();
+
+        return {
+          id: `${device.vendorId}-${device.productId}-${info.serialNumber}`,
+          name: `HiDock ${info.model}`,
+          model: info.model,
+          serialNumber: info.serialNumber,
+          firmwareVersion: info.firmwareVersion,
+          connected: true,
+          storageInfo: storage,
+        };
+      } catch (error) {
+        await this.disconnectDevice();
+        throw error;
+      } finally {
+        this.connectingPromise = null;
+      }
+    })();
+
+    return this.connectingPromise;
   }
 
   async disconnectDevice(): Promise<void> {
@@ -209,33 +265,50 @@ class DeviceService {
     const seqId = await this.sendCommand(COMMANDS.GET_CARD_INFO);
     const { body } = await this.receiveResponse(seqId);
 
-    // Log raw bytes so we can debug the format
-    console.log('[OpenHiNotes] GET_CARD_INFO raw (%d bytes):', body.length,
-      Array.from(body.slice(0, Math.min(body.length, 40))).map(b => b.toString(16).padStart(2, '0')).join(' '));
+    console.log('[OpenHiNotes] GET_CARD_INFO raw:', body.length,
+      Array.from(body.slice(0, Math.min(body.length, 64))).map(b => b.toString(16).padStart(2, '0')).join(' '));
 
-    // The response format may vary by firmware. Try the most common layout:
-    // 8 bytes totalSpace (uint64 BE) + 8 bytes usedSpace (uint64 BE) + 4 bytes fileCount (uint32 BE)
-    if (body.length >= 20) {
-      const totalSpace = readU64BE(body, 0);
-      const usedSpace = readU64BE(body, 8);
-      const fileCount = readU32BE(body, 16);
-      return { totalSpace, usedSpace, freeSpace: totalSpace - usedSpace, fileCount };
-    }
+    let freeMiB = 0;
+    let capacityMiB = 0;
+    let status = 0;
 
-    // Fallback: 4-byte fields
     if (body.length >= 12) {
-      const totalSpace = readU32BE(body, 0);
-      const usedSpace = readU32BE(body, 4);
-      const fileCount = readU32BE(body, 8);
-      return { totalSpace, usedSpace, freeSpace: totalSpace - usedSpace, fileCount };
+      freeMiB = readU32BE(body, 0);
+      capacityMiB = readU32BE(body, 4);
+      status = readU32BE(body, 8);
     }
 
-    console.warn('[OpenHiNotes] Unexpected GET_CARD_INFO body length:', body.length);
-    return { totalSpace: 0, usedSpace: 0, freeSpace: 0, fileCount: 0 };
+    console.log('[OpenHiNotes] Storage MiB: free=%d, capacity=%d, status=%d', freeMiB, capacityMiB, status);
+
+    const totalSpace = capacityMiB * 1024 * 1024;
+    const freeSpace = freeMiB * 1024 * 1024;
+    const usedSpace = totalSpace - freeSpace;
+
+    // Get real file count
+    let fileCount = 0;
+    try {
+      const countSeq = await this.sendCommand(COMMANDS.GET_FILE_COUNT);
+      const { body: countBody } = await this.receiveResponse(countSeq);
+      if (countBody.length >= 4) {
+        fileCount = readU32BE(countBody, 0);
+      }
+    } catch (e) {
+      console.warn('[OpenHiNotes] Failed to get file count:', e);
+    }
+
+    return {
+      totalSpace: totalSpace || 1,
+      usedSpace: usedSpace || 0,
+      freeSpace: Math.max(0, freeSpace),
+      fileCount: fileCount || 0
+    };
   }
 
   async getFileList(onProgress?: (files: AudioRecording[]) => void): Promise<AudioRecording[]> {
-    const seqId = await this.sendCommand(COMMANDS.GET_FILE_LIST);
+    // Send index 0 as parameter to some firmware versions
+    const body = new Uint8Array(4);
+    writeU32BE(body, 0, 0);
+    const seqId = await this.sendCommand(COMMANDS.GET_FILE_LIST, body);
     return this.receiveStreamingFileList(seqId, onProgress);
   }
 
@@ -245,31 +318,41 @@ class DeviceService {
     onProgress?: (percent: number) => void,
   ): Promise<Blob> {
     const fileNameBytes = new TextEncoder().encode(fileName);
+    
+    // Command body: [0..3] totalSize (BE), [4..] fileName
+    const body = new Uint8Array(4 + fileNameBytes.length);
+    writeU32BE(body, 0, fileSize);
+    body.set(fileNameBytes, 4);
+
+    console.log('[OpenHiNotes] Starting stream download for %s (%d bytes)', fileName, fileSize);
+
+    const seqId = await this.sendCommand(COMMANDS.GET_FILE_BLOCK, body);
     const chunks: Uint8Array[] = [];
-    const BLOCK_SIZE = 32768;
-    let offset = 0;
+    let received = 0;
+    const startTime = Date.now();
+    const timeout = 60000; // 1 minute per file
 
-    while (true) {
-      const body = new Uint8Array(fileNameBytes.length + 8);
-      body.set(fileNameBytes, 0);
-      writeU32BE(body, fileNameBytes.length, offset);
-      writeU32BE(body, fileNameBytes.length + 4, BLOCK_SIZE);
+    while (received < fileSize && (Date.now() - startTime < timeout)) {
+      try {
+        const response = await this.receiveResponse(seqId, 5000, COMMANDS.GET_FILE_BLOCK);
+        if (response.body.length === 0) break;
 
-      const seqId = await this.sendCommand(COMMANDS.GET_FILE_BLOCK, body);
-      const response = await this.receiveResponse(seqId, 30000);
+        chunks.push(new Uint8Array(response.body));
+        received += response.body.length;
 
-      if (response.body.length === 0) break;
-
-      chunks.push(new Uint8Array(response.body));
-      offset += response.body.length;
-
-      if (onProgress && fileSize > 0) {
-        onProgress(Math.min(100, Math.round((offset / fileSize) * 100)));
+        if (onProgress && fileSize > 0) {
+          onProgress(Math.min(100, Math.round((received / fileSize) * 100)));
+        }
+      } catch (err) {
+        // If we timeout but have almost everything, some devices don't send the last bit of padding
+        if (received > 0 && received >= fileSize - 1024) break; 
+        throw err;
       }
-
-      if (response.body.length < BLOCK_SIZE) break;
     }
 
+    console.log('[OpenHiNotes] Download complete: received %d bytes', received);
+
+    // .hda files usually have a 44-byte WAV header at the start
     return new Blob(chunks, { type: 'audio/wav' });
   }
 
@@ -326,40 +409,36 @@ class DeviceService {
   private async receiveResponse(
     expectedSeqId: number,
     timeout = 10000,
+    expectedCommandId?: number
   ): Promise<{ commandId: number; body: Uint8Array }> {
     if (!this.device) throw new Error('Device not connected');
 
     const deadline = Date.now() + timeout;
 
     while (Date.now() < deadline) {
-      try {
-        const result = await this.device.transferIn(ENDPOINT_IN, 65536);
-        if (result.status === 'ok' && result.data) {
-          this.receiveBuffer = concatBuffers(
-            this.receiveBuffer,
-            new Uint8Array(result.data.buffer),
-          );
-        }
-      } catch (err) {
-        if (!(err instanceof Error) || !err.message.includes('Timeout')) throw err;
+      // Small read to feel out the pipe
+      const result = await this.device.transferIn(ENDPOINT_IN, 65536);
+      if (result.status === 'ok' && result.data) {
+        this.receiveBuffer = concatBuffers(
+          this.receiveBuffer,
+          new Uint8Array(result.data.buffer),
+        );
       }
 
       // Try to extract a complete packet
-      const pkt = this.tryParsePacket(expectedSeqId);
-      if (pkt) return pkt;
+      const pkt = this.tryParsePacket(expectedSeqId, expectedCommandId);
+      if (pkt) {
+        return pkt;
+      }
 
       await new Promise((r) => setTimeout(r, 10));
     }
-
-    throw new Error(`Timeout waiting for response (seq: ${expectedSeqId})`);
+    throw new Error(`Timeout waiting for response to seq ${expectedSeqId}`);
   }
 
-  /**
-   * Try to parse one packet matching `expectedSeqId` from receiveBuffer.
-   * Returns null if buffer doesn't contain a complete matching packet yet.
-   */
   private tryParsePacket(
     expectedSeqId: number,
+    expectedCommandId?: number
   ): { commandId: number; body: Uint8Array } | null {
     while (this.receiveBuffer.length >= 12) {
       // Find sync bytes
@@ -382,7 +461,8 @@ class DeviceService {
       const body = this.receiveBuffer.slice(12, 12 + bodyLen);
       this.receiveBuffer = this.receiveBuffer.slice(totalLen);
 
-      if (seqId === expectedSeqId) {
+      // In streaming mode, some packets might have seqId 0 or the commandId we expect
+      if (seqId === expectedSeqId || (expectedCommandId !== undefined && commandId === expectedCommandId)) {
         return { commandId, body };
       }
       // Non-matching seqId — discard and keep looking
@@ -391,97 +471,78 @@ class DeviceService {
   }
 
   private async receiveStreamingFileList(
-    expectedSeqId: number,
-    onProgress?: (files: AudioRecording[]) => void,
+    seqId: number,
+    onProgress?: (files: AudioRecording[]) => void
   ): Promise<AudioRecording[]> {
-    if (!this.device) throw new Error('Device not connected');
-
     const recordings: AudioRecording[] = [];
-    let fileDataBuffer = new Uint8Array(0); // accumulates file-record body data across packets
-    const deadline = Date.now() + 30000;
-    let emptyPackets = 0;
+    let isHeaderProcessed = false;
+    let fileDataBuffer = new Uint8Array(0);
+
+    let totalOnDevice = 0;
+
+    // Timeout after 15 seconds if no files received
+    const deadline = Date.now() + 15000;
 
     while (Date.now() < deadline) {
-      // Read USB data
       try {
-        const result = await this.device.transferIn(ENDPOINT_IN, 65536);
-        if (result.status === 'ok' && result.data && result.data.byteLength > 0) {
-          this.receiveBuffer = concatBuffers(
-            this.receiveBuffer,
-            new Uint8Array(result.data.buffer),
-          );
-          emptyPackets = 0;
-        } else {
-          emptyPackets++;
-        }
-      } catch (err) {
-        if (!(err instanceof Error) || !err.message.includes('Timeout')) {
-          if (recordings.length > 0) return recordings;
-          throw err;
-        }
-        emptyPackets++;
-      }
+        const { body } = await this.receiveResponse(seqId, 2000, COMMANDS.GET_FILE_LIST);
 
-      // Extract all complete protocol packets from receiveBuffer
-      let gotNewData = false;
-      while (this.receiveBuffer.length >= 12) {
-        if (this.receiveBuffer[0] !== 0x12 || this.receiveBuffer[1] !== 0x34) {
-          this.receiveBuffer = this.receiveBuffer.slice(1);
-          continue;
-        }
+        if (body.length > 0) {
+          // Accumulate into buffer to handle records splitting across packets
+          const combined = new Uint8Array(fileDataBuffer.length + body.length);
+          combined.set(fileDataBuffer);
+          combined.set(body, fileDataBuffer.length);
+          fileDataBuffer = combined;
 
-        const lengthField = readU32BE(this.receiveBuffer, 8);
-        const checksumLen = (lengthField >>> 24) & 0xff;
-        const bodyLen = lengthField & 0x00ffffff;
-        const totalLen = 12 + bodyLen + checksumLen;
+          let offset = 0;
 
-        if (this.receiveBuffer.length < totalLen) break; // wait for more
-
-        const seqId = readU32BE(this.receiveBuffer, 4);
-        const body = this.receiveBuffer.slice(12, 12 + bodyLen);
-        this.receiveBuffer = this.receiveBuffer.slice(totalLen);
-
-        // Accept packets that match our seq or have seq 0 (broadcast / streaming)
-        if (seqId === expectedSeqId || seqId === 0) {
-          if (bodyLen === 0) {
-            // Empty body = end-of-stream marker
-            return recordings;
+          // Check for 6-byte header: FF FF totalFiles(4)
+          if (!isHeaderProcessed && fileDataBuffer.length >= 6 && fileDataBuffer[0] === 0xff && fileDataBuffer[1] === 0xff) {
+            totalOnDevice = readU32BE(fileDataBuffer, 2);
+            console.log('[OpenHiNotes] Device reports total files:', totalOnDevice);
+            offset = 6;
+            isHeaderProcessed = true;
           }
-          fileDataBuffer = concatBuffers(fileDataBuffer, body);
-          gotNewData = true;
+
+          const currentBatch: AudioRecording[] = [];
+          while (offset < fileDataBuffer.length) {
+            const result = parseFileRecord(fileDataBuffer, offset, recordings.length === 0);
+            if (!result) break; // Incomplete record, wait for more packets
+
+            recordings.push(result.recording);
+            currentBatch.push(result.recording);
+            offset += result.bytesRead;
+          }
+
+          // Discard processed data
+          if (offset > 0) {
+            fileDataBuffer = fileDataBuffer.slice(offset);
+          }
+
+          if (currentBatch.length > 0 && onProgress) {
+            onProgress([...currentBatch]);
+          }
+
+          // If we've reached the target count, we're done!
+          if (totalOnDevice > 0 && recordings.length >= totalOnDevice) {
+            console.log('[OpenHiNotes] Fetch complete: reached target of %d files', totalOnDevice);
+            break;
+          }
+        } else {
+           // Body length 0 often means finished
+           if (recordings.length > 0) break;
         }
+      } catch (error) {
+        if (recordings.length > 0) break; // If we have some, assume done
+        throw error;
       }
 
-      // Parse file records from accumulated body data
-      if (gotNewData) {
-        let offset = 0;
-        while (offset < fileDataBuffer.length) {
-          const result = parseFileRecord(fileDataBuffer, offset);
-          if (!result) break; // incomplete record, wait for more data
-          recordings.push(result.recording);
-          offset += result.bytesRead;
-        }
-        // Keep any leftover bytes for next round
-        fileDataBuffer = fileDataBuffer.slice(offset);
-
-        if (onProgress && recordings.length > 0) {
-          onProgress([...recordings]);
-        }
-      }
-
-      // If we got several consecutive empty reads and already have recordings, we're done
-      if (emptyPackets >= 3 && recordings.length > 0) {
-        return recordings;
-      }
-
-      await new Promise((r) => setTimeout(r, 10));
+      await new Promise(r => setTimeout(r, 10));
     }
 
-    // Log what we have for debugging
     if (fileDataBuffer.length > 0) {
-      console.warn('[OpenHiNotes] Unparsed file data remaining (%d bytes):',
-        fileDataBuffer.length,
-        Array.from(fileDataBuffer.slice(0, 40)).map(b => b.toString(16).padStart(2, '0')).join(' '));
+      console.warn('[OpenHiNotes] Unparsed file data remaining (%d bytes):', fileDataBuffer.length,
+        Array.from(fileDataBuffer.slice(0, 40)).map(b => (b as number).toString(16).padStart(2, '0')).join(' '));
     }
 
     return recordings;

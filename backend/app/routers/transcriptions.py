@@ -8,11 +8,12 @@ from fastapi import (
     Query,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from app.database import get_db
 from app.config import settings
 from app.schemas.transcription import (
     TranscriptionResponse,
+    PaginatedTranscriptionResponse,
     SpeakersUpdate,
     NotesUpdate,
 )
@@ -108,7 +109,7 @@ async def upload_transcription(
     return transcription
 
 
-@router.get("", response_model=list[TranscriptionResponse])
+@router.get("", response_model=PaginatedTranscriptionResponse)
 async def list_transcriptions(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
@@ -116,21 +117,26 @@ async def list_transcriptions(
     db: AsyncSession = Depends(get_db),
 ):
     """List transcriptions."""
-    if current_user.role == UserRole.admin:
-        # Admin sees all
-        result = await db.execute(
-            select(Transcription).offset(skip).limit(limit)
-        )
-    else:
+    # Base queries
+    query = select(Transcription).offset(skip).limit(limit)
+    count_query = select(func.count()).select_from(Transcription)
+
+    if current_user.role != UserRole.admin:
         # User sees only their own
-        result = await db.execute(
-            select(Transcription)
-            .where(Transcription.user_id == current_user.id)
-            .offset(skip)
-            .limit(limit)
-        )
+        query = query.where(Transcription.user_id == current_user.id)
+        count_query = count_query.where(Transcription.user_id == current_user.id)
+
+    # Execute queries
+    total = await db.scalar(count_query)
+    result = await db.execute(query)
     transcriptions = result.scalars().all()
-    return transcriptions
+
+    return {
+        "items": transcriptions,
+        "total": total or 0,
+        "skip": skip,
+        "limit": limit
+    }
 
 
 @router.get("/{transcription_id}", response_model=TranscriptionResponse)

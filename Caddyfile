@@ -1,7 +1,7 @@
-# Development Caddyfile
-# WebUSB requires HTTPS, so Caddy provides TLS even locally
+# Development Caddyfile (OpenHiNotes)
+# Handles access via hostname
 
-:443 {
+{$SITE_HOST}:443, localhost:443 {
 	tls internal
 
 	# API routes -> backend
@@ -15,7 +15,7 @@
 	}
 }
 
-# Redirect HTTP to HTTPS
+# Redirect HTTP to HTTPS on the external port 8443
 :80 {
-	redir https://{host}{uri} permanent
+	redir https://{host_only}:8443{uri} permanent
 }

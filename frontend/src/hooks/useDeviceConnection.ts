@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import { deviceService } from '@/services/deviceService';
 import { AudioRecording } from '@/types';
@@ -7,19 +7,23 @@ export function useDeviceConnection() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const { setDevice, setRecordings, device } = useAppStore();
+  const isInitializing = useRef(false);
 
   useEffect(() => {
     const initializeDevice = async () => {
+      if (isInitializing.current || device?.connected) return;
       if (localStorage.getItem('device_connected') === 'true') {
+        isInitializing.current = true;
         try {
           const devices = await navigator.usb.getDevices();
           if (devices.length > 0) {
-            const device = devices[0];
-            const hiDockDevice = await deviceService.connectDevice(device);
+            const hiDockDevice = await deviceService.connectDevice(devices[0]);
             setDevice(hiDockDevice);
           }
         } catch (err) {
           console.error('Failed to reconnect to device:', err);
+        } finally {
+          isInitializing.current = false;
         }
       }
     };
