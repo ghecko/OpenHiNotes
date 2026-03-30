@@ -362,48 +362,85 @@ class DeviceService {
     fileSize: number,
     onProgress?: (percent: number) => void,
   ): Promise<Blob> {
-    const fileNameBytes = new TextEncoder().encode(fileName);
-    
-    // Command body: [0..3] totalSize (BE), [4..] fileName
-    const body = new Uint8Array(4 + fileNameBytes.length);
-    writeU32BE(body, 0, fileSize);
-    body.set(fileNameBytes, 4);
-
     console.log('[OpenHiNotes] Starting stream download for %s (%d bytes)', fileName, fileSize);
 
     // Clear receive buffer before download to prevent stale data interference
     this.receiveBuffer = new Uint8Array(0);
 
-    const seqId = await this.sendCommand(COMMANDS.GET_FILE_BLOCK, body);
+    // Try TRANSFER_FILE command first (cmd 5, body = filename only).
+    // This is the protocol used by the reference desktop app (jensen.js)
+    // and works more reliably with newer v5 firmware.
+    const fileNameBytes = new TextEncoder().encode(fileName);
+    let seqId: number;
+    let streamCmd: number;
+
+    try {
+      seqId = await this.sendCommand(COMMANDS.TRANSFER_FILE, fileNameBytes);
+      streamCmd = COMMANDS.TRANSFER_FILE;
+      console.log('[OpenHiNotes] Using TRANSFER_FILE (cmd 5) protocol');
+    } catch {
+      // Fall back to GET_FILE_BLOCK (cmd 13) with 4-byte size prefix
+      const body = new Uint8Array(4 + fileNameBytes.length);
+      writeU32BE(body, 0, fileSize);
+      body.set(fileNameBytes, 4);
+      seqId = await this.sendCommand(COMMANDS.GET_FILE_BLOCK, body);
+      streamCmd = COMMANDS.GET_FILE_BLOCK;
+      console.log('[OpenHiNotes] Fallback to GET_FILE_BLOCK (cmd 13) protocol');
+    }
+
     const chunks: Uint8Array[] = [];
     let received = 0;
     const startTime = Date.now();
     const timeout = 300000; // 5 minutes per file
+    let consecutiveTimeouts = 0;
+    const maxConsecutiveTimeouts = 20; // Allow up to 20 timeouts (~100s) before giving up
 
     while (received < fileSize && (Date.now() - startTime < timeout)) {
       try {
-        // Many devices respond with command 5 (TRANSFER_FILE) during GET_FILE_BLOCK (13)
-        const response = await this.receiveResponse(seqId, 15000, COMMANDS.GET_FILE_BLOCK);
-        if (response.body.length === 0) break;
+        // Accept packets matching our seqId OR matching the stream command
+        // Also accept TRANSFER_FILE (5) when expecting GET_FILE_BLOCK (13) and vice versa
+        const response = await this.receiveResponse(seqId, 15000, streamCmd);
+        if (response.body.length === 0) {
+          console.log('[OpenHiNotes] Received empty packet at %d/%d bytes', received, fileSize);
+          if (received > 0) break; // End of transfer
+          continue;
+        }
 
         chunks.push(new Uint8Array(response.body));
         received += response.body.length;
+        consecutiveTimeouts = 0; // Reset on successful receive
 
-        if (received % (128 * 1024) === 0 || received === fileSize) {
-           console.log('[OpenHiNotes] Progress: %d/%d bytes', received, fileSize);
-        }
+        console.log('[OpenHiNotes] Chunk: +%d bytes, total: %d/%d (%d%%)',
+          response.body.length, received, fileSize,
+          Math.round((received / fileSize) * 100));
 
         if (onProgress && fileSize > 0) {
           onProgress(Math.min(100, Math.round((received / fileSize) * 100)));
         }
       } catch (err) {
-        console.warn('[OpenHiNotes] Download loop error:', err);
-        if (received > 0 && received >= fileSize - 1024) break; 
-        throw err;
+        consecutiveTimeouts++;
+        console.warn('[OpenHiNotes] Download timeout #%d at %d/%d bytes: %s',
+          consecutiveTimeouts, received, fileSize,
+          err instanceof Error ? err.message : String(err));
+
+        if (received > 0 && received >= fileSize - 1024) {
+          console.log('[OpenHiNotes] Close enough to expected size, finishing');
+          break;
+        }
+        if (consecutiveTimeouts >= maxConsecutiveTimeouts) {
+          console.error('[OpenHiNotes] Too many consecutive timeouts, aborting');
+          throw new Error(`Download stalled at ${Math.round((received / fileSize) * 100)}% (${received}/${fileSize} bytes)`);
+        }
+        // Otherwise continue the loop — the device may just be slow
       }
     }
 
-    console.log('[OpenHiNotes] Download complete: received %d bytes', received);
+    if (received === 0) {
+      throw new Error('No data received from device');
+    }
+
+    console.log('[OpenHiNotes] Download complete: received %d/%d bytes in %ds',
+      received, fileSize, Math.round((Date.now() - startTime) / 1000));
 
     // .hda files usually have a 44-byte WAV header at the start
     return new Blob(chunks, { type: 'audio/wav' });
@@ -470,7 +507,18 @@ class DeviceService {
 
     while (Date.now() < deadline) {
       try {
-        const result = await this.device.transferIn(ENDPOINT_IN, 65536);
+        // Wrap transferIn in a race with a timeout to prevent it from
+        // blocking indefinitely (WebUSB can hang if the device stops responding)
+        const remaining = Math.max(deadline - Date.now(), 100);
+        const usbTimeout = Math.min(remaining, 5000);
+
+        const result = await Promise.race([
+          this.device.transferIn(ENDPOINT_IN, 65536),
+          new Promise<USBInTransferResult>((_resolve, reject) =>
+            setTimeout(() => reject(new Error('USB_READ_TIMEOUT')), usbTimeout)
+          ),
+        ]);
+
         if (result.status === 'ok' && result.data) {
           this.receiveBuffer = concatBuffers(
             this.receiveBuffer,
@@ -478,7 +526,8 @@ class DeviceService {
           );
         }
       } catch (err) {
-        // Continue, might be a transient timeout
+        // USB_READ_TIMEOUT or DOMException NetworkError — both are expected,
+        // continue the loop so the deadline check can fire.
       }
 
       // Try to extract a complete packet
@@ -521,9 +570,18 @@ class DeviceService {
       // 1. Precise sequence match
       // 2. Command match (for streaming)
       // 3. Alias match: response for GET_FILE_BLOCK(13) is often TRANSFER_FILE(5)
+      // Accept either exact command match or cross-match between
+      // TRANSFER_FILE (5) and GET_FILE_BLOCK (13) — devices may respond
+      // with either command regardless of which was sent
+      const isFileTransferCmd = (
+        commandId === COMMANDS.TRANSFER_FILE || commandId === COMMANDS.GET_FILE_BLOCK
+      );
+      const expectedIsFileTransfer = (
+        expectedCommandId === COMMANDS.TRANSFER_FILE || expectedCommandId === COMMANDS.GET_FILE_BLOCK
+      );
       const isCmdMatch = expectedCommandId !== undefined && (
-        commandId === expectedCommandId || 
-        (expectedCommandId === COMMANDS.GET_FILE_BLOCK && commandId === COMMANDS.TRANSFER_FILE)
+        commandId === expectedCommandId ||
+        (expectedIsFileTransfer && isFileTransferCmd)
       );
 
       if (seqId === expectedSeqId || isCmdMatch) {
