@@ -1,6 +1,7 @@
 import httpx
 import json
 from typing import AsyncGenerator, Optional, List, Dict
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.schemas.chat import ChatMessage
 
@@ -9,10 +10,31 @@ class LLMService:
     """Service for LLM operations."""
 
     @staticmethod
+    async def _resolve_settings(db: Optional[AsyncSession] = None) -> Dict[str, str]:
+        """Resolve LLM settings from DB or fall back to env."""
+        if db:
+            from app.services.settings_service import get_effective_setting
+            return {
+                "llm_api_url": await get_effective_setting(db, "llm_api_url"),
+                "llm_api_key": await get_effective_setting(db, "llm_api_key"),
+                "llm_model": await get_effective_setting(db, "llm_model"),
+            }
+        return {
+            "llm_api_url": settings.llm_api_url,
+            "llm_api_key": settings.llm_api_key,
+            "llm_model": settings.llm_model,
+        }
+
+    @staticmethod
     async def create_summary(
-        transcript_text: str, prompt_template: str, custom_prompt: Optional[str] = None
+        transcript_text: str,
+        prompt_template: str,
+        custom_prompt: Optional[str] = None,
+        db: Optional[AsyncSession] = None,
     ) -> tuple[str, str]:
         """Create a summary from a transcript using a template or custom prompt."""
+        cfg = await LLMService._resolve_settings(db)
+
         # Use custom prompt if provided, otherwise use template
         if custom_prompt:
             final_prompt = custom_prompt.replace("{{transcript}}", transcript_text)
@@ -24,13 +46,13 @@ class LLMService:
             {"role": "user", "content": final_prompt},
         ]
 
-        url = f"{settings.llm_api_url}/chat/completions"
+        url = f"{cfg['llm_api_url']}/chat/completions"
         headers = {}
-        if settings.llm_api_key:
-            headers["Authorization"] = f"Bearer {settings.llm_api_key}"
+        if cfg["llm_api_key"]:
+            headers["Authorization"] = f"Bearer {cfg['llm_api_key']}"
 
         payload = {
-            "model": settings.llm_model,
+            "model": cfg["llm_model"],
             "messages": messages,
             "temperature": 0.7,
             "stream": False,
@@ -44,7 +66,7 @@ class LLMService:
 
         result = response.json()
         summary_text = result["choices"][0]["message"]["content"]
-        model_used = result.get("model", settings.llm_model)
+        model_used = result.get("model", cfg["llm_model"])
 
         return summary_text, model_used
 
@@ -54,17 +76,19 @@ class LLMService:
         model: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        db: Optional[AsyncSession] = None,
     ) -> AsyncGenerator[str, None]:
         """Stream chat completion responses."""
-        model_to_use = model or settings.llm_model
+        cfg = await LLMService._resolve_settings(db)
+        model_to_use = model or cfg["llm_model"]
 
         # Convert ChatMessage objects to dicts
         message_dicts = [{"role": m.role, "content": m.content} for m in messages]
 
-        url = f"{settings.llm_api_url}/chat/completions"
+        url = f"{cfg['llm_api_url']}/chat/completions"
         headers = {}
-        if settings.llm_api_key:
-            headers["Authorization"] = f"Bearer {settings.llm_api_key}"
+        if cfg["llm_api_key"]:
+            headers["Authorization"] = f"Bearer {cfg['llm_api_key']}"
 
         payload = {
             "model": model_to_use,

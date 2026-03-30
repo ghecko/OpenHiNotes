@@ -37,11 +37,20 @@ class TranscriptionService:
     @staticmethod
     async def transcribe_with_whisperx(
         file_path: str,
-        model: str = settings.whisperx_model,
         language: Optional[str] = None,
+        db: Optional[AsyncSession] = None,
     ) -> Dict[str, Any]:
         """Call WhisperX API to transcribe audio file."""
-        whisperx_url = f"{settings.whisperx_api_url}/v1/audio/transcriptions"
+        # Resolve settings from DB (if available) or fall back to env
+        if db:
+            from app.services.settings_service import get_effective_setting
+            whisperx_url_base = await get_effective_setting(db, "whisperx_api_url")
+            model = await get_effective_setting(db, "whisperx_model")
+        else:
+            whisperx_url_base = settings.whisperx_api_url
+            model = settings.whisperx_model
+
+        whisperx_url = f"{whisperx_url_base}/v1/audio/transcriptions"
 
         with open(file_path, "rb") as f:
             files = {"file": (Path(file_path).name, f, "audio/mpeg")}
@@ -117,7 +126,7 @@ class TranscriptionService:
         # Transcribe asynchronously
         try:
             whisperx_response = await TranscriptionService.transcribe_with_whisperx(
-                file_path, language=language
+                file_path, language=language, db=db
             )
             parsed = TranscriptionService.parse_whisperx_response(whisperx_response)
 

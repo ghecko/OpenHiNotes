@@ -75,7 +75,7 @@ async def create_summary(
     # Create summary via LLM
     try:
         summary_text, model_used = await LLMService.create_summary(
-            transcription.text, prompt, summary_create.custom_prompt
+            transcription.text, prompt, summary_create.custom_prompt, db=db
         )
     except Exception as e:
         raise HTTPException(

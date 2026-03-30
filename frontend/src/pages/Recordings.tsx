@@ -37,9 +37,9 @@ export function Recordings() {
     }
   }, [device?.connected, refreshRecordings]);
 
-  const handlePlayRecording = async (fileName: string, fileSize: number) => {
+  const handlePlayRecording = async (recordingId: string, fileName: string, fileSize: number) => {
     const blob = await downloadRecording(fileName, fileSize, (percent) => {
-      setDownloadProgress((prev) => ({ ...prev, [fileName]: percent }));
+      setDownloadProgress((prev) => ({ ...prev, [recordingId]: percent }));
     });
 
     if (blob) {
@@ -47,10 +47,10 @@ export function Recordings() {
     }
   };
 
-  const handleTranscribeRecording = async (fileName: string, fileSize: number, summarize = false) => {
+  const handleTranscribeRecording = async (recordingId: string, fileName: string, fileSize: number, summarize = false) => {
     setAutoSummarize(summarize);
     const blob = await downloadRecording(fileName, fileSize, (percent) => {
-      setDownloadProgress((prev) => ({ ...prev, [fileName]: percent }));
+      setDownloadProgress((prev) => ({ ...prev, [recordingId]: percent }));
     });
 
     if (blob) {
@@ -213,6 +213,9 @@ export function Recordings() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
                     Duration
                   </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+                    Date
+                  </th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
                     Actions
                   </th>
@@ -247,13 +250,16 @@ export function Recordings() {
                           ? `${Math.floor(recording.duration / 60)}m ${Math.round(recording.duration % 60)}s`
                           : `${Math.round(recording.duration)}s`}
                       </td>
+                      <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
+                        {format(recording.dateCreated, 'MMM d, yyyy HH:mm')}
+                      </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
                           {isDownloading && (
                             <span className="text-xs text-gray-500">{progress}%</span>
                           )}
                           <button
-                            onClick={() => handlePlayRecording(recording.fileName, recording.size)}
+                            onClick={() => handlePlayRecording(recording.id, recording.fileName, recording.size)}
                             disabled={isLoading || isDownloading}
                             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded text-gray-600 dark:text-gray-400 disabled:opacity-50"
                             title="Play"
@@ -261,7 +267,7 @@ export function Recordings() {
                             <Play className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => handleTranscribeRecording(recording.fileName, recording.size, false)}
+                            onClick={() => handleTranscribeRecording(recording.id, recording.fileName, recording.size, false)}
                             disabled={isLoading || isDownloading}
                             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded text-gray-600 dark:text-gray-400 disabled:opacity-50"
                             title="Transcribe"
@@ -269,7 +275,7 @@ export function Recordings() {
                             <FileText className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => handleTranscribeRecording(recording.fileName, recording.size, true)}
+                            onClick={() => handleTranscribeRecording(recording.id, recording.fileName, recording.size, true)}
                             disabled={isLoading || isDownloading}
                             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded text-gray-600 dark:text-gray-400 disabled:opacity-50"
                             title="Transcribe & Summarize"

@@ -60,6 +60,51 @@ function concatBuffers(a: Uint8Array, b: Uint8Array): Uint8Array {
   return c;
 }
 
+// ---- Date parsing from filename ----
+
+function parseFilenameDate(filename: string): Date {
+  try {
+    // Format: YYYYMMDDHHMMSS (14-digit prefix)
+    if (filename.length >= 14 && filename.slice(0, 14).match(/^\d{14}$/)) {
+      const year = parseInt(filename.slice(0, 4));
+      const month = parseInt(filename.slice(4, 6)) - 1;
+      const day = parseInt(filename.slice(6, 8));
+      const hour = parseInt(filename.slice(8, 10));
+      const minute = parseInt(filename.slice(10, 12));
+      const second = parseInt(filename.slice(12, 14));
+      return new Date(year, month, day, hour, minute, second);
+    }
+
+    // Format: 2025May12-114141-Rec44.hda
+    const monthMatch = filename.match(/^(\d{4})([A-Za-z]{3})(\d{1,2})-(\d{2})(\d{2})(\d{2})/);
+    if (monthMatch) {
+      const [, yearStr, monthStr, dayStr, hourStr, minuteStr, secondStr] = monthMatch;
+      const monthMap: Record<string, number> = {
+        'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+        'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+      };
+      const month = monthMap[monthStr];
+      if (month !== undefined) {
+        return new Date(parseInt(yearStr), month, parseInt(dayStr),
+          parseInt(hourStr), parseInt(minuteStr), parseInt(secondStr));
+      }
+    }
+
+    // Format: HDA_20250108_144523.hda or 2025-12-08_0044.hda
+    const numericMatch = filename.match(/(\d{4})[-_]?(\d{2})[-_]?(\d{2})[-_](\d{2})(\d{2})(\d{2})?/);
+    if (numericMatch) {
+      const [, yearStr, monthStr, dayStr, hourStr, minuteStr, secondStr] = numericMatch;
+      return new Date(parseInt(yearStr), parseInt(monthStr) - 1, parseInt(dayStr),
+        parseInt(hourStr), parseInt(minuteStr), parseInt(secondStr || '0'));
+    }
+  } catch (error) {
+    console.debug('[OpenHiNotes] Date parse error for "%s":', filename, error);
+  }
+
+  // Fallback to current date
+  return new Date();
+}
+
 // ---- File record parsing ----
 // HiDock file record format (from GET_FILE_LIST body):
 //   [0]       fileVersion   (uint8)
@@ -152,7 +197,7 @@ function parseFileRecord(
       fileName,
       size,
       duration,
-      dateCreated: new Date(),
+      dateCreated: parseFilenameDate(fileName),
       fileVersion: version,
       signature,
     },
@@ -326,16 +371,19 @@ class DeviceService {
 
     console.log('[OpenHiNotes] Starting stream download for %s (%d bytes)', fileName, fileSize);
 
+    // Clear receive buffer before download to prevent stale data interference
+    this.receiveBuffer = new Uint8Array(0);
+
     const seqId = await this.sendCommand(COMMANDS.GET_FILE_BLOCK, body);
     const chunks: Uint8Array[] = [];
     let received = 0;
     const startTime = Date.now();
-    const timeout = 60000; // 1 minute per file
+    const timeout = 300000; // 5 minutes per file
 
     while (received < fileSize && (Date.now() - startTime < timeout)) {
       try {
         // Many devices respond with command 5 (TRANSFER_FILE) during GET_FILE_BLOCK (13)
-        const response = await this.receiveResponse(seqId, 5000, COMMANDS.GET_FILE_BLOCK);
+        const response = await this.receiveResponse(seqId, 15000, COMMANDS.GET_FILE_BLOCK);
         if (response.body.length === 0) break;
 
         chunks.push(new Uint8Array(response.body));
@@ -563,6 +611,8 @@ class DeviceService {
         Array.from(fileDataBuffer.slice(0, 40)).map(b => (b as number).toString(16).padStart(2, '0')).join(' '));
     }
 
+    // Sort by date, newest first
+    recordings.sort((a, b) => b.dateCreated.getTime() - a.dateCreated.getTime());
     return recordings;
   }
 }

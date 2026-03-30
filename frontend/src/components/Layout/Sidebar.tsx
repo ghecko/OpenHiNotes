@@ -6,6 +6,7 @@ import {
   MessageSquare,
   Settings,
   Shield,
+  Plug,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
@@ -32,6 +33,7 @@ export function Sidebar() {
   const adminItems = user?.role === 'admin' ? [
     { path: '/admin/templates', label: 'Templates', icon: FileText },
     { path: '/admin/users', label: 'Users', icon: Shield },
+    { path: '/admin/settings', label: 'API Settings', icon: Plug },
   ] : [];
 
   return (

@@ -25,7 +25,7 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       token: null,
       isAuthenticated: false,
-      isLoading: false,
+      isLoading: true,
       error: null,
 
       login: async (email: string, password: string) => {
@@ -95,11 +95,15 @@ export const useAuthStore = create<AuthState>()(
       },
 
       initialize: async () => {
-        const token = localStorage.getItem('auth_token');
+        const token = localStorage.getItem('auth_token') || get().token;
         if (token) {
           apiClient.setToken(token);
+          // Ensure both storages are in sync
+          localStorage.setItem('auth_token', token);
           set({ token });
           await get().loadUser();
+        } else {
+          set({ isLoading: false });
         }
       },
 

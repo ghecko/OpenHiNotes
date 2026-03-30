@@ -61,6 +61,7 @@ async def chat(
                 model=chat_request.model,
                 temperature=chat_request.temperature,
                 max_tokens=chat_request.max_tokens,
+                db=db,
             ):
                 # Send as SSE
                 event_data = json.dumps({"content": chunk})

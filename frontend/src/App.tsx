@@ -16,6 +16,7 @@ import { Chat } from '@/pages/Chat';
 import { Settings } from '@/pages/Settings';
 import { Templates } from '@/pages/admin/Templates';
 import { Users } from '@/pages/admin/Users';
+import { ApiSettings } from '@/pages/admin/ApiSettings';
 
 // Components
 import { ProtectedRoute } from '@/components/ProtectedRoute';
@@ -109,6 +110,15 @@ function App() {
         element={
           <ProtectedRoute adminOnly>
             <Users />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/admin/settings"
+        element={
+          <ProtectedRoute adminOnly>
+            <ApiSettings />
           </ProtectedRoute>
         }
       />
