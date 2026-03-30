@@ -36,7 +36,7 @@ services:
       LLM_MODEL: ${LLM_MODEL:-gpt-3.5-turbo}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@openhinotes.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
-      CORS_ORIGINS: "*"
+      CORS_ORIGINS: '["*"]'
     volumes:
       - uploads_data:/app/uploads
     ports:
