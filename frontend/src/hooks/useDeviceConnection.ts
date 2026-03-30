@@ -79,7 +79,7 @@ export function useDeviceConnection() {
   }, [setRecordings]);
 
   const downloadRecording = useCallback(
-    async (fileName: string, onProgress?: (percent: number) => void) => {
+    async (fileName: string, fileSize: number, onProgress?: (percent: number) => void) => {
       if (!deviceService.isConnected()) {
         setError('Device not connected');
         return null;
@@ -89,7 +89,7 @@ export function useDeviceConnection() {
       setError(null);
 
       try {
-        const blob = await deviceService.downloadFile(fileName, onProgress);
+        const blob = await deviceService.downloadFile(fileName, fileSize, onProgress);
         return blob;
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to download recording';
@@ -100,7 +100,7 @@ export function useDeviceConnection() {
         setIsLoading(false);
       }
     },
-    []
+    [],
   );
 
   const deleteRecording = useCallback(async (fileName: string) => {

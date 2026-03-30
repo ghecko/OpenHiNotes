@@ -37,8 +37,8 @@ export function Recordings() {
     }
   }, [device?.connected, refreshRecordings]);
 
-  const handlePlayRecording = async (fileName: string) => {
-    const blob = await downloadRecording(fileName, (percent) => {
+  const handlePlayRecording = async (fileName: string, fileSize: number) => {
+    const blob = await downloadRecording(fileName, fileSize, (percent) => {
       setDownloadProgress((prev) => ({ ...prev, [fileName]: percent }));
     });
 
@@ -47,9 +47,9 @@ export function Recordings() {
     }
   };
 
-  const handleTranscribeRecording = async (fileName: string, summarize = false) => {
+  const handleTranscribeRecording = async (fileName: string, fileSize: number, summarize = false) => {
     setAutoSummarize(summarize);
-    const blob = await downloadRecording(fileName, (percent) => {
+    const blob = await downloadRecording(fileName, fileSize, (percent) => {
       setDownloadProgress((prev) => ({ ...prev, [fileName]: percent }));
     });
 
@@ -119,7 +119,7 @@ export function Recordings() {
             Total Recordings
           </h3>
           <p className="text-3xl font-bold text-gray-900 dark:text-white">
-            {device.storageInfo?.fileCount || 0}
+            {recordings.length}
           </p>
         </div>
 
@@ -243,7 +243,9 @@ export function Recordings() {
                         {(recording.size / 1024 / 1024).toFixed(2)} MB
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-                        {Math.ceil(recording.duration / 60)} min
+                        {recording.duration >= 60
+                          ? `${Math.floor(recording.duration / 60)}m ${Math.round(recording.duration % 60)}s`
+                          : `${Math.round(recording.duration)}s`}
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
@@ -251,7 +253,7 @@ export function Recordings() {
                             <span className="text-xs text-gray-500">{progress}%</span>
                           )}
                           <button
-                            onClick={() => handlePlayRecording(recording.fileName)}
+                            onClick={() => handlePlayRecording(recording.fileName, recording.size)}
                             disabled={isLoading || isDownloading}
                             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded text-gray-600 dark:text-gray-400 disabled:opacity-50"
                             title="Play"
@@ -259,7 +261,7 @@ export function Recordings() {
                             <Play className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => handleTranscribeRecording(recording.fileName, false)}
+                            onClick={() => handleTranscribeRecording(recording.fileName, recording.size, false)}
                             disabled={isLoading || isDownloading}
                             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded text-gray-600 dark:text-gray-400 disabled:opacity-50"
                             title="Transcribe"
@@ -267,7 +269,7 @@ export function Recordings() {
                             <FileText className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => handleTranscribeRecording(recording.fileName, true)}
+                            onClick={() => handleTranscribeRecording(recording.fileName, recording.size, true)}
                             disabled={isLoading || isDownloading}
                             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded text-gray-600 dark:text-gray-400 disabled:opacity-50"
                             title="Transcribe & Summarize"
