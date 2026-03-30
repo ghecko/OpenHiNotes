@@ -135,7 +135,7 @@ export function Templates() {
                   Prompt Template
                 </label>
                 <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                  Use {{'{{'}}transcript{{'}}'}} to reference the transcription text
+                  {"Use {{transcript}} to reference the transcription text"}
                 </p>
                 <textarea
                   value={formData.prompt_template}
