@@ -47,7 +47,12 @@ class APIClient {
     if (!response.ok) {
       if (response.status === 401) {
         this.clearToken();
-        window.location.href = '/login';
+        // Also clear zustand persisted auth state to prevent stale token on reload
+        localStorage.removeItem('auth-storage');
+        // Only redirect if not already on the login page to avoid infinite reload loop
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
       }
       const error = await response.json().catch(() => ({ message: 'An error occurred' }));
       throw new Error(error.message || `HTTP ${response.status}`);
@@ -110,7 +115,10 @@ class APIClient {
     if (!response.ok) {
       if (response.status === 401) {
         this.clearToken();
-        window.location.href = '/login';
+        localStorage.removeItem('auth-storage');
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
       }
       const error = await response.json().catch(() => ({ message: 'An error occurred' }));
       throw new Error(error.message || `HTTP ${response.status}`);
@@ -140,7 +148,10 @@ class APIClient {
     if (!response.ok) {
       if (response.status === 401) {
         this.clearToken();
-        window.location.href = '/login';
+        localStorage.removeItem('auth-storage');
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
       }
       throw new Error(`HTTP ${response.status}`);
     }
