@@ -37,21 +37,21 @@ export function Recordings() {
     }
   }, [device?.connected, refreshRecordings]);
 
-  const handlePlayRecording = async (recordingId: string, fileName: string, fileSize: number) => {
+  const handlePlayRecording = async (recordingId: string, fileName: string, fileSize: number, fileVersion?: number) => {
     const blob = await downloadRecording(fileName, fileSize, (percent) => {
       setDownloadProgress((prev) => ({ ...prev, [recordingId]: percent }));
-    });
+    }, fileVersion);
 
     if (blob) {
       setPlayingFile({ blob, name: fileName });
     }
   };
 
-  const handleTranscribeRecording = async (recordingId: string, fileName: string, fileSize: number, summarize = false) => {
+  const handleTranscribeRecording = async (recordingId: string, fileName: string, fileSize: number, summarize = false, fileVersion?: number) => {
     setAutoSummarize(summarize);
     const blob = await downloadRecording(fileName, fileSize, (percent) => {
       setDownloadProgress((prev) => ({ ...prev, [recordingId]: percent }));
-    });
+    }, fileVersion);
 
     if (blob) {
       setSelectedAudio(blob);
@@ -259,7 +259,7 @@ export function Recordings() {
                             <span className="text-xs text-gray-500">{progress}%</span>
                           )}
                           <button
-                            onClick={() => handlePlayRecording(recording.id, recording.fileName, recording.size)}
+                            onClick={() => handlePlayRecording(recording.id, recording.fileName, recording.size, recording.fileVersion)}
                             disabled={isLoading || isDownloading}
                             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded text-gray-600 dark:text-gray-400 disabled:opacity-50"
                             title="Play"
@@ -267,7 +267,7 @@ export function Recordings() {
                             <Play className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => handleTranscribeRecording(recording.id, recording.fileName, recording.size, false)}
+                            onClick={() => handleTranscribeRecording(recording.id, recording.fileName, recording.size, false, recording.fileVersion)}
                             disabled={isLoading || isDownloading}
                             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded text-gray-600 dark:text-gray-400 disabled:opacity-50"
                             title="Transcribe"
@@ -275,7 +275,7 @@ export function Recordings() {
                             <FileText className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => handleTranscribeRecording(recording.id, recording.fileName, recording.size, true)}
+                            onClick={() => handleTranscribeRecording(recording.id, recording.fileName, recording.size, true, recording.fileVersion)}
                             disabled={isLoading || isDownloading}
                             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded text-gray-600 dark:text-gray-400 disabled:opacity-50"
                             title="Transcribe & Summarize"

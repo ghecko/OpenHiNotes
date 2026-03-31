@@ -5,14 +5,24 @@ import { Save, RotateCcw, Loader, CheckCircle, AlertCircle } from 'lucide-react'
 
 const SETTING_LABELS: Record<string, { label: string; placeholder: string; type: string }> = {
   whisperx_api_url: {
-    label: 'WhisperX API URL',
+    label: 'VoxBench / WhisperX API URL',
     placeholder: 'http://whisperx:8000',
     type: 'url',
   },
+  whisperx_api_key: {
+    label: 'VoxBench API Key',
+    placeholder: 'Leave empty if no auth required',
+    type: 'password',
+  },
   whisperx_model: {
-    label: 'Whisper Model',
-    placeholder: 'large-v3',
+    label: 'Transcription Model',
+    placeholder: 'whisper:turbo, voxtral:mini-4b, large-v3',
     type: 'text',
+  },
+  voxbench_job_mode: {
+    label: 'VoxBench Job Mode (async)',
+    placeholder: 'false',
+    type: 'toggle',
   },
   llm_api_url: {
     label: 'LLM API URL',
@@ -132,19 +142,41 @@ export function ApiSettings() {
                   </p>
                 )}
                 <div className="flex gap-2">
-                  <input
-                    type={meta?.type === 'password' ? 'password' : 'text'}
-                    value={editValues[setting.key] || ''}
-                    onChange={(e) =>
-                      setEditValues((prev) => ({ ...prev, [setting.key]: e.target.value }))
-                    }
-                    placeholder={
-                      isSensitive && setting.source === 'database'
-                        ? 'Enter new value to update (current value is set)'
-                        : meta?.placeholder
-                    }
-                    className="flex-1 px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                  />
+                  {meta?.type === 'toggle' ? (
+                    <button
+                      onClick={() => {
+                        const current = (editValues[setting.key] || 'false').toLowerCase() === 'true';
+                        setEditValues((prev) => ({ ...prev, [setting.key]: current ? 'false' : 'true' }));
+                      }}
+                      className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors ${
+                        (editValues[setting.key] || 'false').toLowerCase() === 'true'
+                          ? 'bg-blue-600'
+                          : 'bg-gray-300 dark:bg-gray-600'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                          (editValues[setting.key] || 'false').toLowerCase() === 'true'
+                            ? 'translate-x-7'
+                            : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  ) : (
+                    <input
+                      type={meta?.type === 'password' ? 'password' : 'text'}
+                      value={editValues[setting.key] || ''}
+                      onChange={(e) =>
+                        setEditValues((prev) => ({ ...prev, [setting.key]: e.target.value }))
+                      }
+                      placeholder={
+                        isSensitive && setting.source === 'database'
+                          ? 'Enter new value to update (current value is set)'
+                          : meta?.placeholder
+                      }
+                      className="flex-1 px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    />
+                  )}
                   <button
                     onClick={() => handleSave(setting.key)}
                     disabled={isSaving || !isModified}
@@ -201,9 +233,11 @@ export function ApiSettings() {
         </div>
       ) : (
         <div className="space-y-6">
-          {renderSettingGroup('Transcription (WhisperX)', [
+          {renderSettingGroup('Transcription (VoxBench / WhisperX)', [
             'whisperx_api_url',
+            'whisperx_api_key',
             'whisperx_model',
+            'voxbench_job_mode',
           ])}
           {renderSettingGroup('LLM / Chat', [
             'llm_api_url',

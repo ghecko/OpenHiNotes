@@ -13,22 +13,36 @@ export function AudioPlayer({ src, fileName }: AudioPlayerProps) {
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
 
+  const [audioError, setAudioError] = useState<string | null>(null);
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
     const handleTimeUpdate = () => setCurrentTime(audio.currentTime);
-    const handleLoadedMetadata = () => setDuration(audio.duration);
+    const handleLoadedMetadata = () => {
+      setDuration(audio.duration);
+      setAudioError(null);
+    };
     const handleEnded = () => setIsPlaying(false);
+    const handleError = () => {
+      const err = audio.error;
+      const msg = err ? `Audio error (code ${err.code}): ${err.message}` : 'Unknown audio error';
+      console.error('[OpenHiNotes] AudioPlayer:', msg);
+      setAudioError(msg);
+      setIsPlaying(false);
+    };
 
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('loadedmetadata', handleLoadedMetadata);
     audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('error', handleError);
 
     return () => {
       audio.removeEventListener('timeupdate', handleTimeUpdate);
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
       audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('error', handleError);
     };
   }, []);
 
@@ -66,7 +80,17 @@ export function AudioPlayer({ src, fileName }: AudioPlayerProps) {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const audioSrc = typeof src === 'string' ? src : URL.createObjectURL(src);
+  // Create and revoke object URL properly to avoid memory leaks
+  const [audioSrc, setAudioSrc] = useState<string>('');
+  useEffect(() => {
+    if (typeof src === 'string') {
+      setAudioSrc(src);
+      return;
+    }
+    const url = URL.createObjectURL(src);
+    setAudioSrc(url);
+    return () => URL.revokeObjectURL(url);
+  }, [src]);
 
   return (
     <div className="flex flex-col gap-3 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
@@ -75,6 +99,12 @@ export function AudioPlayer({ src, fileName }: AudioPlayerProps) {
       <div className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
         {fileName}
       </div>
+
+      {audioError && (
+        <div className="text-xs text-red-500 bg-red-50 dark:bg-red-900/30 px-3 py-1.5 rounded">
+          {audioError}
+        </div>
+      )}
 
       <div className="flex items-center gap-3">
         <button

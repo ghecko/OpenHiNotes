@@ -175,6 +175,64 @@ function parseFilenameDate(filename: string): Date {
   return new Date();
 }
 
+// ---- Audio format detection & WAV header ----
+
+/**
+ * Detect audio format from the first bytes of downloaded data.
+ * HiDock .hda files can be WAV (RIFF header), MPEG audio, or raw PCM.
+ */
+function detectAudioFormat(firstChunk: Uint8Array): 'wav' | 'mpeg' | 'pcm' {
+  if (firstChunk.length >= 4) {
+    // WAV: starts with "RIFF"
+    if (firstChunk[0] === 0x52 && firstChunk[1] === 0x49 &&
+        firstChunk[2] === 0x46 && firstChunk[3] === 0x46) {
+      return 'wav';
+    }
+    // MPEG frame sync: 0xFF followed by 0xE0+ (11 sync bits)
+    if (firstChunk[0] === 0xFF && (firstChunk[1] & 0xE0) === 0xE0) {
+      return 'mpeg';
+    }
+  }
+  return 'pcm';
+}
+
+/**
+ * Create a WAV file header for raw PCM data.
+ * HiDock file versions: v2 = 16kHz 16-bit mono, others = 16kHz 8-bit mono.
+ */
+function createWavHeader(
+  dataSize: number,
+  fileVersion: number,
+): Uint8Array {
+  const sampleRate = 16000;
+  const bitsPerSample = fileVersion === 2 ? 16 : 16; // treat all as 16-bit for browser compat
+  const numChannels = 1;
+  const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+  const blockAlign = numChannels * (bitsPerSample / 8);
+
+  const header = new ArrayBuffer(44);
+  const view = new DataView(header);
+  const writeStr = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+  };
+
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);         // PCM sub-chunk size
+  view.setUint16(20, 1, true);          // PCM format
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeStr(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  return new Uint8Array(header);
+}
+
 // ---- File record parsing ----
 // HiDock file record format (from GET_FILE_LIST body):
 //   [0]       fileVersion   (uint8)
@@ -431,6 +489,7 @@ class DeviceService {
     fileName: string,
     fileSize: number,
     onProgress?: (percent: number) => void,
+    fileVersion?: number,
   ): Promise<Blob> {
     console.log('[OpenHiNotes] Starting stream download for %s (%d bytes)', fileName, fileSize);
 
@@ -532,11 +591,26 @@ class DeviceService {
       throw new Error('No data received from device');
     }
 
-    console.log('[OpenHiNotes] Download complete: received %d/%d bytes in %ds',
-      received, fileSize, Math.round((Date.now() - startTime) / 1000));
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    console.log('[OpenHiNotes] Download complete: received %d/%d bytes in %ds', received, fileSize, elapsed);
 
-    // .hda files usually have a 44-byte WAV header at the start
-    return new Blob(chunks, { type: 'audio/wav' });
+    // Detect the actual audio format from the first chunk
+    const format = chunks.length > 0 ? detectAudioFormat(chunks[0]) : 'pcm';
+    console.log('[OpenHiNotes] Detected audio format: %s (fileVersion=%d)', format, fileVersion ?? -1);
+
+    if (format === 'wav') {
+      // Already has a valid WAV header
+      return new Blob(chunks, { type: 'audio/wav' });
+    }
+
+    if (format === 'mpeg') {
+      // MPEG Layer 1/2 audio — browser can play this natively
+      return new Blob(chunks, { type: 'audio/mpeg' });
+    }
+
+    // Raw PCM: prepend a WAV header so the browser can decode it
+    const wavHeader = createWavHeader(received, fileVersion ?? 1);
+    return new Blob([wavHeader, ...chunks], { type: 'audio/wav' });
   }
 
   async deleteFile(fileName: string): Promise<void> {
