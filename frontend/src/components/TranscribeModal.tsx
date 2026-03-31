@@ -34,6 +34,7 @@ export function TranscribeModal({
 }: TranscribeModalProps) {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [progressStatus, setProgressStatus] = useState('');
   const [language, setLanguage] = useState('auto');
   const [autoSummarize, setAutoSummarize] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
@@ -62,15 +63,21 @@ export function TranscribeModal({
     if (!audioFile) return;
 
     setIsTranscribing(true);
+    setProgress(0);
     setError(null);
 
     try {
       const file = new File([audioFile], fileName, { type: 'audio/wav' });
-      const transcription = await transcriptionsApi.uploadAndTranscribe(
+
+      const transcription = await transcriptionsApi.uploadAndTranscribeStream(
         file,
         language,
         autoSummarize,
-        autoSummarize ? selectedTemplate : undefined
+        autoSummarize ? selectedTemplate : undefined,
+        (status, pct) => {
+          setProgressStatus(status);
+          setProgress(Math.round(pct));
+        },
       );
 
       setProgress(100);
@@ -177,12 +184,18 @@ export function TranscribeModal({
 
           {isTranscribing && (
             <div>
-              <div className="flex justify-between items-center mb-2">
-                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Transcribing...
-                </p>
-                <span className="text-sm text-gray-500 dark:text-gray-400">{progress}%</span>
-              </div>
+             <div className="flex justify-between items-center mb-2">
+               <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                 {progressStatus === 'uploading'
+                   ? 'Uploading to server...'
+                   : progressStatus === 'processing'
+                     ? 'Transcribing...'
+                     : progressStatus === 'completed'
+                       ? 'Completed!'
+                       : 'Transcribing...'}
+               </p>
+               <span className="text-sm text-gray-500 dark:text-gray-400">{progress}%</span>
+             </div>
               <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
                 <div
                   className="bg-blue-600 h-2 rounded-full transition-all duration-300"

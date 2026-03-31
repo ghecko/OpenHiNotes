@@ -4,7 +4,7 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, AsyncGenerator, Callable
 from fastapi import UploadFile
 from app.config import settings
 from app.models.transcription import Transcription, TranscriptionStatus
@@ -68,6 +68,7 @@ class TranscriptionService:
         file_path: str,
         language: Optional[str] = None,
         db: Optional[AsyncSession] = None,
+        on_progress: Optional[Callable[[str, float], None]] = None,
     ) -> Dict[str, Any]:
         """Call VoxBench/WhisperX API to transcribe audio file.
 
@@ -79,7 +80,9 @@ class TranscriptionService:
         headers = TranscriptionService._build_auth_headers(cfg["api_key"])
 
         if cfg["job_mode"]:
-            return await TranscriptionService._transcribe_job_mode(file_path, language, cfg, headers)
+            return await TranscriptionService._transcribe_job_mode(
+                file_path, language, cfg, headers, on_progress=on_progress
+            )
         else:
             return await TranscriptionService._transcribe_normal_mode(file_path, language, cfg, headers)
 
@@ -117,13 +120,21 @@ class TranscriptionService:
         language: Optional[str],
         cfg: Dict[str, Any],
         headers: Dict[str, str],
+        on_progress: Optional[Callable[[str, float], None]] = None,
     ) -> Dict[str, Any]:
-        """Async VoxBench Job Mode — submit, poll, fetch result."""
+        """Async VoxBench Job Mode — submit, poll, fetch result.
+
+        Args:
+            on_progress: optional callback(status, progress_percent) called on each poll.
+        """
         base = cfg["api_url"]
 
         # Step 1: Submit job
         submit_url = f"{base}/v1/audio/transcriptions/jobs"
         logger.info("VoxBench Job Mode: submitting job to %s", submit_url)
+
+        if on_progress:
+            on_progress("uploading", 0)
 
         with open(file_path, "rb") as f:
             files = {"file": (Path(file_path).name, f, "audio/mpeg")}
@@ -147,11 +158,15 @@ class TranscriptionService:
 
         logger.info("VoxBench Job Mode: job submitted, id=%s", job_id)
 
+        if on_progress:
+            on_progress("processing", 0)
+
         # Step 2: Poll for completion
         poll_url = f"{base}/v1/audio/transcriptions/jobs/{job_id}"
         max_wait = 600  # 10 minutes max
         elapsed = 0
         poll_interval = 3
+        status = "unknown"
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             while elapsed < max_wait:
@@ -166,6 +181,9 @@ class TranscriptionService:
                 status = status_data.get("status", "unknown")
                 progress = status_data.get("progress", 0)
                 logger.info("VoxBench Job %s: status=%s, progress=%.1f%%", job_id, status, progress)
+
+                if on_progress:
+                    on_progress(status, progress)
 
                 if status == "completed":
                     break
@@ -233,6 +251,7 @@ class TranscriptionService:
         stored_filename: str,
         original_filename: str,
         language: Optional[str] = None,
+        on_progress: Optional[Callable[[str, float], None]] = None,
     ) -> Transcription:
         """Create a transcription record and start transcription process."""
         transcription = Transcription(
@@ -249,7 +268,7 @@ class TranscriptionService:
         # Transcribe asynchronously
         try:
             whisperx_response = await TranscriptionService.transcribe_with_whisperx(
-                file_path, language=language, db=db
+                file_path, language=language, db=db, on_progress=on_progress
             )
             parsed = TranscriptionService.parse_whisperx_response(whisperx_response)
 

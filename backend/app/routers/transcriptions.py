@@ -1,3 +1,7 @@
+import asyncio
+import json
+import uuid
+
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -7,6 +11,7 @@ from fastapi import (
     File,
     Query,
 )
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.database import get_db
@@ -24,7 +29,6 @@ from app.models.template import SummaryTemplate
 from app.dependencies import get_current_user
 from app.services.transcription import TranscriptionService
 from app.services.llm import LLMService
-import uuid
 
 router = APIRouter(prefix="/transcriptions", tags=["transcriptions"])
 
@@ -107,6 +111,146 @@ async def upload_transcription(
             print(f"Auto-summarization failed: {str(e)}")
 
     return transcription
+
+
+@router.post("/upload-stream")
+async def upload_transcription_stream(
+    file: UploadFile = File(...),
+    language: str = Query(None),
+    auto_summarize: bool = Query(False),
+    template_id: uuid.UUID = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload audio file and transcribe with SSE progress streaming.
+
+    Returns a text/event-stream with events:
+      - {"event": "progress", "status": "uploading|processing|completed", "progress": 0-100}
+      - {"event": "complete", "transcription": { ... }}
+      - {"event": "error", "message": "..."}
+    """
+    # Validate file
+    if not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No file provided",
+        )
+
+    # Save file
+    try:
+        stored_filename, original_filename = await TranscriptionService.save_uploaded_file(
+            file, current_user.id
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to save file: {str(e)}",
+        )
+
+    file_path = f"{settings.uploads_directory}/{current_user.id}/{stored_filename}"
+
+    # Use an asyncio.Queue to bridge the on_progress callback → SSE generator
+    progress_queue: asyncio.Queue = asyncio.Queue()
+
+    def on_progress(status_str: str, progress: float):
+        progress_queue.put_nowait(("progress", status_str, progress))
+
+    async def run_transcription():
+        """Run the transcription and push the result/error into the queue."""
+        try:
+            transcription = await TranscriptionService.create_transcription(
+                db,
+                user_id=current_user.id,
+                file_path=file_path,
+                stored_filename=stored_filename,
+                original_filename=original_filename,
+                language=language,
+                on_progress=on_progress,
+            )
+
+            # Auto-summarize if requested
+            if auto_summarize and template_id and transcription.text:
+                try:
+                    result = await db.execute(
+                        select(SummaryTemplate).where(SummaryTemplate.id == template_id)
+                    )
+                    template = result.scalars().first()
+                    if template:
+                        summary_text, model_used = await LLMService.create_summary(
+                            transcription.text, template.prompt_template
+                        )
+                        summary = Summary(
+                            transcription_id=transcription.id,
+                            template_id=template_id,
+                            content=summary_text,
+                            model_used=model_used,
+                        )
+                        db.add(summary)
+                        await db.commit()
+                except Exception as e:
+                    print(f"Auto-summarization failed: {str(e)}")
+
+            progress_queue.put_nowait(("complete", transcription, None))
+        except Exception as e:
+            progress_queue.put_nowait(("error", str(e), None))
+
+    async def event_generator():
+        """SSE generator that yields progress events then the final result."""
+        # Start the transcription task in the background
+        task = asyncio.create_task(run_transcription())
+
+        try:
+            while True:
+                try:
+                    msg = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    # Send a keep-alive comment to prevent connection timeout
+                    yield ": keep-alive\n\n"
+                    continue
+
+                event_type = msg[0]
+
+                if event_type == "progress":
+                    _, status_str, progress = msg
+                    data = json.dumps({
+                        "event": "progress",
+                        "status": status_str,
+                        "progress": round(progress, 1),
+                    })
+                    yield f"data: {data}\n\n"
+
+                elif event_type == "complete":
+                    _, transcription, _ = msg
+                    # Serialize the transcription via Pydantic
+                    t_response = TranscriptionResponse.model_validate(transcription)
+                    data = json.dumps({
+                        "event": "complete",
+                        "transcription": t_response.model_dump(mode="json"),
+                    })
+                    yield f"data: {data}\n\n"
+                    break
+
+                elif event_type == "error":
+                    _, error_msg, _ = msg
+                    data = json.dumps({
+                        "event": "error",
+                        "message": error_msg,
+                    })
+                    yield f"data: {data}\n\n"
+                    break
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("", response_model=PaginatedTranscriptionResponse)
