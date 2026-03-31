@@ -106,7 +106,7 @@ class TranscriptionService:
             if language:
                 data["language"] = language
 
-            async with httpx.AsyncClient(timeout=300.0) as client:
+            async with httpx.AsyncClient(timeout=300.0, verify=settings.whisperx_ssl_verify) as client:
                 response = await client.post(url, files=files, data=data, headers=headers)
 
         if response.status_code != 200:
@@ -145,7 +145,7 @@ class TranscriptionService:
             if language:
                 data["language"] = language
 
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=60.0, verify=settings.whisperx_ssl_verify) as client:
                 response = await client.post(submit_url, files=files, data=data, headers=headers)
 
         if response.status_code not in (200, 201, 202):
@@ -168,7 +168,7 @@ class TranscriptionService:
         poll_interval = 3
         status = "unknown"
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, verify=settings.whisperx_ssl_verify) as client:
             while elapsed < max_wait:
                 await asyncio.sleep(poll_interval)
                 elapsed += poll_interval
@@ -197,7 +197,7 @@ class TranscriptionService:
 
         # Step 3: Fetch result with verbose_json to get segments & speaker labels
         result_url = f"{base}/v1/audio/transcriptions/jobs/{job_id}/result"
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, verify=settings.whisperx_ssl_verify) as client:
             result_resp = await client.get(
                 result_url,
                 params={"response_format": "verbose_json"},

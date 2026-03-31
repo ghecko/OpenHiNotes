@@ -58,7 +58,7 @@ class LLMService:
             "stream": False,
         }
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=120.0, verify=settings.llm_ssl_verify) as client:
             response = await client.post(url, json=payload, headers=headers)
 
         if response.status_code != 200:
@@ -100,7 +100,7 @@ class LLMService:
         if max_tokens:
             payload["max_tokens"] = max_tokens
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=120.0, verify=settings.llm_ssl_verify) as client:
             async with client.stream("POST", url, json=payload, headers=headers) as response:
                 if response.status_code != 200:
                     error_text = await response.atext()

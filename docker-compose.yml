@@ -31,9 +31,11 @@ services:
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production-use-a-long-random-string}
       WHISPERX_API_URL: ${WHISPERX_API_URL:-http://whisperx:8000}
       WHISPERX_MODEL: ${WHISPERX_MODEL:-large-v3}
+      WHISPERX_VERIFY_SSL: ${WHISPERX_VERIFY_SSL:-true}
       LLM_API_URL: ${LLM_API_URL:-http://host.docker.internal:11434/v1}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-gpt-3.5-turbo}
+      LLM_VERIFY_SSL: ${LLM_VERIFY_SSL:-true}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@openhinotes.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
       CORS_ORIGINS: '["*"]'
