@@ -78,9 +78,9 @@ export function Transcriptions() {
   };
 
   const filteredTranscriptions = transcriptions.filter((t) => {
-    const matchesSearch = t.original_filename
-      .toLowerCase()
-      .includes(searchTerm.toLowerCase());
+    const searchTarget = (t.title || t.original_filename).toLowerCase();
+    const matchesSearch = searchTarget.includes(searchTerm.toLowerCase()) ||
+      t.original_filename.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'all' || t.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -156,7 +156,7 @@ export function Transcriptions() {
                 <thead className="bg-gray-50/80 dark:bg-gray-700/50">
                   <tr>
                     <th className="px-6 py-3.5 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">
-                      Filename
+                      Name
                     </th>
                     <th className="px-6 py-3.5 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">
                       Language
@@ -187,9 +187,16 @@ export function Transcriptions() {
                           <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
                             <FileText className="w-4 h-4 text-primary-600 dark:text-primary-400" />
                           </div>
-                          <span className="font-medium text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors duration-150">
-                            {t.original_filename}
-                          </span>
+                          <div className="min-w-0">
+                            <span className="font-medium text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors duration-150 block truncate">
+                              {t.title || t.original_filename}
+                            </span>
+                            {t.title && (
+                              <span className="text-xs text-gray-500 dark:text-gray-400 block truncate">
+                                {t.original_filename}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400 uppercase">

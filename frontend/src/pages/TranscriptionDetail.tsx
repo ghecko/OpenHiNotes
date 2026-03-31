@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { TranscriptionViewer } from '@/components/TranscriptionViewer';
@@ -9,7 +9,7 @@ import { summariesApi } from '@/api/summaries';
 import { templatesApi } from '@/api/templates';
 import { Transcription, Summary, SummaryTemplate } from '@/types';
 import { format } from 'date-fns';
-import { Save, Loader, Plus } from 'lucide-react';
+import { Save, Loader, Plus, Pencil } from 'lucide-react';
 
 export function TranscriptionDetail() {
   const { id } = useParams<{ id: string }>();
@@ -26,6 +26,9 @@ export function TranscriptionDetail() {
   const [customPrompt, setCustomPrompt] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const titleInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadData();
@@ -52,6 +55,42 @@ export function TranscriptionDetail() {
       console.error('Failed to load transcription:', error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleStartEditTitle = () => {
+    if (!transcription) return;
+    setEditTitle(transcription.title || transcription.original_filename);
+    setIsEditingTitle(true);
+    setTimeout(() => titleInputRef.current?.focus(), 0);
+  };
+
+  const handleSaveTitle = async () => {
+    if (!transcription) return;
+    const trimmed = editTitle.trim();
+    // If empty or same as original_filename, set to null (clear custom title)
+    const newTitle = !trimmed || trimmed === transcription.original_filename ? null : trimmed;
+    setIsEditingTitle(false);
+    if (newTitle !== transcription.title) {
+      try {
+        const updated = await transcriptionsApi.updateTitle(transcription.id, newTitle);
+        setTranscription(updated);
+      } catch (error) {
+        console.error('Failed to update title:', error);
+      }
+    }
+  };
+
+  const handleCancelEditTitle = () => {
+    setIsEditingTitle(false);
+  };
+
+  const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSaveTitle();
+    } else if (e.key === 'Escape') {
+      handleCancelEditTitle();
     }
   };
 
@@ -128,9 +167,43 @@ export function TranscriptionDetail() {
     );
   }
 
+  const displayTitle = transcription.title || transcription.original_filename;
+
   return (
-    <Layout title={transcription.original_filename}>
+    <Layout title={displayTitle}>
       <div className="space-y-6">
+        {/* Editable Title */}
+        <div className="flex items-center gap-3">
+          {isEditingTitle ? (
+            <input
+              ref={titleInputRef}
+              type="text"
+              value={editTitle}
+              onChange={(e) => setEditTitle(e.target.value)}
+              onKeyDown={handleTitleKeyDown}
+              onBlur={handleSaveTitle}
+              className="flex-1 text-2xl font-bold bg-transparent text-gray-900 dark:text-white border-b-2 border-primary-500 focus:outline-none focus:border-primary-600 py-1"
+              maxLength={255}
+            />
+          ) : (
+            <button
+              onClick={handleStartEditTitle}
+              className="group flex items-center gap-2 text-left"
+              title="Click to rename"
+            >
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors">
+                {displayTitle}
+              </h1>
+              <Pencil className="w-4 h-4 text-gray-400 dark:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </button>
+          )}
+          {transcription.title && (
+            <span className="text-sm text-gray-500 dark:text-gray-400 truncate" title={transcription.original_filename}>
+              ({transcription.original_filename})
+            </span>
+          )}
+        </div>
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
             <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">Language</p>

@@ -21,6 +21,7 @@ from app.schemas.transcription import (
     PaginatedTranscriptionResponse,
     SpeakersUpdate,
     NotesUpdate,
+    TitleUpdate,
 )
 from app.models.user import User, UserRole
 from app.models.transcription import Transcription
@@ -369,6 +370,33 @@ async def update_notes(
         )
 
     updated = await TranscriptionService.update_notes(db, transcription_id, notes_update.notes)
+    return updated
+
+
+@router.patch("/{transcription_id}/title", response_model=TranscriptionResponse)
+async def update_title(
+    transcription_id: uuid.UUID,
+    title_update: TitleUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update title for a transcription."""
+    transcription = await TranscriptionService.get_transcription(db, transcription_id)
+
+    if not transcription:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transcription not found",
+        )
+
+    # Check authorization
+    if current_user.role != UserRole.admin and transcription.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to update this transcription",
+        )
+
+    updated = await TranscriptionService.update_title(db, transcription_id, title_update.title)
     return updated
 
 

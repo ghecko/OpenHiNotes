@@ -164,6 +164,10 @@ export const transcriptionsApi = {
     });
   },
 
+  async updateTitle(id: string, title: string | null): Promise<Transcription> {
+    return apiClient.patch<Transcription>(`/transcriptions/${id}/title`, { title });
+  },
+
   async deleteTranscription(id: string): Promise<void> {
     return apiClient.delete<void>(`/transcriptions/${id}`);
   },

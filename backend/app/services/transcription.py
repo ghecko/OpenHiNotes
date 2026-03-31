@@ -333,6 +333,19 @@ class TranscriptionService:
         return transcription
 
     @staticmethod
+    async def update_title(
+        db: AsyncSession, transcription_id: uuid.UUID, title: Optional[str]
+    ) -> Optional[Transcription]:
+        """Update title for a transcription."""
+        transcription = await TranscriptionService.get_transcription(db, transcription_id)
+        if not transcription:
+            return None
+        transcription.title = title
+        await db.commit()
+        await db.refresh(transcription)
+        return transcription
+
+    @staticmethod
     async def delete_transcription(db: AsyncSession, transcription_id: uuid.UUID) -> bool:
         """Delete a transcription (hard delete)."""
         transcription = await TranscriptionService.get_transcription(db, transcription_id)

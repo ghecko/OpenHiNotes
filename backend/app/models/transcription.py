@@ -23,6 +23,7 @@ class Transcription(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=True)
     audio_duration: Mapped[float] = mapped_column(Float, nullable=True)
     language: Mapped[str] = mapped_column(String(10), nullable=True)
     text: Mapped[str] = mapped_column(Text, nullable=True)

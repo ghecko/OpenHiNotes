@@ -28,6 +28,7 @@ export interface Transcription {
   user_id: string;
   filename: string;
   original_filename: string;
+  title: string | null;
   audio_duration: number | null;
   language: string;
   text: string;
