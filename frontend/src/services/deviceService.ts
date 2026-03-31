@@ -53,11 +53,81 @@ function writeU32BE(d: Uint8Array, o: number, v: number): void {
   d[o + 3] = v & 0xff;
 }
 
-function concatBuffers(a: Uint8Array, b: Uint8Array): Uint8Array {
-  const c = new Uint8Array(a.length + b.length);
-  c.set(a, 0);
-  c.set(b, a.length);
-  return c;
+/**
+ * GrowableBuffer — efficient buffer for accumulating USB data with O(1)
+ * amortized appends.  Replaces the O(n²) concat-copy pattern where every
+ * USB read created a new Uint8Array and copied the entire existing buffer.
+ * Uses geometric growth (doubling) with an offset-based consumption model
+ * so parsing can advance through data without copying.
+ *
+ * Ported from the reference hidock-next implementation.
+ */
+class GrowableBuffer {
+  private static readonly MIN_CAPACITY = 65536; // 64 KB — matches USB read size
+  private buf: Uint8Array;
+  private offset = 0; // read cursor: bytes before this have been consumed
+  private used = 0;   // write cursor: bytes after this are uninitialised
+
+  constructor(initialCapacity?: number) {
+    const cap = Math.max(initialCapacity ?? GrowableBuffer.MIN_CAPACITY, GrowableBuffer.MIN_CAPACITY);
+    this.buf = new Uint8Array(cap);
+  }
+
+  get length(): number { return this.used - this.offset; }
+
+  /** Append data, growing the underlying buffer if necessary. */
+  append(data: Uint8Array): void {
+    if (data.length === 0) return;
+    const required = this.used + data.length;
+    if (required > this.buf.length) this.grow(required);
+    this.buf.set(data, this.used);
+    this.used += data.length;
+  }
+
+  /** Read one byte at *index* (relative to current offset). */
+  byteAt(index: number): number {
+    return this.buf[this.offset + index];
+  }
+
+  /** Copy-out a range (indices relative to current offset). */
+  sliceCopy(start: number, end: number): Uint8Array {
+    return this.buf.slice(this.offset + start, this.offset + end);
+  }
+
+  /** Advance read cursor by *count* bytes. Compacts when waste > 50 %. */
+  consume(count: number): void {
+    this.offset += count;
+    if (this.offset > this.buf.length / 2) this.compact();
+  }
+
+  /** Atomic extract-then-consume. */
+  extractAndConsume(start: number, end: number, consumeCount: number): Uint8Array {
+    const copy = this.sliceCopy(start, end);
+    this.consume(consumeCount);
+    return copy;
+  }
+
+  /** Reset to empty state, keeping allocated capacity. */
+  clear(): void { this.offset = 0; this.used = 0; }
+
+  // ---- internals ----
+
+  private grow(minCapacity: number): void {
+    let newCap = this.buf.length;
+    while (newCap < minCapacity) newCap *= 2;
+    const newBuf = new Uint8Array(newCap);
+    newBuf.set(this.buf.subarray(this.offset, this.used));
+    this.buf = newBuf;
+    this.used -= this.offset;
+    this.offset = 0;
+  }
+
+  private compact(): void {
+    const len = this.length;
+    if (len > 0) this.buf.copyWithin(0, this.offset, this.used);
+    this.offset = 0;
+    this.used = len;
+  }
 }
 
 // ---- Date parsing from filename ----
@@ -210,7 +280,7 @@ function parseFileRecord(
 class DeviceService {
   private device: USBDevice | null = null;
   private sequenceId = 0;
-  private receiveBuffer = new Uint8Array(0);
+  private receiveBuffer = new GrowableBuffer();
   private connectingPromise: Promise<HiDockDevice> | null = null;
 
   // ---- Public API ----
@@ -239,7 +309,7 @@ class DeviceService {
       try {
         this.device = device;
         this.sequenceId = 0;
-        this.receiveBuffer = new Uint8Array(0);
+        this.receiveBuffer.clear();
 
         if (!device.opened) {
           await device.open();
@@ -279,7 +349,7 @@ class DeviceService {
         // ignore cleanup errors
       }
       this.device = null;
-      this.receiveBuffer = new Uint8Array(0);
+      this.receiveBuffer.clear();
     }
   }
 
@@ -365,7 +435,7 @@ class DeviceService {
     console.log('[OpenHiNotes] Starting stream download for %s (%d bytes)', fileName, fileSize);
 
     // Clear receive buffer before download to prevent stale data interference
-    this.receiveBuffer = new Uint8Array(0);
+    this.receiveBuffer.clear();
 
     // Try TRANSFER_FILE command first (cmd 5, body = filename only).
     // This is the protocol used by the reference desktop app (jensen.js)
@@ -529,10 +599,14 @@ class DeviceService {
     try {
       const result = await this.device.transferIn(ENDPOINT_IN, 65536);
       if (result.status === 'ok' && result.data && result.data.byteLength > 0) {
-        this.receiveBuffer = concatBuffers(
-          this.receiveBuffer,
-          new Uint8Array(result.data.buffer),
+        // Use slice() to create a copy — the underlying buffer may be reused by WebUSB
+        const newData = new Uint8Array(
+          result.data.buffer.slice(
+            result.data.byteOffset,
+            result.data.byteOffset + result.data.byteLength,
+          ),
         );
+        this.receiveBuffer.append(newData);
         return true;
       }
       return false;
@@ -572,37 +646,38 @@ class DeviceService {
     expectedSeqId: number,
     expectedCommandId?: number
   ): { commandId: number; body: Uint8Array } | null {
-    while (this.receiveBuffer.length >= 12) {
-      if (this.receiveBuffer[0] !== 0x12 || this.receiveBuffer[1] !== 0x34) {
-        this.receiveBuffer = this.receiveBuffer.slice(1);
+    const buf = this.receiveBuffer;
+
+    while (buf.length >= 12) {
+      // Find sync marker 0x12 0x34
+      if (buf.byteAt(0) !== 0x12 || buf.byteAt(1) !== 0x34) {
+        buf.consume(1);
         continue;
       }
 
-      const commandId = readU16BE(this.receiveBuffer, 2);
-      const seqId = readU32BE(this.receiveBuffer, 4);
-      const lengthField = readU32BE(this.receiveBuffer, 8);
+      const commandId = (buf.byteAt(2) << 8) | buf.byteAt(3);
+      const seqId =
+        ((buf.byteAt(4) << 24) | (buf.byteAt(5) << 16) |
+         (buf.byteAt(6) << 8)  |  buf.byteAt(7)) >>> 0;
+      const lengthField =
+        ((buf.byteAt(8) << 24) | (buf.byteAt(9) << 16) |
+         (buf.byteAt(10) << 8) |  buf.byteAt(11)) >>> 0;
 
       const checksumLen = (lengthField >>> 24) & 0xff;
       const bodyLen = lengthField & 0x00ffffff;
       const totalLen = 12 + bodyLen + checksumLen;
 
-      if (this.receiveBuffer.length < totalLen) return null;
+      if (buf.length < totalLen) return null; // incomplete packet
 
-      const body = this.receiveBuffer.slice(12, 12 + bodyLen);
-      this.receiveBuffer = this.receiveBuffer.slice(totalLen);
+      // Extract body and consume the packet atomically
+      const body = buf.extractAndConsume(12, 12 + bodyLen, totalLen);
 
       // Only log non-streaming packets to avoid flooding console during downloads
       if (bodyLen < 100 || commandId === COMMANDS.GET_DEVICE_INFO || commandId === COMMANDS.GET_CARD_INFO) {
         console.debug('[OpenHiNotes] RECV pkt: cmd=%d, seq=%d, len=%d', commandId, seqId, bodyLen);
       }
 
-      // Match logic: 
-      // 1. Precise sequence match
-      // 2. Command match (for streaming)
-      // 3. Alias match: response for GET_FILE_BLOCK(13) is often TRANSFER_FILE(5)
-      // Accept either exact command match or cross-match between
-      // TRANSFER_FILE (5) and GET_FILE_BLOCK (13) — devices may respond
-      // with either command regardless of which was sent
+      // Match logic: accept exact seqId match OR command match for streaming
       const isFileTransferCmd = (
         commandId === COMMANDS.TRANSFER_FILE || commandId === COMMANDS.GET_FILE_BLOCK
       );
@@ -617,8 +692,8 @@ class DeviceService {
       if (seqId === expectedSeqId || isCmdMatch) {
         return { commandId, body };
       }
-      
-      console.log('[OpenHiNotes] Discarding non-matching packet: cmd=%d, seq=%d (expected seq=%d, cmd=%s)', 
+
+      console.log('[OpenHiNotes] Discarding non-matching packet: cmd=%d, seq=%d (expected seq=%d, cmd=%s)',
           commandId, seqId, expectedSeqId, expectedCommandId);
     }
     return null;
