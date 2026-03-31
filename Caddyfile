@@ -9,9 +9,11 @@
 		reverse_proxy backend:8000
 	}
 
-	# Everything else -> frontend dev server
+	# Everything else -> frontend dev server (including Vite HMR WebSocket)
 	handle {
-		reverse_proxy frontend:5173
+		reverse_proxy frontend:5173 {
+			flush_interval -1
+		}
 	}
 }
 

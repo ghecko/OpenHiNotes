@@ -16,6 +16,8 @@ export default defineConfig({
     allowedHosts: [process.env.SITE_HOST || 'localhost', 'localhost'],
     hmr: {
       clientPort: 8443,
+      protocol: 'wss',
+      timeout: 60000,
     },
     proxy: {
       '/api': {
