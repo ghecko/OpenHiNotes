@@ -5,6 +5,7 @@ import { useAppStore } from '@/store/useAppStore';
 import { TranscribeModal } from '@/components/TranscribeModal';
 import { AudioPlayer } from '@/components/AudioPlayer';
 import { Transcription } from '@/types';
+import { deviceService } from '@/services/deviceService';
 import { Play, Download, Trash2, Zap, FileText, AlertCircle } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -37,11 +38,28 @@ export function Recordings() {
     }
   }, [device?.connected, refreshRecordings]);
 
-  const handlePlayRecording = async (recordingId: string, fileName: string, fileSize: number, fileVersion?: number) => {
+  /** Download a recording or return the cached blob if already downloaded. */
+  const getOrDownloadBlob = async (
+    recordingId: string, fileName: string, fileSize: number, fileVersion?: number
+  ): Promise<Blob | null> => {
+    const cached = deviceService.getCachedBlob(fileName);
+    if (cached) {
+      setDownloadProgress((prev) => ({ ...prev, [recordingId]: 100 }));
+      return cached;
+    }
+
     const blob = await downloadRecording(fileName, fileSize, (percent) => {
       setDownloadProgress((prev) => ({ ...prev, [recordingId]: percent }));
     }, fileVersion);
 
+    if (blob) {
+      deviceService.setCachedBlob(fileName, blob);
+    }
+    return blob;
+  };
+
+  const handlePlayRecording = async (recordingId: string, fileName: string, fileSize: number, fileVersion?: number) => {
+    const blob = await getOrDownloadBlob(recordingId, fileName, fileSize, fileVersion);
     if (blob) {
       setPlayingFile({ blob, name: fileName });
     }
@@ -49,10 +67,7 @@ export function Recordings() {
 
   const handleTranscribeRecording = async (recordingId: string, fileName: string, fileSize: number, summarize = false, fileVersion?: number) => {
     setAutoSummarize(summarize);
-    const blob = await downloadRecording(fileName, fileSize, (percent) => {
-      setDownloadProgress((prev) => ({ ...prev, [recordingId]: percent }));
-    }, fileVersion);
-
+    const blob = await getOrDownloadBlob(recordingId, fileName, fileSize, fileVersion);
     if (blob) {
       setSelectedAudio(blob);
       setSelectedFileName(fileName);

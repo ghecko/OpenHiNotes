@@ -341,6 +341,13 @@ class DeviceService {
   private receiveBuffer = new GrowableBuffer();
   private connectingPromise: Promise<HiDockDevice> | null = null;
 
+  /**
+   * In-memory cache of downloaded audio blobs keyed by fileName.
+   * Survives component re-renders and page navigations because
+   * DeviceService is a singleton.  Cleared on device disconnect.
+   */
+  private blobCache = new Map<string, Blob>();
+
   // ---- Public API ----
 
   async requestDevice(): Promise<USBDevice> {
@@ -408,6 +415,7 @@ class DeviceService {
       }
       this.device = null;
       this.receiveBuffer.clear();
+      this.blobCache.clear();
     }
   }
 
@@ -638,6 +646,16 @@ class DeviceService {
 
   isConnected(): boolean {
     return this.device !== null;
+  }
+
+  /** Return a previously downloaded blob from cache, or undefined. */
+  getCachedBlob(fileName: string): Blob | undefined {
+    return this.blobCache.get(fileName);
+  }
+
+  /** Store a downloaded blob in the cache. */
+  setCachedBlob(fileName: string, blob: Blob): void {
+    this.blobCache.set(fileName, blob);
   }
 
   // ---- Protocol internals ----

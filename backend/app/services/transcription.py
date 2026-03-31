@@ -177,10 +177,14 @@ class TranscriptionService:
         if status != "completed":
             raise Exception(f"VoxBench job timed out after {max_wait}s (status={status})")
 
-        # Step 3: Fetch result
+        # Step 3: Fetch result with verbose_json to get segments & speaker labels
         result_url = f"{base}/v1/audio/transcriptions/jobs/{job_id}/result"
         async with httpx.AsyncClient(timeout=30.0) as client:
-            result_resp = await client.get(result_url, headers=headers)
+            result_resp = await client.get(
+                result_url,
+                params={"response_format": "verbose_json"},
+                headers=headers,
+            )
 
         if result_resp.status_code != 200:
             raise Exception(f"VoxBench result fetch error: {result_resp.status_code} - {result_resp.text}")
