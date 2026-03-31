@@ -10,6 +10,7 @@ import { Register } from '@/pages/Register';
 // Protected Pages
 import { Dashboard } from '@/pages/Dashboard';
 import { Recordings } from '@/pages/Recordings';
+import { Upload as UploadPage } from '@/pages/Upload';
 import { Transcriptions } from '@/pages/Transcriptions';
 import { TranscriptionDetail } from '@/pages/TranscriptionDetail';
 import { Chat } from '@/pages/Chat';
@@ -56,6 +57,15 @@ function App() {
         element={
           <ProtectedRoute>
             <Recordings />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/upload"
+        element={
+          <ProtectedRoute>
+            <UploadPage />
           </ProtectedRoute>
         }
       />

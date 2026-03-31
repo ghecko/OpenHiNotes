@@ -2,6 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 import {
   Home,
   HardDrive,
+  Upload,
   FileText,
   MessageSquare,
   Settings,
@@ -25,6 +26,7 @@ export function Sidebar() {
   const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: Home },
     { path: '/recordings', label: 'Recordings', icon: HardDrive },
+    { path: '/upload', label: 'Upload', icon: Upload },
     { path: '/transcriptions', label: 'Transcriptions', icon: FileText },
     { path: '/chat', label: 'Chat', icon: MessageSquare },
     { path: '/settings', label: 'Settings', icon: Settings },
