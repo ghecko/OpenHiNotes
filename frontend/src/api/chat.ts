@@ -4,6 +4,8 @@ import { ChatMessage } from '@/types';
 interface ChatRequest {
   messages: ChatMessage[];
   transcription_id?: string;
+  transcription_ids?: string[];
+  collection_id?: string;
 }
 
 /** Sentinel prefix used to distinguish SSE error payloads from content chunks. */
@@ -57,10 +59,17 @@ export const chatApi = {
   async sendChatMessage(
     messages: ChatMessage[],
     transcriptionId?: string,
+    opts?: { collectionId?: string; transcriptionIds?: string[] },
   ): Promise<ReadableStream<string>> {
     const body: ChatRequest = { messages };
     if (transcriptionId) {
       body.transcription_id = transcriptionId;
+    }
+    if (opts?.collectionId) {
+      body.collection_id = opts.collectionId;
+    }
+    if (opts?.transcriptionIds?.length) {
+      body.transcription_ids = opts.transcriptionIds;
     }
     return apiClient.streamPost('/chat', body);
   },

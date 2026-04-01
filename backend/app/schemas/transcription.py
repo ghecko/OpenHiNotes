@@ -41,6 +41,7 @@ class TranscriptionResponse(BaseModel):
     filename: str
     original_filename: str
     title: Optional[str] = None
+    collection_id: Optional[uuid.UUID] = None
     audio_duration: Optional[float] = None
     language: Optional[str] = None
     text: Optional[str] = None

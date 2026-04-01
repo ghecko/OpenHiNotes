@@ -13,6 +13,8 @@ import { Recordings } from '@/pages/Recordings';
 import { Upload as UploadPage } from '@/pages/Upload';
 import { Transcriptions } from '@/pages/Transcriptions';
 import { TranscriptionDetail } from '@/pages/TranscriptionDetail';
+import { Collections } from '@/pages/Collections';
+import { CollectionDetail } from '@/pages/CollectionDetail';
 import { Chat } from '@/pages/Chat';
 import { Settings } from '@/pages/Settings';
 import { Templates } from '@/pages/admin/Templates';
@@ -84,6 +86,24 @@ function App() {
         element={
           <ProtectedRoute>
             <TranscriptionDetail />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/collections"
+        element={
+          <ProtectedRoute>
+            <Collections />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/collections/:id"
+        element={
+          <ProtectedRoute>
+            <CollectionDetail />
           </ProtectedRoute>
         }
       />

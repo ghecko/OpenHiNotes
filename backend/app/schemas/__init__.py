@@ -1,4 +1,10 @@
 from app.schemas.user import UserCreate, UserResponse, UserUpdate
+from app.schemas.collection import (
+    CollectionCreate,
+    CollectionResponse,
+    CollectionUpdate,
+    AssignCollectionRequest,
+)
 from app.schemas.transcription import (
     TranscriptionResponse,
     TranscriptionCreate,
@@ -18,6 +24,10 @@ __all__ = [
     "UserCreate",
     "UserResponse",
     "UserUpdate",
+    "CollectionCreate",
+    "CollectionResponse",
+    "CollectionUpdate",
+    "AssignCollectionRequest",
     "TranscriptionResponse",
     "TranscriptionCreate",
     "TranscriptionUpdate",

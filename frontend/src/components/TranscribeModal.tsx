@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, Loader } from 'lucide-react';
 import { Transcription, SummaryTemplate } from '@/types';
 import { transcriptionsApi } from '@/api/transcriptions';
+import { collectionsApi } from '@/api/collections';
 import { templatesApi } from '@/api/templates';
 
 interface TranscribeModalProps {
@@ -9,6 +10,10 @@ interface TranscribeModalProps {
   onClose: () => void;
   audioFile: Blob | null;
   fileName: string;
+  /** If set, automatically applied as the transcription title after successful transcribe */
+  initialTitle?: string;
+  /** If set, automatically assigns the transcription to this collection after transcribe */
+  initialCollectionId?: string;
   onComplete: (transcription: Transcription) => void;
 }
 
@@ -30,6 +35,8 @@ export function TranscribeModal({
   onClose,
   audioFile,
   fileName,
+  initialTitle,
+  initialCollectionId,
   onComplete,
 }: TranscribeModalProps) {
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -88,6 +95,26 @@ export function TranscribeModal({
         return;
       }
 
+      // If an alias / initial title was provided, set it as the transcription title
+      if (initialTitle && transcription.id) {
+        try {
+          await transcriptionsApi.updateTitle(transcription.id, initialTitle);
+          transcription.title = initialTitle;
+        } catch {
+          console.warn('Could not set initial title from alias');
+        }
+      }
+
+      // If a collection was pre-assigned, assign the transcription to it
+      if (initialCollectionId && transcription.id) {
+        try {
+          await collectionsApi.assignTranscription(initialCollectionId, transcription.id);
+          transcription.collection_id = initialCollectionId;
+        } catch {
+          console.warn('Could not assign to collection');
+        }
+      }
+
       setProgress(100);
       setTimeout(() => {
         onComplete(transcription);
@@ -130,8 +157,11 @@ export function TranscribeModal({
             <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">File</p>
             <div className="p-3 bg-gray-100 dark:bg-gray-700 rounded-lg">
               <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                {fileName}
+                {initialTitle || fileName}
               </p>
+              {initialTitle && (
+                <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{fileName}</p>
+              )}
               <p className="text-xs text-gray-500 dark:text-gray-400">{fileSize} MB</p>
             </div>
           </div>

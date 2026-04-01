@@ -15,6 +15,7 @@ export function Recordings() {
   const recordings = useAppStore((s) => s.recordings);
   const selectedRecordings = useAppStore((s) => s.selectedRecordings);
   const recordingAliases = useAppStore((s) => s.recordingAliases);
+  const recordingCollections = useAppStore((s) => s.recordingCollections);
   const { toggleRecordingSelection, clearSelectedRecordings, setRecordingAlias, removeRecordingAlias, cleanOrphanAliases } = useAppStore();
 
   const {
@@ -446,6 +447,8 @@ export function Recordings() {
         }}
         audioFile={selectedAudio}
         fileName={selectedFileName}
+        initialTitle={recordingAliases[selectedFileName] || undefined}
+        initialCollectionId={recordingCollections[selectedFileName] || undefined}
         onComplete={() => {
           refreshRecordings();
         }}

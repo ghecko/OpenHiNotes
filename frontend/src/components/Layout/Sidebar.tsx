@@ -4,6 +4,7 @@ import {
   HardDrive,
   Upload,
   FileText,
+  FolderOpen,
   MessageSquare,
   Settings,
   Shield,
@@ -28,6 +29,7 @@ export function Sidebar() {
     { path: '/recordings', label: 'Recordings', icon: HardDrive },
     { path: '/upload', label: 'Upload', icon: Upload },
     { path: '/transcriptions', label: 'Transcriptions', icon: FileText },
+    { path: '/collections', label: 'Collections', icon: FolderOpen },
     { path: '/chat', label: 'Chat', icon: MessageSquare },
     { path: '/settings', label: 'Settings', icon: Settings },
   ];

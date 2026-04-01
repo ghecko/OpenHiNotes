@@ -7,7 +7,8 @@ import { ChatPanel } from '@/components/ChatPanel';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { summariesApi } from '@/api/summaries';
 import { templatesApi } from '@/api/templates';
-import { Transcription, Summary, SummaryTemplate } from '@/types';
+import { collectionsApi } from '@/api/collections';
+import { Transcription, Summary, SummaryTemplate, Collection } from '@/types';
 import { format } from 'date-fns';
 import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2 } from 'lucide-react';
 import { formatMarkdown } from '@/utils/formatMarkdown';
@@ -83,6 +84,9 @@ export function TranscriptionDetail() {
   const titleInputRef = useRef<HTMLInputElement>(null);
   const [openSummaryId, setOpenSummaryId] = useState<string | null>(null);
 
+  // Collection assignment
+  const [collections, setCollections] = useState<Collection[]>([]);
+
   useEffect(() => {
     loadData();
   }, [id]);
@@ -101,6 +105,9 @@ export function TranscriptionDetail() {
 
       const temps = await templatesApi.getTemplates();
       setTemplates(temps);
+
+      const colls = await collectionsApi.list();
+      setCollections(colls);
       if (temps.length > 0) {
         setSelectedTemplate(temps[0].id);
       }
@@ -108,6 +115,20 @@ export function TranscriptionDetail() {
       console.error('Failed to load transcription:', error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleCollectionChange = async (collectionId: string) => {
+    if (!transcription) return;
+    try {
+      if (collectionId) {
+        await collectionsApi.assignTranscription(collectionId, transcription.id);
+      } else if (transcription.collection_id) {
+        await collectionsApi.removeTranscription(transcription.collection_id, transcription.id);
+      }
+      setTranscription({ ...transcription, collection_id: collectionId || null });
+    } catch (err) {
+      console.error('Failed to update collection:', err);
     }
   };
 
@@ -268,7 +289,7 @@ export function TranscriptionDetail() {
           )}
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
             <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">Language</p>
             <p className="font-semibold text-gray-900 dark:text-white uppercase">
@@ -294,6 +315,19 @@ export function TranscriptionDetail() {
             <p className="font-semibold text-gray-900 dark:text-white">
               {format(new Date(transcription.created_at), 'MMM d, yyyy')}
             </p>
+          </div>
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+            <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">Collection</p>
+            <select
+              value={transcription.collection_id || ''}
+              onChange={(e) => handleCollectionChange(e.target.value)}
+              className="w-full text-sm font-semibold text-gray-900 dark:text-white bg-transparent border-none p-0 focus:outline-none focus:ring-0 cursor-pointer"
+            >
+              <option value="">None</option>
+              {collections.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
           </div>
         </div>
 

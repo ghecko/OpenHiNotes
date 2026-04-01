@@ -13,6 +13,7 @@ from app.routers import templates as templates_router
 from app.routers import summaries as summaries_router
 from app.routers import chat as chat_router
 from app.routers import chat_conversations as chat_conversations_router
+from app.routers import collections as collections_router
 from app.routers import app_settings as settings_router
 import logging
 
@@ -44,6 +45,7 @@ app.include_router(templates_router.router, prefix="/api")
 app.include_router(summaries_router.router, prefix="/api")
 app.include_router(chat_router.router, prefix="/api")
 app.include_router(chat_conversations_router.router, prefix="/api")
+app.include_router(collections_router.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
 
 
