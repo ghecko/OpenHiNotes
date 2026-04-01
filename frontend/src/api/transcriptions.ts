@@ -171,4 +171,11 @@ export const transcriptionsApi = {
   async deleteTranscription(id: string): Promise<void> {
     return apiClient.delete<void>(`/transcriptions/${id}`);
   },
+
+  async checkByFilenames(filenames: string[]): Promise<Record<string, { id: string; status: string; title: string | null }>> {
+    if (filenames.length === 0) return {};
+    return apiClient.get<Record<string, { id: string; status: string; title: string | null }>>(
+      `/transcriptions/by-filenames?filenames=${encodeURIComponent(filenames.join(','))}`
+    );
+  },
 };

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Layout } from '@/components/Layout';
 import { ChatPanel } from '@/components/ChatPanel';
 import { transcriptionsApi } from '@/api/transcriptions';
@@ -62,8 +62,13 @@ export function Chat() {
                   }`}
                 >
                   <p className="font-medium text-gray-900 dark:text-white text-sm truncate">
-                    {t.original_filename}
+                    {t.title || t.original_filename}
                   </p>
+                  {t.title && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate">
+                      {t.original_filename}
+                    </p>
+                  )}
                   <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
                     Ready
                   </p>
@@ -78,7 +83,14 @@ export function Chat() {
         </div>
 
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 h-96 md:h-[600px]">
-          <ChatPanel transcriptionId={selectedTranscriptionId} />
+          <ChatPanel
+            transcriptionId={selectedTranscriptionId}
+            scopeToTranscription={false}
+            transcriptionNames={transcriptions.reduce<Record<string, string>>((acc, t) => {
+              acc[t.id] = t.title || t.original_filename;
+              return acc;
+            }, {})}
+          />
         </div>
       </div>
     </Layout>

@@ -41,6 +41,12 @@ class LLMService:
         else:
             final_prompt = prompt_template.replace("{{transcript}}", transcript_text)
 
+        # Ensure the transcript is always included: if the prompt doesn't contain
+        # the transcript text (i.e. no {{transcript}} placeholder was present),
+        # prepend it so the LLM always has the transcript as context.
+        if transcript_text not in final_prompt:
+            final_prompt = f"Here is the transcript:\n\n{transcript_text}\n\n---\n\n{final_prompt}"
+
         messages = [
             {"role": "system", "content": "You are a helpful assistant that summarizes transcripts."},
             {"role": "user", "content": final_prompt},

@@ -6,7 +6,8 @@ import { TranscribeModal } from '@/components/TranscribeModal';
 import { AudioPlayer } from '@/components/AudioPlayer';
 import { Transcription } from '@/types';
 import { deviceService } from '@/services/deviceService';
-import { Play, Download, Trash2, Zap, FileText, AlertCircle, Pencil, X } from 'lucide-react';
+import { transcriptionsApi } from '@/api/transcriptions';
+import { Play, Download, Trash2, Zap, FileText, AlertCircle, Pencil, X, CheckCircle } from 'lucide-react';
 import { format } from 'date-fns';
 
 export function Recordings() {
@@ -35,6 +36,7 @@ export function Recordings() {
   const [editingAlias, setEditingAlias] = useState<string | null>(null); // fileName being edited
   const [aliasInput, setAliasInput] = useState('');
   const aliasInputRef = useRef<HTMLInputElement>(null);
+  const [transcriptMap, setTranscriptMap] = useState<Record<string, { id: string; status: string; title: string | null }>>({});
 
   // Orphan alias detection
   const currentFileNames = recordings.map((r) => r.fileName);
@@ -88,6 +90,13 @@ export function Recordings() {
       refreshRecordings();
     }
   }, [device?.connected, refreshRecordings]);
+
+  // Check which recordings have transcriptions
+  useEffect(() => {
+    if (recordings.length === 0) return;
+    const filenames = recordings.map((r) => r.fileName);
+    transcriptionsApi.checkByFilenames(filenames).then(setTranscriptMap).catch(console.error);
+  }, [recordings]);
 
   /** Download a recording or return the cached blob if already downloaded. */
   const getOrDownloadBlob = async (
@@ -290,6 +299,9 @@ export function Recordings() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
                     Date
                   </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+                    Transcript
+                  </th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
                     Actions
                   </th>
@@ -355,6 +367,27 @@ export function Recordings() {
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
                         {format(recording.dateCreated, 'MMM d, yyyy HH:mm')}
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        {transcriptMap[recording.fileName] ? (
+                          <span
+                            className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
+                              transcriptMap[recording.fileName].status === 'completed'
+                                ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                                : transcriptMap[recording.fileName].status === 'processing'
+                                ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400'
+                                : transcriptMap[recording.fileName].status === 'failed'
+                                ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
+                                : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
+                            }`}
+                            title={transcriptMap[recording.fileName].title || transcriptMap[recording.fileName].status}
+                          >
+                            <CheckCircle className="w-3 h-3" />
+                            {transcriptMap[recording.fileName].status === 'completed' ? 'Yes' : transcriptMap[recording.fileName].status}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-400 dark:text-gray-500">—</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">

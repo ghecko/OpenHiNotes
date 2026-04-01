@@ -292,6 +292,43 @@ async def list_transcriptions(
     }
 
 
+@router.get("/by-filenames", response_model=dict)
+async def check_transcriptions_by_filenames(
+    filenames: str = Query(..., description="Comma-separated list of original filenames"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check which filenames have existing transcriptions. Returns a mapping of filename -> transcription info."""
+    filename_list = [f.strip() for f in filenames.split(",") if f.strip()]
+
+    query = select(
+        Transcription.original_filename,
+        Transcription.id,
+        Transcription.status,
+        Transcription.title,
+    ).where(Transcription.original_filename.in_(filename_list))
+
+    if current_user.role != UserRole.admin:
+        query = query.where(Transcription.user_id == current_user.id)
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    # Build mapping: filename -> {id, status, title}
+    mapping: dict = {}
+    for row in rows:
+        fname = row[0]
+        # Keep the most recent (or completed) transcription per filename
+        if fname not in mapping or row[2] == "completed":
+            mapping[fname] = {
+                "id": str(row[1]),
+                "status": row[2],
+                "title": row[3],
+            }
+
+    return mapping
+
+
 @router.get("/{transcription_id}", response_model=TranscriptionResponse)
 async def get_transcription(
     transcription_id: uuid.UUID,

@@ -9,7 +9,59 @@ import { summariesApi } from '@/api/summaries';
 import { templatesApi } from '@/api/templates';
 import { Transcription, Summary, SummaryTemplate } from '@/types';
 import { format } from 'date-fns';
-import { Save, Loader, Plus, Pencil } from 'lucide-react';
+import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2 } from 'lucide-react';
+import { formatMarkdown } from '@/utils/formatMarkdown';
+
+function SummaryModal({
+  summary,
+  onClose,
+  onDelete,
+}: {
+  summary: Summary;
+  onClose: () => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div
+        className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col mx-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+          <div>
+            <p className="text-sm font-semibold text-gray-900 dark:text-white">Summary</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              {format(new Date(summary.created_at), 'MMM d, yyyy HH:mm')} &bull; {summary.model_used}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => onDelete(summary.id)}
+              className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+              title="Delete summary"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div
+            className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed"
+            dangerouslySetInnerHTML={{ __html: formatMarkdown(summary.content) }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function TranscriptionDetail() {
   const { id } = useParams<{ id: string }>();
@@ -29,6 +81,7 @@ export function TranscriptionDetail() {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const [openSummaryId, setOpenSummaryId] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -68,7 +121,6 @@ export function TranscriptionDetail() {
   const handleSaveTitle = async () => {
     if (!transcription) return;
     const trimmed = editTitle.trim();
-    // If empty or same as original_filename, set to null (clear custom title)
     const newTitle = !trimmed || trimmed === transcription.original_filename ? null : trimmed;
     setIsEditingTitle(false);
     if (newTitle !== transcription.title) {
@@ -141,6 +193,17 @@ export function TranscriptionDetail() {
     }
   };
 
+  const handleDeleteSummary = async (summaryId: string) => {
+    if (!window.confirm('Delete this summary?')) return;
+    try {
+      await summariesApi.deleteSummary(summaryId);
+      setSummaries((prev) => prev.filter((s) => s.id !== summaryId));
+      if (openSummaryId === summaryId) setOpenSummaryId(null);
+    } catch (error) {
+      console.error('Failed to delete summary:', error);
+    }
+  };
+
   if (isLoading) {
     return (
       <Layout title="Transcription">
@@ -168,6 +231,7 @@ export function TranscriptionDetail() {
   }
 
   const displayTitle = transcription.title || transcription.original_filename;
+  const openSummary = summaries.find((s) => s.id === openSummaryId) || null;
 
   return (
     <Layout title={displayTitle}>
@@ -281,30 +345,81 @@ export function TranscriptionDetail() {
               )}
             </div>
 
+            {/* Summaries Section */}
             <div className="bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
               <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">
-                Summaries
+                Summaries {summaries.length > 0 && <span className="text-sm font-normal text-gray-500">({summaries.length})</span>}
               </h3>
 
-              {summaries.length > 0 && (
-                <div className="space-y-4 mb-6">
+              {summaries.length === 1 ? (
+                /* Single summary: show inline with delete button */
+                <div className="mb-6">
+                  <div className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600">
+                    <div className="flex items-start justify-between mb-2">
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {format(new Date(summaries[0].created_at), 'MMM d, yyyy HH:mm')} &bull;{' '}
+                        {summaries[0].model_used}
+                      </p>
+                      <button
+                        onClick={() => handleDeleteSummary(summaries[0].id)}
+                        className="p-1 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
+                        title="Delete summary"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div
+                      className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed"
+                      dangerouslySetInnerHTML={{ __html: formatMarkdown(summaries[0].content) }}
+                    />
+                  </div>
+                </div>
+              ) : summaries.length > 1 ? (
+                /* Multiple summaries: show as tiles, click to open modal */
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
                   {summaries.map((summary) => (
                     <div
                       key={summary.id}
-                      className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600"
+                      onClick={() => setOpenSummaryId(summary.id)}
+                      className="group relative p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-blue-400 dark:hover:border-blue-500 cursor-pointer transition-all hover:shadow-md"
                     >
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                        {format(new Date(summary.created_at), 'MMM d, yyyy HH:mm')} •{' '}
-                        {summary.model_used}
-                      </p>
-                      <p className="text-sm text-gray-700 dark:text-gray-300">
-                        {summary.content}
+                      <div className="flex items-start justify-between mb-2">
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {format(new Date(summary.created_at), 'MMM d, yyyy HH:mm')}
+                        </p>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteSummary(summary.id);
+                            }}
+                            className="p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                            title="Delete summary"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                          <Maximize2 className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                      </div>
+                      <p className="text-xs text-gray-400 dark:text-gray-500 mb-2">{summary.model_used}</p>
+                      <p className="text-sm text-gray-700 dark:text-gray-300 line-clamp-4">
+                        {summary.content.slice(0, 200)}{summary.content.length > 200 ? '...' : ''}
                       </p>
                     </div>
                   ))}
                 </div>
+              ) : null}
+
+              {/* Summary modal */}
+              {openSummary && (
+                <SummaryModal
+                  summary={openSummary}
+                  onClose={() => setOpenSummaryId(null)}
+                  onDelete={handleDeleteSummary}
+                />
               )}
 
+              {/* Generate summary controls */}
               <div className="space-y-4">
                 {showCustomPrompt ? (
                   <>
@@ -370,7 +485,10 @@ export function TranscriptionDetail() {
 
             <div className="bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
               <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Chat</h3>
-              <ChatPanel transcriptionId={transcription.id} />
+              <ChatPanel
+                transcriptionId={transcription.id}
+                transcriptionNames={{ [transcription.id]: transcription.title || transcription.original_filename }}
+              />
             </div>
           </>
         )}

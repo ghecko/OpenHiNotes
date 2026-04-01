@@ -15,4 +15,8 @@ export const summariesApi = {
   async getSummaries(transcriptionId: string): Promise<Summary[]> {
     return apiClient.get<Summary[]>(`/summaries?transcription_id=${transcriptionId}`);
   },
+
+  async deleteSummary(id: string): Promise<void> {
+    return apiClient.delete<void>(`/summaries/${id}`);
+  },
 };

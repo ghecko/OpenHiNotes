@@ -1,64 +1,24 @@
-import { useState, useRef, useEffect } from 'react';
-import { Send, AlertCircle } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Send, AlertCircle, Save, FolderOpen, Trash2, X, Plus, MessageSquare, ChevronRight, ChevronDown } from 'lucide-react';
 import { ChatMessage } from '@/types';
 import { chatApi, SSE_ERROR_PREFIX } from '@/api/chat';
-
-/** Lightweight markdown-to-HTML for assistant messages. */
-function formatMarkdown(text: string): string {
-  // First, extract code blocks to protect them from other transformations
-  const codeBlocks: string[] = [];
-  let processed = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, _lang, code) => {
-    const idx = codeBlocks.length;
-    codeBlocks.push(
-      `<pre class="bg-gray-900 dark:bg-gray-950 text-gray-100 rounded-lg p-3 my-2 overflow-x-auto text-xs font-mono whitespace-pre">${code
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .trimEnd()}</pre>`
-    );
-    return `__CODE_BLOCK_${idx}__`;
-  });
-
-  // Escape HTML in the rest
-  processed = processed
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-
-  processed = processed
-    // Inline code: `code`
-    .replace(/`([^`]+)`/g, '<code class="bg-gray-200 dark:bg-gray-600 px-1.5 py-0.5 rounded text-xs font-mono">$1</code>')
-    // Headers: ### h3, ## h2, # h1
-    .replace(/^### (.+)$/gm, '<h4 class="font-semibold text-sm mt-3 mb-1">$1</h4>')
-    .replace(/^## (.+)$/gm, '<h3 class="font-bold text-sm mt-3 mb-1">$1</h3>')
-    .replace(/^# (.+)$/gm, '<h2 class="font-bold text-base mt-3 mb-1">$1</h2>')
-    // Horizontal rule: --- or ***
-    .replace(/^[-*]{3,}$/gm, '<hr class="border-gray-300 dark:border-gray-600 my-2"/>')
-    // Bold: **text** or __text__
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/__(.+?)__/g, '<strong>$1</strong>')
-    // Italic: *text* or _text_
-    .replace(/(?<!\w)\*(.+?)\*(?!\w)/g, '<em>$1</em>')
-    .replace(/(?<!\w)_(.+?)_(?!\w)/g, '<em>$1</em>')
-    // Unordered list items: lines starting with "- " or "* "
-    .replace(/^[\s]*[-*]\s+(.+)$/gm, '<li>$1</li>')
-    // Ordered list items: lines starting with "1. ", "2. ", etc.
-    .replace(/^[\s]*(\d+)\.\s+(.+)$/gm, '<li>$2</li>')
-    // Wrap consecutive <li> in <ul>
-    .replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul class="list-disc pl-4 my-1 space-y-0.5">$1</ul>')
-    // Line breaks for remaining newlines (but not inside tags)
-    .replace(/\n/g, '<br/>');
-
-  // Restore code blocks
-  codeBlocks.forEach((block, idx) => {
-    processed = processed.replace(`__CODE_BLOCK_${idx}__`, block);
-  });
-
-  return processed;
-}
+import {
+  chatConversationsApi,
+  ChatConversationListItem,
+} from '@/api/chatConversations';
+import { formatMarkdown } from '@/utils/formatMarkdown';
 
 interface ChatPanelProps {
   transcriptionId?: string;
+  /**
+   * When true (default when transcriptionId is set), the conversation list
+   * only shows chats linked to the current transcriptionId — no folder
+   * grouping. When false, it loads ALL conversations and groups them by
+   * transcript folder.
+   */
+  scopeToTranscription?: boolean;
+  /** Map of transcription_id -> display name for folder labels (only used when scopeToTranscription=false) */
+  transcriptionNames?: Record<string, string>;
 }
 
 interface DisplayMessage {
@@ -81,29 +41,205 @@ function TypingIndicator() {
   );
 }
 
-export function ChatPanel({ transcriptionId }: ChatPanelProps) {
+/** Group conversations into folders by transcription_id */
+function groupByTranscription(
+  convos: ChatConversationListItem[],
+  nameMap: Record<string, string>,
+): { label: string; transcriptionId: string | null; items: ChatConversationListItem[] }[] {
+  const groups = new Map<string | null, ChatConversationListItem[]>();
+
+  for (const c of convos) {
+    const key = c.transcription_id;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(c);
+  }
+
+  const result: { label: string; transcriptionId: string | null; items: ChatConversationListItem[] }[] = [];
+
+  for (const [tid, items] of groups) {
+    const label = tid ? (nameMap[tid] || 'Unknown transcript') : 'General';
+    result.push({ label, transcriptionId: tid, items });
+  }
+
+  result.sort((a, b) => {
+    if (!a.transcriptionId) return 1;
+    if (!b.transcriptionId) return -1;
+    return a.label.localeCompare(b.label);
+  });
+
+  return result;
+}
+
+export function ChatPanel({
+  transcriptionId,
+  scopeToTranscription,
+  transcriptionNames = {},
+}: ChatPanelProps) {
+  // Default: scope to transcript when inside a transcript view
+  const isScoped = scopeToTranscription ?? !!transcriptionId;
+
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [awaitingFirstChunk, setAwaitingFirstChunk] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+  // Smart auto-scroll
+  const userHasScrolledUp = useRef(false);
+
+  const handleScroll = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const threshold = 80;
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
+    userHasScrolledUp.current = !isNearBottom;
+  }, []);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!userHasScrolledUp.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages, awaitingFirstChunk]);
+
+  useEffect(() => {
+    if (!isStreaming) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      userHasScrolledUp.current = false;
+    }
+  }, [isStreaming]);
+
+  // Conversation persistence state
+  const [conversations, setConversations] = useState<ChatConversationListItem[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [showConversationPanel, setShowConversationPanel] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
+  const [saveTitle, setSaveTitle] = useState('');
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    loadSavedConversations();
+  }, [transcriptionId, isScoped]);
+
+  const loadSavedConversations = async () => {
+    setIsLoadingConversations(true);
+    try {
+      // If scoped, only fetch conversations for this transcript; otherwise fetch all
+      const convos = isScoped
+        ? await chatConversationsApi.list(transcriptionId)
+        : await chatConversationsApi.list();
+      setConversations(convos);
+    } catch (err) {
+      console.error('Failed to load conversations:', err);
+    } finally {
+      setIsLoadingConversations(false);
+    }
+  };
+
+  const handleSaveConversation = async () => {
+    if (!saveTitle.trim() || messages.length === 0) return;
+
+    setIsSaving(true);
+    try {
+      const messagesToSave = messages
+        .filter((m) => !m.isError)
+        .map(({ role, content }) => ({ role, content }));
+
+      if (activeConversationId) {
+        await chatConversationsApi.update(activeConversationId, {
+          title: saveTitle.trim(),
+          messages: messagesToSave,
+        });
+      } else {
+        const created = await chatConversationsApi.create({
+          transcription_id: transcriptionId,
+          title: saveTitle.trim(),
+          messages: messagesToSave,
+        });
+        setActiveConversationId(created.id);
+      }
+
+      setShowSaveDialog(false);
+      await loadSavedConversations();
+    } catch (err) {
+      console.error('Failed to save conversation:', err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleLoadConversation = async (id: string) => {
+    try {
+      const convo = await chatConversationsApi.get(id);
+      const loaded: DisplayMessage[] = convo.messages.map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      }));
+      setMessages(loaded);
+      setActiveConversationId(convo.id);
+      setSaveTitle(convo.title);
+      setShowConversationPanel(false);
+    } catch (err) {
+      console.error('Failed to load conversation:', err);
+    }
+  };
+
+  const handleDeleteConversation = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm('Delete this conversation?')) return;
+    try {
+      await chatConversationsApi.delete(id);
+      if (activeConversationId === id) {
+        setActiveConversationId(null);
+        setSaveTitle('');
+        setMessages([]);
+      }
+      await loadSavedConversations();
+    } catch (err) {
+      console.error('Failed to delete conversation:', err);
+    }
+  };
+
+  const handleNewConversation = () => {
+    setMessages([]);
+    setActiveConversationId(null);
+    setSaveTitle('');
+    setShowConversationPanel(false);
+  };
+
+  const openSaveDialog = () => {
+    if (!saveTitle) {
+      const firstUserMsg = messages.find((m) => m.role === 'user');
+      setSaveTitle(
+        firstUserMsg
+          ? firstUserMsg.content.slice(0, 60) + (firstUserMsg.content.length > 60 ? '...' : '')
+          : 'Chat conversation'
+      );
+    }
+    setShowSaveDialog(true);
+  };
+
+  const toggleFolder = (key: string) => {
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const handleSendMessage = async () => {
     if (!input.trim() || isStreaming) return;
 
-    const userMessage: DisplayMessage = {
-      role: 'user',
-      content: input,
-    };
+    const userMessage: DisplayMessage = { role: 'user', content: input };
 
     setInput('');
     setMessages((prev) => [...prev, userMessage]);
     setIsStreaming(true);
     setAwaitingFirstChunk(true);
+    userHasScrolledUp.current = false;
 
     try {
       const messagesToSend: ChatMessage[] = [...messages.filter(m => !m.isError), userMessage].map(
@@ -114,25 +250,15 @@ export function ChatPanel({ transcriptionId }: ChatPanelProps) {
       let assistantMessage = '';
       let receivedContent = false;
 
-      // Add empty assistant message placeholder
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: '' },
-      ]);
+      setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
 
       for await (const chunk of chatApi.parseSSEStream(stream)) {
-        // Check if this is an error from the SSE stream
         if (chunk.startsWith(SSE_ERROR_PREFIX)) {
           const errorText = chunk.slice(SSE_ERROR_PREFIX.length);
           setAwaitingFirstChunk(false);
-          // Replace the empty assistant message with an error message
           setMessages((prev) => {
             const updated = [...prev];
-            updated[updated.length - 1] = {
-              role: 'assistant',
-              content: errorText,
-              isError: true,
-            };
+            updated[updated.length - 1] = { role: 'assistant', content: errorText, isError: true };
             return updated;
           });
           setIsStreaming(false);
@@ -147,10 +273,7 @@ export function ChatPanel({ transcriptionId }: ChatPanelProps) {
         assistantMessage += chunk;
         setMessages((prev) => {
           const updated = [...prev];
-          updated[updated.length - 1] = {
-            role: 'assistant',
-            content: assistantMessage,
-          };
+          updated[updated.length - 1] = { role: 'assistant', content: assistantMessage };
           return updated;
         });
       }
@@ -162,24 +285,14 @@ export function ChatPanel({ transcriptionId }: ChatPanelProps) {
       setAwaitingFirstChunk(false);
       setIsStreaming(false);
 
-      // Show the error inline as an assistant error message
       setMessages((prev) => {
-        // If the last message is an empty assistant placeholder, replace it
         const last = prev[prev.length - 1];
         if (last && last.role === 'assistant' && last.content === '') {
           const updated = [...prev];
-          updated[updated.length - 1] = {
-            role: 'assistant',
-            content: errorText,
-            isError: true,
-          };
+          updated[updated.length - 1] = { role: 'assistant', content: errorText, isError: true };
           return updated;
         }
-        // Otherwise append a new error message
-        return [
-          ...prev,
-          { role: 'assistant', content: errorText, isError: true },
-        ];
+        return [...prev, { role: 'assistant', content: errorText, isError: true }];
       });
     }
   };
@@ -191,9 +304,250 @@ export function ChatPanel({ transcriptionId }: ChatPanelProps) {
     }
   };
 
+  const hasMessages = messages.filter((m) => !m.isError).length > 0;
+  const conversationGroups = isScoped ? [] : groupByTranscription(conversations, transcriptionNames);
+
+  // ── Render helpers ──
+
+  /** Flat conversation list (for transcript-scoped view) */
+  const renderFlatList = () => (
+    <div className="space-y-1">
+      {conversations.map((c) => (
+        <div
+          key={c.id}
+          onClick={() => handleLoadConversation(c.id)}
+          className={`group flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer transition-all ${
+            activeConversationId === c.id
+              ? 'bg-blue-100 dark:bg-blue-900/40 border-l-3 border-blue-500'
+              : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-600 hover:shadow-sm'
+          }`}
+        >
+          <MessageSquare className={`w-4 h-4 flex-shrink-0 ${
+            activeConversationId === c.id ? 'text-blue-500' : 'text-gray-400'
+          }`} />
+          <div className="min-w-0 flex-1">
+            <p className={`text-sm truncate ${
+              activeConversationId === c.id
+                ? 'font-semibold text-blue-700 dark:text-blue-300'
+                : 'font-medium text-gray-800 dark:text-gray-200'
+            }`}>
+              {c.title}
+            </p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+              {new Date(c.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            </p>
+          </div>
+          <button
+            onClick={(e) => handleDeleteConversation(c.id, e)}
+            className="p-1.5 text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 rounded opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
+            title="Delete"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+
+  /** Folder-grouped conversation list (for Chat page) */
+  const renderFolderList = () => (
+    <div className="space-y-1">
+      {conversationGroups.map((group) => {
+        const folderKey = group.transcriptionId || '__general__';
+        const isCollapsed = collapsedFolders.has(folderKey);
+        const isCurrentContext = group.transcriptionId === (transcriptionId || null);
+
+        return (
+          <div key={folderKey}>
+            <button
+              onClick={() => toggleFolder(folderKey)}
+              className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                isCurrentContext
+                  ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+              }`}
+            >
+              {isCollapsed ? (
+                <ChevronRight className="w-4 h-4 flex-shrink-0" />
+              ) : (
+                <ChevronDown className="w-4 h-4 flex-shrink-0" />
+              )}
+              <FolderOpen className="w-4 h-4 flex-shrink-0" />
+              <span className="text-sm font-semibold truncate flex-1">{group.label}</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500 bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded-full flex-shrink-0">
+                {group.items.length}
+              </span>
+            </button>
+
+            {!isCollapsed && (
+              <div className="ml-6 mt-1 space-y-1">
+                {group.items.map((c) => (
+                  <div
+                    key={c.id}
+                    onClick={() => handleLoadConversation(c.id)}
+                    className={`group flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all ${
+                      activeConversationId === c.id
+                        ? 'bg-blue-100 dark:bg-blue-900/40 border-l-2 border-blue-500'
+                        : 'hover:bg-gray-100 dark:hover:bg-gray-700/60 border-l-2 border-transparent'
+                    }`}
+                  >
+                    <MessageSquare className={`w-3.5 h-3.5 flex-shrink-0 ${
+                      activeConversationId === c.id ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'
+                    }`} />
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-sm truncate ${
+                        activeConversationId === c.id
+                          ? 'font-semibold text-blue-700 dark:text-blue-300'
+                          : 'font-medium text-gray-800 dark:text-gray-200'
+                      }`}>
+                        {c.title}
+                      </p>
+                      <p className="text-xs text-gray-400 dark:text-gray-500">
+                        {new Date(c.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => handleDeleteConversation(c.id, e)}
+                      className="p-1 text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 rounded opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
+                      title="Delete"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const conversationCount = conversations.length;
+
   return (
     <div className="flex flex-col h-full max-h-[600px] bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-      <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 rounded-t-lg">
+        <div className="flex items-center gap-2 min-w-0">
+          <MessageSquare className="w-4 h-4 text-gray-400 flex-shrink-0" />
+          {activeConversationId ? (
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate" title={saveTitle}>
+              {saveTitle}
+            </span>
+          ) : (
+            <span className="text-sm text-gray-500 dark:text-gray-400">New conversation</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setShowConversationPanel(!showConversationPanel)}
+            className={`p-1.5 rounded transition-colors flex items-center gap-1 ${
+              showConversationPanel
+                ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600'
+            }`}
+            title="Saved conversations"
+          >
+            <FolderOpen className="w-4 h-4" />
+            {conversationCount > 0 && (
+              <span className="text-xs font-medium">{conversationCount}</span>
+            )}
+          </button>
+          {hasMessages && (
+            <button
+              onClick={openSaveDialog}
+              disabled={isSaving}
+              className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors disabled:opacity-50"
+              title="Save conversation"
+            >
+              <Save className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Save dialog */}
+      {showSaveDialog && (
+        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20">
+          <p className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-2">
+            {activeConversationId ? 'Update conversation' : 'Save conversation'}
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={saveTitle}
+              onChange={(e) => setSaveTitle(e.target.value)}
+              placeholder="Conversation title..."
+              className="flex-1 px-3 py-1.5 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSaveConversation();
+                if (e.key === 'Escape') setShowSaveDialog(false);
+              }}
+              autoFocus
+            />
+            <button
+              onClick={handleSaveConversation}
+              disabled={isSaving || !saveTitle.trim()}
+              className="px-4 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+            >
+              {isSaving ? 'Saving...' : activeConversationId ? 'Update' : 'Save'}
+            </button>
+            <button
+              onClick={() => setShowSaveDialog(false)}
+              className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 rounded"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Conversation panel */}
+      {showConversationPanel && (
+        <div className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 max-h-96 overflow-y-auto">
+          {/* Panel header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-gray-700/60 sticky top-0 bg-gray-50 dark:bg-gray-900/50 backdrop-blur-sm z-10">
+            <span className="text-sm font-bold text-gray-800 dark:text-gray-200">
+              {isScoped ? 'Conversations' : 'All Conversations'}
+            </span>
+            <button
+              onClick={handleNewConversation}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded-lg transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              New Chat
+            </button>
+          </div>
+
+          <div className="p-3">
+            {isLoadingConversations ? (
+              <p className="text-sm text-gray-500 dark:text-gray-400 px-2 py-4 text-center">Loading...</p>
+            ) : conversations.length === 0 ? (
+              <div className="text-center py-6 px-4">
+                <MessageSquare className="w-8 h-8 text-gray-300 dark:text-gray-600 mx-auto mb-2" />
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  No saved conversations yet.
+                </p>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                  Use the <Save className="w-3 h-3 inline" /> button to save a chat.
+                </p>
+              </div>
+            ) : isScoped ? (
+              renderFlatList()
+            ) : (
+              renderFolderList()
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Messages area */}
+      <div
+        ref={messagesContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4"
+      >
         {messages.length === 0 && !awaitingFirstChunk && (
           <div className="flex items-center justify-center h-full text-gray-500 dark:text-gray-400">
             <p className="text-center">
@@ -203,7 +557,6 @@ export function ChatPanel({ transcriptionId }: ChatPanelProps) {
         )}
 
         {messages.map((message, idx) => {
-          // Skip rendering the empty assistant placeholder (typing indicator shown instead)
           if (
             message.role === 'assistant' &&
             message.content === '' &&
@@ -259,6 +612,7 @@ export function ChatPanel({ transcriptionId }: ChatPanelProps) {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Input area */}
       <div className="p-4 border-t border-gray-200 dark:border-gray-700">
         <div className="flex gap-3">
           <textarea
