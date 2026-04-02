@@ -21,6 +21,7 @@ import { Templates } from '@/pages/admin/Templates';
 import { Users } from '@/pages/admin/Users';
 import { Groups } from '@/pages/admin/Groups';
 import { ApiSettings } from '@/pages/admin/ApiSettings';
+import { RegistrationSettingsPage } from '@/pages/admin/RegistrationSettings';
 
 // Components
 import { ProtectedRoute } from '@/components/ProtectedRoute';
@@ -150,6 +151,15 @@ function App() {
         element={
           <ProtectedRoute adminOnly>
             <Groups />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/admin/registration"
+        element={
+          <ProtectedRoute adminOnly>
+            <RegistrationSettingsPage />
           </ProtectedRoute>
         }
       />

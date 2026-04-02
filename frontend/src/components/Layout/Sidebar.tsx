@@ -10,6 +10,7 @@ import {
   Shield,
   Plug,
   Users,
+  UserPlus,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
@@ -39,6 +40,7 @@ export function Sidebar() {
     { path: '/admin/templates', label: 'Templates', icon: FileText },
     { path: '/admin/users', label: 'Users', icon: Shield },
     { path: '/admin/groups', label: 'Groups', icon: Users },
+    { path: '/admin/registration', label: 'Registration', icon: UserPlus },
     { path: '/admin/settings', label: 'API Settings', icon: Plug },
   ] : [];
 

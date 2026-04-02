@@ -11,10 +11,19 @@ class UserCreate(BaseModel):
     display_name: Optional[str] = None
 
 
+class AdminUserCreate(BaseModel):
+    """Schema for admin-created user accounts."""
+    email: EmailStr
+    password: str
+    display_name: Optional[str] = None
+    role: Optional[str] = "user"
+
+
 class UserUpdate(BaseModel):
     """Schema for updating user information."""
     display_name: Optional[str] = None
     role: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 class UserResponse(BaseModel):
@@ -24,6 +33,8 @@ class UserResponse(BaseModel):
     display_name: Optional[str] = None
     role: str
     is_active: bool
+    status: str = "active"
+    registration_source: str = "self_registered"
     created_at: datetime
 
     class Config:
@@ -41,3 +52,16 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
+
+
+class RegisterResponse(BaseModel):
+    """Schema for registration response — may include pending status message."""
+    user: UserResponse
+    message: Optional[str] = None
+
+
+class RegistrationSettingsResponse(BaseModel):
+    """Public-facing registration settings (no auth required)."""
+    registration_enabled: bool
+    approval_required: bool
+    allowed_domains: list[str]

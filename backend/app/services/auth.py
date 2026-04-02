@@ -4,7 +4,7 @@ import uuid
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from app.config import settings
-from app.models.user import User, UserRole
+from app.models.user import User, UserRole, UserStatus, RegistrationSource
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -59,6 +59,8 @@ class AuthService:
         password: str,
         display_name: Optional[str] = None,
         role: UserRole = UserRole.user,
+        status: UserStatus = UserStatus.active,
+        registration_source: RegistrationSource = RegistrationSource.self_registered,
     ) -> User:
         """Create a new user."""
         hashed_password = AuthService.hash_password(password)
@@ -67,6 +69,9 @@ class AuthService:
             hashed_password=hashed_password,
             display_name=display_name,
             role=role,
+            status=status,
+            registration_source=registration_source,
+            is_active=(status == UserStatus.active),
         )
         db.add(user)
         await db.commit()

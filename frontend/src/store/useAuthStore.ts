@@ -10,6 +10,8 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  /** Set after registration when account needs admin approval */
+  pendingMessage: string | null;
 
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, display_name?: string) => Promise<void>;
@@ -17,6 +19,7 @@ interface AuthState {
   loadUser: () => Promise<void>;
   initialize: () => Promise<void>;
   clearError: () => void;
+  clearPendingMessage: () => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -27,6 +30,7 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
       isLoading: true,
       error: null,
+      pendingMessage: null,
 
       login: async (email: string, password: string) => {
         set({ isLoading: true, error: null });
@@ -52,9 +56,18 @@ export const useAuthStore = create<AuthState>()(
       },
 
       register: async (email: string, password: string, display_name?: string) => {
-        set({ isLoading: true, error: null });
+        set({ isLoading: true, error: null, pendingMessage: null });
         try {
-          await authApi.register(email, password, display_name);
+          const result = await authApi.register(email, password, display_name);
+          // If account is pending approval, don't auto-login
+          if (result.user.status === 'pending') {
+            set({
+              pendingMessage: result.message || 'Your account is pending admin approval.',
+              isLoading: false,
+            });
+            return;
+          }
+          // Active account — proceed with auto-login
           await get().login(email, password);
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Registration failed';
@@ -73,6 +86,7 @@ export const useAuthStore = create<AuthState>()(
           token: null,
           isAuthenticated: false,
           error: null,
+          pendingMessage: null,
         });
       },
 
@@ -98,7 +112,6 @@ export const useAuthStore = create<AuthState>()(
         const token = localStorage.getItem('auth_token') || get().token;
         if (token) {
           apiClient.setToken(token);
-          // Ensure both storages are in sync
           localStorage.setItem('auth_token', token);
           set({ token });
           await get().loadUser();
@@ -109,6 +122,10 @@ export const useAuthStore = create<AuthState>()(
 
       clearError: () => {
         set({ error: null });
+      },
+
+      clearPendingMessage: () => {
+        set({ pendingMessage: null });
       },
     }),
     {

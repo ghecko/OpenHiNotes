@@ -1,16 +1,31 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '@/store/useAuthStore';
-import { UserPlus, Mail, Lock, User, AlertCircle } from 'lucide-react';
+import { authApi } from '@/api/auth';
+import { UserPlus, Mail, Lock, User, AlertCircle, CheckCircle, Clock, ShieldOff } from 'lucide-react';
+import type { RegistrationSettings } from '@/types';
 
 export function Register() {
   const navigate = useNavigate();
-  const { register, error: authError, clearError } = useAuthStore();
+  const { register, error: authError, clearError, pendingMessage, clearPendingMessage } = useAuthStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [regSettings, setRegSettings] = useState<RegistrationSettings | null>(null);
+  const [loadingSettings, setLoadingSettings] = useState(true);
+
+  useEffect(() => {
+    clearPendingMessage();
+    authApi.getRegistrationSettings()
+      .then(setRegSettings)
+      .catch(() => {
+        // If we can't fetch settings, assume registration is allowed
+        setRegSettings({ registration_enabled: true, approval_required: false, allowed_domains: [] });
+      })
+      .finally(() => setLoadingSettings(false));
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,7 +46,10 @@ export function Register() {
 
     try {
       await register(email, password, displayName || undefined);
-      navigate('/dashboard');
+      // If pendingMessage is set, register() didn't auto-login — stay on page
+      if (!useAuthStore.getState().pendingMessage) {
+        navigate('/dashboard');
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Registration failed';
       setError(message);
@@ -41,6 +59,72 @@ export function Register() {
   };
 
   const displayError = error || authError;
+
+  // If registration is disabled, show a clean message
+  if (!loadingSettings && regSettings && !regSettings.registration_enabled) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-primary-600 via-primary-700 to-primary-900 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 flex items-center justify-center px-4 relative overflow-hidden">
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute -top-40 -right-40 w-80 h-80 bg-white/10 rounded-full blur-3xl" />
+          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-primary-400/10 rounded-full blur-3xl" />
+        </div>
+        <div className="w-full max-w-md relative z-10">
+          <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl rounded-2xl shadow-2xl p-8 border border-white/20 dark:border-gray-700/40">
+            <div className="text-center mb-6">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gray-100 dark:bg-gray-700 mb-4">
+                <ShieldOff className="w-8 h-8 text-gray-400" />
+              </div>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                Registration Disabled
+              </h1>
+              <p className="text-gray-500 dark:text-gray-400 mt-3 text-sm leading-relaxed">
+                Public registration is currently disabled. Please contact an administrator to request an account.
+              </p>
+            </div>
+            <Link
+              to="/login"
+              className="block w-full text-center px-4 py-2.5 bg-primary-500 hover:bg-primary-600 text-white font-medium rounded-xl transition-colors"
+            >
+              Back to Login
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // After successful registration with pending approval
+  if (pendingMessage) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-primary-600 via-primary-700 to-primary-900 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 flex items-center justify-center px-4 relative overflow-hidden">
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute -top-40 -right-40 w-80 h-80 bg-white/10 rounded-full blur-3xl" />
+          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-primary-400/10 rounded-full blur-3xl" />
+        </div>
+        <div className="w-full max-w-md relative z-10">
+          <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl rounded-2xl shadow-2xl p-8 border border-white/20 dark:border-gray-700/40">
+            <div className="text-center mb-6">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-amber-100 dark:bg-amber-900/30 mb-4">
+                <Clock className="w-8 h-8 text-amber-500" />
+              </div>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                Account Pending Approval
+              </h1>
+              <p className="text-gray-500 dark:text-gray-400 mt-3 text-sm leading-relaxed">
+                {pendingMessage}
+              </p>
+            </div>
+            <Link
+              to="/login"
+              className="block w-full text-center px-4 py-2.5 bg-primary-500 hover:bg-primary-600 text-white font-medium rounded-xl transition-colors"
+            >
+              Go to Login
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary-600 via-primary-700 to-primary-900 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 flex items-center justify-center px-4 relative overflow-hidden">
@@ -65,6 +149,24 @@ export function Register() {
               Create your account
             </p>
           </div>
+
+          {/* Info banner: approval required */}
+          {regSettings?.approval_required && (
+            <div className="mb-6 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200/60 dark:border-amber-800/40 text-amber-700 dark:text-amber-300 rounded-xl text-sm flex items-start gap-2.5">
+              <Clock className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>New accounts require admin approval before you can log in.</span>
+            </div>
+          )}
+
+          {/* Info banner: domain restriction */}
+          {regSettings?.allowed_domains && regSettings.allowed_domains.length > 0 && (
+            <div className="mb-6 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200/60 dark:border-blue-800/40 text-blue-700 dark:text-blue-300 rounded-xl text-sm flex items-start gap-2.5">
+              <Mail className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>
+                Registration is limited to: {regSettings.allowed_domains.map(d => `@${d}`).join(', ')}
+              </span>
+            </div>
+          )}
 
           {displayError && (
             <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200/60 dark:border-red-800/40 text-red-700 dark:text-red-300 rounded-xl text-sm flex items-start gap-3">
@@ -145,7 +247,7 @@ export function Register() {
 
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || loadingSettings}
               className="w-full px-4 py-2.5 bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white font-medium rounded-xl transition-all duration-200 disabled:opacity-50 shadow-lg shadow-primary-500/25 hover:shadow-xl hover:shadow-primary-500/30 mt-2"
             >
               {isLoading ? (

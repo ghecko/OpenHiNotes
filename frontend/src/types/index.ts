@@ -1,4 +1,6 @@
 export type UserRole = 'admin' | 'user';
+export type UserStatus = 'active' | 'pending' | 'rejected';
+export type RegistrationSource = 'self_registered' | 'admin_created';
 
 export interface User {
   id: string;
@@ -6,12 +8,25 @@ export interface User {
   display_name: string | null;
   role: UserRole;
   is_active: boolean;
+  status: UserStatus;
+  registration_source: RegistrationSource;
   created_at: string;
 }
 
 export interface AuthTokens {
   access_token: string;
   token_type: string;
+}
+
+export interface RegisterResult {
+  user: User;
+  message: string | null;
+}
+
+export interface RegistrationSettings {
+  registration_enabled: boolean;
+  approval_required: boolean;
+  allowed_domains: string[];
 }
 
 export type TranscriptionStatus = 'pending' | 'processing' | 'completed' | 'failed';
