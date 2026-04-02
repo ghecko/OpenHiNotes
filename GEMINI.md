@@ -12,7 +12,7 @@ Fork of [sgeraldes/hidock-next](https://github.com/sgeraldes/hidock-next) — we
 
 ## Key Directories
 ```
-apps/web/src/
+frontend/src/
 ├── services/providers/   # Multi-provider transcription (WhisperX, OpenAI, Gemini)
 ├── services/             # Device service, audio processing, transcription orchestrator
 ├── pages/                # Dashboard, Recordings, Transcription, Settings
