@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { TranscriptionViewer } from '@/components/TranscriptionViewer';
@@ -8,9 +8,12 @@ import { transcriptionsApi } from '@/api/transcriptions';
 import { summariesApi } from '@/api/summaries';
 import { templatesApi } from '@/api/templates';
 import { collectionsApi } from '@/api/collections';
+import { useAppStore } from '@/store/useAppStore';
+import { useDeviceConnection } from '@/hooks/useDeviceConnection';
+import { deviceService } from '@/services/deviceService';
 import { Transcription, Summary, SummaryTemplate, Collection } from '@/types';
 import { format } from 'date-fns';
-import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download } from 'lucide-react';
+import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, Play, Pause, Volume2, Disc3 } from 'lucide-react';
 import { formatMarkdown } from '@/utils/formatMarkdown';
 
 function SummaryModal({
@@ -86,6 +89,18 @@ export function TranscriptionDetail() {
 
   // Collection assignment
   const [collections, setCollections] = useState<Collection[]>([]);
+
+  // Audio playback
+  const recordings = useAppStore((s) => s.recordings);
+  const { downloadRecording } = useDeviceConnection();
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [audioSrc, setAudioSrc] = useState<string>('');
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackTime, setPlaybackTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [volume, setVolume] = useState(1);
 
   useEffect(() => {
     loadData();
@@ -212,6 +227,102 @@ export function TranscriptionDetail() {
     } finally {
       setIsGeneratingSummary(false);
     }
+  };
+
+  // --- Audio playback ---
+  // Find the matching device recording for this transcription
+  const sourceRecording = transcription
+    ? recordings.find((r) => r.fileName === transcription.original_filename)
+    : undefined;
+
+  // Check blob cache on mount / when recording is found
+  useEffect(() => {
+    if (!transcription) return;
+    const cached = deviceService.getCachedBlob(transcription.original_filename);
+    if (cached) setAudioBlob(cached);
+  }, [transcription?.original_filename]);
+
+  // Create / revoke object URL from blob
+  useEffect(() => {
+    if (!audioBlob) { setAudioSrc(''); return; }
+    const url = URL.createObjectURL(audioBlob);
+    setAudioSrc(url);
+    return () => URL.revokeObjectURL(url);
+  }, [audioBlob]);
+
+  // Wire up audio element events
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const onTime = () => setPlaybackTime(audio.currentTime);
+    const onMeta = () => setAudioDuration(audio.duration);
+    const onEnd = () => setIsPlaying(false);
+    audio.addEventListener('timeupdate', onTime);
+    audio.addEventListener('loadedmetadata', onMeta);
+    audio.addEventListener('ended', onEnd);
+    return () => {
+      audio.removeEventListener('timeupdate', onTime);
+      audio.removeEventListener('loadedmetadata', onMeta);
+      audio.removeEventListener('ended', onEnd);
+    };
+  }, [audioSrc]);
+
+  const handleLoadAudio = useCallback(async () => {
+    if (!sourceRecording || !transcription) return;
+    setIsLoadingAudio(true);
+    try {
+      const cached = deviceService.getCachedBlob(transcription.original_filename);
+      if (cached) {
+        setAudioBlob(cached);
+        setIsLoadingAudio(false);
+        return;
+      }
+      const blob = await downloadRecording(
+        sourceRecording.fileName,
+        sourceRecording.size,
+        undefined,
+        sourceRecording.fileVersion,
+      );
+      if (blob) {
+        deviceService.setCachedBlob(sourceRecording.fileName, blob);
+        setAudioBlob(blob);
+      }
+    } catch (err) {
+      console.error('Failed to download audio:', err);
+    } finally {
+      setIsLoadingAudio(false);
+    }
+  }, [sourceRecording, transcription, downloadRecording]);
+
+  const togglePlayback = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (isPlaying) { audio.pause(); } else { audio.play(); }
+    setIsPlaying(!isPlaying);
+  }, [isPlaying]);
+
+  const handleSeekAudio = useCallback((time: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = time;
+    setPlaybackTime(time);
+    if (!isPlaying) { audio.play(); setIsPlaying(true); }
+  }, [isPlaying]);
+
+  const handleSeekSlider = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const t = parseFloat(e.target.value);
+    if (audioRef.current) { audioRef.current.currentTime = t; setPlaybackTime(t); }
+  }, []);
+
+  const handleVolumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = parseFloat(e.target.value);
+    if (audioRef.current) audioRef.current.volume = v;
+    setVolume(v);
+  }, []);
+
+  const fmtTime = (s: number) => {
+    if (!s || !isFinite(s)) return '0:00';
+    return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   };
 
   const handleDeleteSummary = async (summaryId: string) => {
@@ -401,8 +512,74 @@ export function TranscriptionDetail() {
           </div>
         </div>
 
+        {/* Audio player */}
+        {audioSrc && <audio ref={audioRef} src={audioSrc} />}
+        {transcription.status === 'completed' && (
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            {audioBlob ? (
+              <div className="px-5 py-4 space-y-3">
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={togglePlayback}
+                    className="flex-shrink-0 p-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-full transition-colors shadow-sm"
+                  >
+                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                  </button>
+                  <input
+                    type="range"
+                    min="0"
+                    max={audioDuration || 0}
+                    step="0.1"
+                    value={playbackTime}
+                    onChange={handleSeekSlider}
+                    className="flex-1 h-2 bg-gray-200 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-primary-600"
+                  />
+                  <span className="text-xs text-gray-500 dark:text-gray-400 w-24 text-right tabular-nums flex-shrink-0">
+                    {fmtTime(playbackTime)} / {fmtTime(audioDuration)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Volume2 className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={volume}
+                    onChange={handleVolumeChange}
+                    className="w-24 h-1.5 bg-gray-200 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-primary-600"
+                  />
+                  {isPlaying && (
+                    <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-medium text-primary-600 dark:text-primary-400">
+                      <Disc3 className="w-3 h-3 animate-spin" />
+                      Playing
+                    </span>
+                  )}
+                </div>
+              </div>
+            ) : sourceRecording ? (
+              <div className="px-5 py-4 flex items-center gap-3">
+                <Play className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                <span className="text-sm text-gray-600 dark:text-gray-400 flex-1">
+                  Source recording available on device
+                </span>
+                <button
+                  onClick={handleLoadAudio}
+                  disabled={isLoadingAudio}
+                  className="px-4 py-1.5 text-sm font-medium bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
+                >
+                  {isLoadingAudio ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                  {isLoadingAudio ? 'Loading...' : 'Load Audio'}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        )}
+
         <TranscriptionViewer
           transcription={transcription}
+          currentTime={audioBlob ? playbackTime : undefined}
+          onSeek={audioBlob ? handleSeekAudio : undefined}
           onSpeakerUpdate={async (speakerId, newName) => {
             if (!transcription) return;
             const updatedSpeakers = { ...transcription.speakers, [speakerId]: newName };

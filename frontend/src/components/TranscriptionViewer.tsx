@@ -6,6 +6,10 @@ interface TranscriptionViewerProps {
   transcription: Transcription;
   onSpeakerUpdate?: (speakerId: string, newName: string) => void;
   onSegmentReassign?: (segmentIndex: number, newSpeaker: string) => void;
+  /** Current audio playback time in seconds — used for highlight sync */
+  currentTime?: number;
+  /** Called when user clicks a segment timestamp to seek */
+  onSeek?: (time: number) => void;
 }
 
 /**
@@ -45,13 +49,17 @@ function getSpeakerColorByIndex(index: number) {
   return SPEAKER_PALETTE[index % SPEAKER_PALETTE.length];
 }
 
-export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentReassign }: TranscriptionViewerProps) {
+export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentReassign, currentTime, onSeek }: TranscriptionViewerProps) {
   const [copied, setCopied] = useState(false);
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editValue, setEditValue] = useState('');
   const editInputRef = useRef<HTMLInputElement>(null);
   const [reassigningIndex, setReassigningIndex] = useState<number | null>(null);
+  const activeSegmentRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const userScrolledRef = useRef(false);
+  const lastActiveIndexRef = useRef<number>(-1);
 
   // Build a deterministic sorted speaker list → index map
   const speakerIndexMap = useMemo(() => {
@@ -69,6 +77,42 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
   const sortedSpeakers = useMemo(() => {
     return Array.from(speakerIndexMap.keys()).sort();
   }, [speakerIndexMap]);
+
+  // Compute the active segment based on playback time
+  const activeSegmentIndex = useMemo(() => {
+    if (currentTime === undefined || currentTime < 0) return -1;
+    for (let i = transcription.segments.length - 1; i >= 0; i--) {
+      if (currentTime >= transcription.segments[i].start) return i;
+    }
+    return -1;
+  }, [currentTime, transcription.segments]);
+
+  // Auto-scroll to active segment when it changes (unless user scrolled manually)
+  useEffect(() => {
+    if (activeSegmentIndex < 0 || activeSegmentIndex === lastActiveIndexRef.current) return;
+    lastActiveIndexRef.current = activeSegmentIndex;
+    if (!userScrolledRef.current && activeSegmentRef.current && scrollContainerRef.current) {
+      activeSegmentRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [activeSegmentIndex]);
+
+  // Detect user scroll to pause auto-scroll
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container || currentTime === undefined) return;
+    let timeout: ReturnType<typeof setTimeout>;
+    const handleScroll = () => {
+      userScrolledRef.current = true;
+      clearTimeout(timeout);
+      // Resume auto-scroll after 4s of no user scrolling
+      timeout = setTimeout(() => { userScrolledRef.current = false; }, 4000);
+    };
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+      clearTimeout(timeout);
+    };
+  }, [currentTime !== undefined]);
 
   // Focus the input when entering edit mode, without scrolling
   useEffect(() => {
@@ -161,21 +205,33 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
         </button>
       </div>
 
-      <div className="space-y-3 max-h-96 overflow-y-auto">
+      <div ref={scrollContainerRef} className="space-y-3 max-h-96 overflow-y-auto scroll-smooth">
         {transcription.segments.map((segment, idx) => {
           const color = getSpeakerColor(segment.speaker);
           const isEditing = editingIndex === idx;
+          const isActive = idx === activeSegmentIndex;
 
           return (
             <div
               key={idx}
-              className="group flex gap-3 rounded-md px-3 py-2 transition-colors"
+              ref={isActive ? activeSegmentRef : undefined}
+              className={`group flex gap-3 rounded-md px-3 py-2 transition-all duration-300 ${
+                isActive ? 'ring-2 ring-primary-400 dark:ring-primary-500 ring-offset-1 dark:ring-offset-gray-800 shadow-sm' : ''
+              }`}
               style={{
                 borderLeft: `4px solid ${color.border}`,
-                backgroundColor: isDarkMode() ? color.bgDark : color.bgLight,
+                backgroundColor: isActive
+                  ? (isDarkMode() ? 'rgba(59,130,246,0.15)' : 'rgba(59,130,246,0.10)')
+                  : (isDarkMode() ? color.bgDark : color.bgLight),
               }}
             >
-              <div className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0 w-12 pt-1">
+              <div
+                className={`text-xs flex-shrink-0 w-12 pt-1 ${
+                  onSeek ? 'cursor-pointer hover:text-primary-600 dark:hover:text-primary-400' : ''
+                } ${isActive ? 'text-primary-600 dark:text-primary-400 font-semibold' : 'text-gray-500 dark:text-gray-400'}`}
+                onClick={() => onSeek?.(segment.start)}
+                title={onSeek ? 'Click to jump here' : undefined}
+              >
                 {formatTimestamp(segment.start)}
               </div>
               <div className="flex-1">
