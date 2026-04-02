@@ -28,6 +28,9 @@ class CollectionResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     transcription_count: int = 0
+    # Access control fields (populated by routers, not from DB)
+    permission_level: Optional[str] = None  # "owner" | "write" | "read"
+    shared_by: Optional[str] = None  # display name of who shared it
 
     model_config = {"from_attributes": True}
 

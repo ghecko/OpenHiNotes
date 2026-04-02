@@ -11,7 +11,9 @@ from app.schemas.collection import (
 from app.models.collection import Collection
 from app.models.transcription import Transcription
 from app.models.user import User, UserRole
+from app.models.resource_share import ResourceType
 from app.dependencies import get_current_user
+from app.services.permissions import PermissionService
 import uuid
 
 router = APIRouter(prefix="/collections", tags=["collections"])
@@ -51,6 +53,19 @@ async def _enrich_with_count(
     return result
 
 
+async def _enrich_with_count_and_permissions(
+    collections: list[Collection], user: User, db: AsyncSession
+) -> list[dict]:
+    """Add transcription_count and permission_level to each collection."""
+    enriched = await _enrich_with_count(collections, db)
+    for i, c in enumerate(collections):
+        level = await PermissionService.get_permission_level(
+            db, user, ResourceType.collection, c.id
+        )
+        enriched[i]["permission_level"] = level
+    return enriched
+
+
 @router.get("", response_model=list[CollectionResponse])
 async def list_collections(
     skip: int = Query(0, ge=0),
@@ -58,15 +73,25 @@ async def list_collections(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List user's collections."""
-    query = select(Collection).order_by(Collection.name)
-    if current_user.role != UserRole.admin:
-        query = query.where(Collection.user_id == current_user.id)
-    query = query.offset(skip).limit(limit)
+    """List user's collections (owned + shared)."""
+    if current_user.role == UserRole.admin:
+        query = select(Collection).order_by(Collection.name).offset(skip).limit(limit)
+    else:
+        # Get accessible collection IDs
+        accessible_ids = await PermissionService.list_accessible_ids(
+            db, current_user, ResourceType.collection
+        )
+        query = (
+            select(Collection)
+            .where(Collection.id.in_(accessible_ids))
+            .order_by(Collection.name)
+            .offset(skip)
+            .limit(limit)
+        )
 
     result = await db.execute(query)
     collections = list(result.scalars().all())
-    return await _enrich_with_count(collections, db)
+    return await _enrich_with_count_and_permissions(collections, current_user, db)
 
 
 @router.post("", response_model=CollectionResponse, status_code=status.HTTP_201_CREATED)
@@ -86,6 +111,7 @@ async def create_collection(
     await db.commit()
     await db.refresh(collection)
     enriched = await _enrich_with_count([collection], db)
+    enriched[0]["permission_level"] = "owner"
     return enriched[0]
 
 
@@ -106,13 +132,17 @@ async def get_collection(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Collection not found",
         )
-    if current_user.role != UserRole.admin and collection.user_id != current_user.id:
+
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.collection, collection_id, "read"
+    )
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized",
         )
 
-    enriched = await _enrich_with_count([collection], db)
+    enriched = await _enrich_with_count_and_permissions([collection], current_user, db)
     return enriched[0]
 
 
@@ -123,7 +153,7 @@ async def update_collection(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update a collection."""
+    """Update a collection. Requires write permission."""
     result = await db.execute(
         select(Collection).where(Collection.id == collection_id)
     )
@@ -134,7 +164,11 @@ async def update_collection(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Collection not found",
         )
-    if current_user.role != UserRole.admin and collection.user_id != current_user.id:
+
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.collection, collection_id, "write"
+    )
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized",
@@ -149,7 +183,7 @@ async def update_collection(
 
     await db.commit()
     await db.refresh(collection)
-    enriched = await _enrich_with_count([collection], db)
+    enriched = await _enrich_with_count_and_permissions([collection], current_user, db)
     return enriched[0]
 
 
@@ -159,7 +193,7 @@ async def delete_collection(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a collection. Transcriptions are NOT deleted (set to null)."""
+    """Delete a collection. Only owners and admins can delete."""
     result = await db.execute(
         select(Collection).where(Collection.id == collection_id)
     )
@@ -170,10 +204,14 @@ async def delete_collection(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Collection not found",
         )
-    if current_user.role != UserRole.admin and collection.user_id != current_user.id:
+
+    level = await PermissionService.get_permission_level(
+        db, current_user, ResourceType.collection, collection_id
+    )
+    if level != "owner":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized",
+            detail="Only owners can delete collections",
         )
 
     await db.delete(collection)
@@ -188,17 +226,19 @@ async def list_collection_transcriptions(
 ):
     """List all transcriptions in a collection."""
     # Verify collection access
-    result = await db.execute(
-        select(Collection).where(Collection.id == collection_id)
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.collection, collection_id, "read"
     )
-    collection = result.scalars().first()
-
-    if not collection:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Collection not found",
+    if not has_access:
+        # Check if collection even exists
+        result = await db.execute(
+            select(Collection).where(Collection.id == collection_id)
         )
-    if current_user.role != UserRole.admin and collection.user_id != current_user.id:
+        if not result.scalars().first():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Collection not found",
+            )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized",
@@ -219,26 +259,28 @@ async def assign_transcription(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Add a transcription to a collection."""
-    # Verify collection
-    result = await db.execute(
-        select(Collection).where(Collection.id == collection_id)
+    """Add a transcription to a collection. Requires write on collection and ownership of transcription."""
+    # Verify write access on collection
+    has_coll_access = await PermissionService.check_access(
+        db, current_user, ResourceType.collection, collection_id, "write"
     )
-    collection = result.scalars().first()
-    if not collection:
-        raise HTTPException(status_code=404, detail="Collection not found")
-    if current_user.role != UserRole.admin and collection.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    if not has_coll_access:
+        raise HTTPException(status_code=403, detail="Not authorized to modify this collection")
 
-    # Verify transcription
+    # Verify transcription access (at least write)
+    has_trans_access = await PermissionService.check_access(
+        db, current_user, ResourceType.transcription, transcription_id, "write"
+    )
+    if not has_trans_access:
+        raise HTTPException(status_code=403, detail="Not authorized to move this transcription")
+
+    # Verify transcription exists
     result = await db.execute(
         select(Transcription).where(Transcription.id == transcription_id)
     )
     transcription = result.scalars().first()
     if not transcription:
         raise HTTPException(status_code=404, detail="Transcription not found")
-    if current_user.role != UserRole.admin and transcription.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized")
 
     transcription.collection_id = collection_id
     await db.commit()
@@ -262,7 +304,11 @@ async def remove_transcription_from_collection(
     transcription = result.scalars().first()
     if not transcription:
         raise HTTPException(status_code=404, detail="Transcription not found in this collection")
-    if current_user.role != UserRole.admin and transcription.user_id != current_user.id:
+
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.collection, collection_id, "write"
+    )
+    if not has_access:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     transcription.collection_id = None

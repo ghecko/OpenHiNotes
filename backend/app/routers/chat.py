@@ -7,8 +7,10 @@ from app.schemas.chat import ChatRequest, ChatMessage
 from app.models.transcription import Transcription
 from app.models.collection import Collection
 from app.models.user import User, UserRole
+from app.models.resource_share import ResourceType
 from app.dependencies import get_current_user
 from app.services.llm import LLMService
+from app.services.permissions import PermissionService
 import json
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -63,7 +65,10 @@ async def _resolve_transcriptions(
         collection = coll_result.scalars().first()
         if not collection:
             raise HTTPException(status_code=404, detail="Collection not found")
-        if current_user.role != UserRole.admin and collection.user_id != current_user.id:
+        has_access = await PermissionService.check_access(
+            db, current_user, ResourceType.collection, chat_request.collection_id, "read"
+        )
+        if not has_access:
             raise HTTPException(status_code=403, detail="Not authorized")
 
         result = await db.execute(
@@ -84,9 +89,12 @@ async def _resolve_transcriptions(
     )
     transcriptions = list(result.scalars().all())
 
-    # Check authorization
+    # Check authorization via PermissionService
     for t in transcriptions:
-        if current_user.role != UserRole.admin and t.user_id != current_user.id:
+        has_access = await PermissionService.check_access(
+            db, current_user, ResourceType.transcription, t.id, "read"
+        )
+        if not has_access:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Not authorized to chat with transcription {t.id}",

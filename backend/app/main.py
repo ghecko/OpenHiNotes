@@ -15,6 +15,8 @@ from app.routers import chat as chat_router
 from app.routers import chat_conversations as chat_conversations_router
 from app.routers import collections as collections_router
 from app.routers import app_settings as settings_router
+from app.routers import groups as groups_router
+from app.routers import shares as shares_router
 import logging
 
 # Configure logging
@@ -47,6 +49,8 @@ app.include_router(chat_router.router, prefix="/api")
 app.include_router(chat_conversations_router.router, prefix="/api")
 app.include_router(collections_router.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
+app.include_router(groups_router.router, prefix="/api")
+app.include_router(shares_router.router, prefix="/api")
 
 
 @app.get("/api/health")

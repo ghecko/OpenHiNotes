@@ -140,9 +140,10 @@ export const transcriptionsApi = {
     skip: number = 0,
     limit: number = 20,
     sort: 'newest' | 'oldest' = 'newest',
+    filter: 'all' | 'mine' | 'shared' = 'all',
   ): Promise<PaginatedResponse<Transcription>> {
     return apiClient.get<PaginatedResponse<Transcription>>(
-      `/transcriptions?skip=${skip}&limit=${limit}&sort=${sort}`
+      `/transcriptions?skip=${skip}&limit=${limit}&sort=${sort}&filter=${filter}`
     );
   },
 

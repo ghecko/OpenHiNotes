@@ -28,11 +28,27 @@ from app.models.user import User, UserRole
 from app.models.transcription import Transcription
 from app.models.summary import Summary
 from app.models.template import SummaryTemplate
+from app.models.resource_share import ResourceType
 from app.dependencies import get_current_user
 from app.services.transcription import TranscriptionService
 from app.services.llm import LLMService
+from app.services.permissions import PermissionService
 
 router = APIRouter(prefix="/transcriptions", tags=["transcriptions"])
+
+
+async def _enrich_with_permissions(
+    transcription: Transcription,
+    user: User,
+    db: AsyncSession,
+) -> dict:
+    """Add permission_level to a transcription response."""
+    level = await PermissionService.get_permission_level(
+        db, user, ResourceType.transcription, transcription.id
+    )
+    data = TranscriptionResponse.model_validate(transcription).model_dump()
+    data["permission_level"] = level
+    return data
 
 
 @router.post("/upload", response_model=TranscriptionResponse, status_code=status.HTTP_201_CREATED)
@@ -268,19 +284,66 @@ async def list_transcriptions(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     sort: str = Query("newest", regex="^(newest|oldest)$"),
+    filter: str = Query("all", regex="^(all|mine|shared)$"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List transcriptions."""
-    # Base queries
+    """List transcriptions. Supports filter: all (mine + shared), mine, shared."""
     order = Transcription.created_at.desc() if sort == "newest" else Transcription.created_at.asc()
-    query = select(Transcription).order_by(order).offset(skip).limit(limit)
-    count_query = select(func.count()).select_from(Transcription)
 
-    if current_user.role != UserRole.admin:
-        # User sees only their own
-        query = query.where(Transcription.user_id == current_user.id)
-        count_query = count_query.where(Transcription.user_id == current_user.id)
+    if current_user.role == UserRole.admin:
+        # Admins see everything
+        query = select(Transcription).order_by(order).offset(skip).limit(limit)
+        count_query = select(func.count()).select_from(Transcription)
+    else:
+        # Get accessible IDs
+        accessible_ids = await PermissionService.list_accessible_ids(
+            db, current_user, ResourceType.transcription
+        )
+
+        if filter == "mine":
+            query = (
+                select(Transcription)
+                .where(Transcription.user_id == current_user.id)
+                .order_by(order)
+                .offset(skip)
+                .limit(limit)
+            )
+            count_query = (
+                select(func.count())
+                .select_from(Transcription)
+                .where(Transcription.user_id == current_user.id)
+            )
+        elif filter == "shared":
+            shared_ids = [tid for tid in accessible_ids if tid not in
+                          {r[0] for r in (await db.execute(
+                              select(Transcription.id).where(Transcription.user_id == current_user.id)
+                          ))}]
+            query = (
+                select(Transcription)
+                .where(Transcription.id.in_(shared_ids))
+                .order_by(order)
+                .offset(skip)
+                .limit(limit)
+            )
+            count_query = (
+                select(func.count())
+                .select_from(Transcription)
+                .where(Transcription.id.in_(shared_ids))
+            )
+        else:  # "all" — owned + shared
+            query = (
+                select(Transcription)
+                .where(Transcription.id.in_(accessible_ids))
+                .order_by(order)
+                .offset(skip)
+                .limit(limit)
+            )
+            count_query = (
+                select(func.count())
+                .select_from(Transcription)
+                .where(Transcription.id.in_(accessible_ids))
+            )
 
     # Execute queries
     total = await db.scalar(count_query)
@@ -312,7 +375,11 @@ async def check_transcriptions_by_filenames(
     ).where(Transcription.original_filename.in_(filename_list))
 
     if current_user.role != UserRole.admin:
-        query = query.where(Transcription.user_id == current_user.id)
+        # Include owned + accessible transcriptions
+        accessible_ids = await PermissionService.list_accessible_ids(
+            db, current_user, ResourceType.transcription
+        )
+        query = query.where(Transcription.id.in_(accessible_ids))
 
     result = await db.execute(query)
     rows = result.all()
@@ -347,14 +414,17 @@ async def get_transcription(
             detail="Transcription not found",
         )
 
-    # Check authorization
-    if current_user.role != UserRole.admin and transcription.user_id != current_user.id:
+    # Check authorization via PermissionService
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.transcription, transcription_id, "read"
+    )
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to view this transcription",
         )
 
-    return transcription
+    return await _enrich_with_permissions(transcription, current_user, db)
 
 
 @router.patch("/{transcription_id}/speakers", response_model=TranscriptionResponse)
@@ -373,8 +443,11 @@ async def update_speakers(
             detail="Transcription not found",
         )
 
-    # Check authorization
-    if current_user.role != UserRole.admin and transcription.user_id != current_user.id:
+    # Check write authorization
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.transcription, transcription_id, "write"
+    )
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this transcription",
@@ -402,8 +475,11 @@ async def update_notes(
             detail="Transcription not found",
         )
 
-    # Check authorization
-    if current_user.role != UserRole.admin and transcription.user_id != current_user.id:
+    # Check write authorization
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.transcription, transcription_id, "write"
+    )
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this transcription",
@@ -429,8 +505,11 @@ async def update_title(
             detail="Transcription not found",
         )
 
-    # Check authorization
-    if current_user.role != UserRole.admin and transcription.user_id != current_user.id:
+    # Check write authorization
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.transcription, transcription_id, "write"
+    )
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this transcription",
@@ -456,7 +535,10 @@ async def reassign_segment_speaker(
             detail="Transcription not found",
         )
 
-    if current_user.role != UserRole.admin and transcription.user_id != current_user.id:
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.transcription, transcription_id, "write"
+    )
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this transcription",
@@ -479,7 +561,7 @@ async def delete_transcription(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a transcription."""
+    """Delete a transcription. Only owners and admins can delete."""
     transcription = await TranscriptionService.get_transcription(db, transcription_id)
 
     if not transcription:
@@ -488,11 +570,14 @@ async def delete_transcription(
             detail="Transcription not found",
         )
 
-    # Check authorization
-    if current_user.role != UserRole.admin and transcription.user_id != current_user.id:
+    # Only owners and admins can delete
+    level = await PermissionService.get_permission_level(
+        db, current_user, ResourceType.transcription, transcription_id
+    )
+    if level != "owner":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to delete this transcription",
+            detail="Only owners can delete transcriptions",
         )
 
     await TranscriptionService.delete_transcription(db, transcription_id)

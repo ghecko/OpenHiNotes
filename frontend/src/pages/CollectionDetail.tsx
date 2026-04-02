@@ -6,8 +6,9 @@ import { collectionsApi } from '@/api/collections';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { Collection, Transcription } from '@/types';
 import {
-  FolderOpen, Plus, Trash2, ArrowLeft, FileText, MessageSquare, X,
+  FolderOpen, Plus, Trash2, ArrowLeft, FileText, MessageSquare, X, Share2, Eye, Pencil,
 } from 'lucide-react';
+import { ShareModal } from '@/components/ShareModal';
 
 export function CollectionDetail() {
   const { id } = useParams<{ id: string }>();
@@ -24,6 +25,14 @@ export function CollectionDetail() {
 
   // Tab view
   const [activeTab, setActiveTab] = useState<'transcriptions' | 'chat'>('transcriptions');
+
+  // Share modal
+  const [showShareModal, setShowShareModal] = useState(false);
+
+  // Derived permission
+  const permissionLevel = collection?.permission_level || 'owner';
+  const canEdit = permissionLevel === 'owner' || permissionLevel === 'write';
+  const isOwner = permissionLevel === 'owner';
 
   const loadCollection = async () => {
     if (!id) return;
@@ -112,11 +121,38 @@ export function CollectionDetail() {
             <div className="flex items-center gap-2">
               <FolderOpen className="w-5 h-5 text-blue-500 flex-shrink-0" />
               <h2 className="text-xl font-bold text-gray-900 dark:text-white truncate">{collection.name}</h2>
+              {/* Permission indicator */}
+              {permissionLevel && permissionLevel !== 'owner' && (
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ${
+                    permissionLevel === 'write'
+                      ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                      : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
+                  }`}
+                >
+                  {permissionLevel === 'read' ? (
+                    <><Eye className="w-3 h-3" /> Read only</>
+                  ) : (
+                    <><Pencil className="w-3 h-3" /> Can edit</>
+                  )}
+                </span>
+              )}
             </div>
             {collection.description && (
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{collection.description}</p>
             )}
           </div>
+          {/* Share button (owner only) */}
+          {isOwner && (
+            <button
+              onClick={() => setShowShareModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/20 hover:bg-primary-100 dark:hover:bg-primary-900/30 rounded-lg transition-colors flex-shrink-0"
+              title="Share this collection"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              Share
+            </button>
+          )}
         </div>
 
         {/* Tabs */}
@@ -218,6 +254,9 @@ export function CollectionDetail() {
             <ChatPanel
               collectionId={id}
               scopeToTranscription={false}
+              transcriptionNames={Object.fromEntries(
+                transcriptions.map((t) => [t.id, t.title || t.original_filename])
+              )}
             />
           </div>
         )}
@@ -272,6 +311,17 @@ export function CollectionDetail() {
           </div>
         )}
       </div>
+
+      {/* Share modal */}
+      {collection && (
+        <ShareModal
+          isOpen={showShareModal}
+          onClose={() => setShowShareModal(false)}
+          resourceType="collection"
+          resourceId={collection.id}
+          resourceName={collection.name}
+        />
+      )}
     </Layout>
   );
 }

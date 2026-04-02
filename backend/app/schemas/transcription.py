@@ -58,6 +58,9 @@ class TranscriptionResponse(BaseModel):
     notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    # Access control fields (populated by routers, not from DB)
+    permission_level: Optional[str] = None  # "owner" | "write" | "read"
+    shared_by: Optional[str] = None  # display name of who shared it
 
     class Config:
         from_attributes = True

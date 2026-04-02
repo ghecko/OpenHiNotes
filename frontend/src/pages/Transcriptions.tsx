@@ -27,6 +27,7 @@ export function Transcriptions() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
+  const [ownershipFilter, setOwnershipFilter] = useState<'all' | 'mine' | 'shared'>('all');
 
   // Set of filenames currently on the device — used to detect orphaned transcriptions
   const deviceFileNames = useMemo(
@@ -36,12 +37,12 @@ export function Transcriptions() {
 
   useEffect(() => {
     loadTranscriptions();
-  }, [sortOrder]);
+  }, [sortOrder, ownershipFilter]);
 
   const loadTranscriptions = async () => {
     setIsLoading(true);
     try {
-      const response = await transcriptionsApi.getTranscriptions(0, 100, sortOrder);
+      const response = await transcriptionsApi.getTranscriptions(0, 100, sortOrder, ownershipFilter);
       setTranscriptions(response.items);
     } catch (error) {
       console.error('Failed to load transcriptions:', error);
@@ -123,6 +124,23 @@ export function Transcriptions() {
             <option value="completed">Completed</option>
             <option value="failed">Failed</option>
           </select>
+
+          {/* Ownership filter */}
+          <div className="inline-flex rounded-xl border border-gray-200/60 dark:border-gray-700/40 overflow-hidden">
+            {(['all', 'mine', 'shared'] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setOwnershipFilter(f)}
+                className={`px-3 py-2.5 text-sm font-medium transition-colors ${
+                  ownershipFilter === f
+                    ? 'bg-primary-500 text-white'
+                    : 'bg-white/80 dark:bg-gray-800/80 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                }`}
+              >
+                {f === 'all' ? 'All' : f === 'mine' ? 'Mine' : 'Shared'}
+              </button>
+            ))}
+          </div>
 
           <button
             onClick={() => setSortOrder(sortOrder === 'newest' ? 'oldest' : 'newest')}

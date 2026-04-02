@@ -1,4 +1,6 @@
 export type UserRole = 'admin' | 'user';
+export type UserStatus = 'active' | 'pending' | 'rejected';
+export type RegistrationSource = 'self_registered' | 'admin_created';
 
 export interface User {
   id: string;
@@ -6,12 +8,25 @@ export interface User {
   display_name: string | null;
   role: UserRole;
   is_active: boolean;
+  status: UserStatus;
+  registration_source: RegistrationSource;
   created_at: string;
 }
 
 export interface AuthTokens {
   access_token: string;
   token_type: string;
+}
+
+export interface RegisterResult {
+  user: User;
+  message: string | null;
+}
+
+export interface RegistrationSettings {
+  registration_enabled: boolean;
+  approval_required: boolean;
+  allowed_domains: string[];
 }
 
 export type TranscriptionStatus = 'pending' | 'processing' | 'completed' | 'failed';
@@ -23,6 +38,8 @@ export interface TranscriptionSegment {
   speaker?: string;
 }
 
+export type PermissionLevel = 'owner' | 'write' | 'read';
+
 export interface Collection {
   id: string;
   user_id: string;
@@ -32,6 +49,8 @@ export interface Collection {
   created_at: string;
   updated_at: string;
   transcription_count: number;
+  permission_level?: PermissionLevel | null;
+  shared_by?: string | null;
 }
 
 export interface Transcription {
@@ -51,6 +70,56 @@ export interface Transcription {
   notes: string | null;
   created_at: string;
   updated_at: string;
+  permission_level?: PermissionLevel | null;
+  shared_by?: string | null;
+}
+
+// Access control types
+export interface UserGroup {
+  id: string;
+  name: string;
+  description: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  member_count: number;
+}
+
+export interface UserGroupDetail extends UserGroup {
+  members: GroupMember[];
+}
+
+export interface GroupMember {
+  id: string;
+  email: string;
+  display_name: string | null;
+  role: string;
+}
+
+export interface ResourceShare {
+  id: string;
+  resource_type: 'transcription' | 'collection';
+  resource_id: string;
+  grantee_type: 'user' | 'group';
+  grantee_id: string;
+  permission: 'read' | 'write';
+  granted_by: string;
+  created_at: string;
+  grantee?: {
+    id: string;
+    name: string;
+    email?: string;
+    type: 'user' | 'group';
+  } | null;
+}
+
+export interface SharedWithMeItem {
+  resource_type: 'transcription' | 'collection';
+  resource_id: string;
+  resource_name: string;
+  permission: 'read' | 'write';
+  shared_by_name: string;
+  shared_at: string;
 }
 
 export interface SummaryTemplate {

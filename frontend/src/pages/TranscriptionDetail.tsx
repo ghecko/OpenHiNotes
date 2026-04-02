@@ -13,7 +13,8 @@ import { useDeviceConnection } from '@/hooks/useDeviceConnection';
 import { deviceService } from '@/services/deviceService';
 import { Transcription, Summary, SummaryTemplate, Collection } from '@/types';
 import { format } from 'date-fns';
-import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, Play, Pause, Volume2, Disc3 } from 'lucide-react';
+import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, Play, Pause, Volume2, Disc3, Share2, Lock, Eye } from 'lucide-react';
+import { ShareModal } from '@/components/ShareModal';
 import { formatMarkdown } from '@/utils/formatMarkdown';
 
 function SummaryModal({
@@ -89,6 +90,14 @@ export function TranscriptionDetail() {
 
   // Collection assignment
   const [collections, setCollections] = useState<Collection[]>([]);
+
+  // Share modal
+  const [showShareModal, setShowShareModal] = useState(false);
+
+  // Derived permission
+  const permissionLevel = transcription?.permission_level || 'owner';
+  const canEdit = permissionLevel === 'owner' || permissionLevel === 'write';
+  const isOwner = permissionLevel === 'owner';
 
   // Audio playback
   const recordings = useAppStore((s) => s.recordings);
@@ -447,27 +456,59 @@ export function TranscriptionDetail() {
             </span>
           )}
 
-          {/* Download buttons */}
-          {transcription.status === 'completed' && (
-            <div className="flex items-center gap-2 ml-auto">
-              <button
-                onClick={handleDownloadJSON}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
-                title="Download as JSON with timestamps"
+          {/* Permission badge + action buttons */}
+          <div className="flex items-center gap-2 ml-auto">
+            {/* Permission indicator for non-owners */}
+            {permissionLevel && permissionLevel !== 'owner' && (
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full ${
+                  permissionLevel === 'write'
+                    ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
+                }`}
               >
-                <Download className="w-3.5 h-3.5" />
-                JSON
-              </button>
+                {permissionLevel === 'read' ? (
+                  <><Eye className="w-3 h-3" /> Read only</>
+                ) : (
+                  <><Pencil className="w-3 h-3" /> Can edit</>
+                )}
+              </span>
+            )}
+
+            {/* Share button (owner only) */}
+            {isOwner && (
               <button
-                onClick={handleDownloadTXT}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
-                title="Download as plain text with timestamps"
+                onClick={() => setShowShareModal(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/20 hover:bg-primary-100 dark:hover:bg-primary-900/30 rounded-lg transition-colors"
+                title="Share this transcription"
               >
-                <Download className="w-3.5 h-3.5" />
-                TXT
+                <Share2 className="w-3.5 h-3.5" />
+                Share
               </button>
-            </div>
-          )}
+            )}
+
+            {/* Download buttons */}
+            {transcription.status === 'completed' && (
+              <>
+                <button
+                  onClick={handleDownloadJSON}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+                  title="Download as JSON with timestamps"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  JSON
+                </button>
+                <button
+                  onClick={handleDownloadTXT}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+                  title="Download as plain text with timestamps"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  TXT
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -787,6 +828,17 @@ export function TranscriptionDetail() {
           </>
         )}
       </div>
+
+      {/* Share modal */}
+      {transcription && (
+        <ShareModal
+          isOpen={showShareModal}
+          onClose={() => setShowShareModal(false)}
+          resourceType="transcription"
+          resourceId={transcription.id}
+          resourceName={transcription.title || transcription.original_filename}
+        />
+      )}
     </Layout>
   );
 }
