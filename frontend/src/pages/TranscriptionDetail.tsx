@@ -10,7 +10,7 @@ import { templatesApi } from '@/api/templates';
 import { collectionsApi } from '@/api/collections';
 import { Transcription, Summary, SummaryTemplate, Collection } from '@/types';
 import { format } from 'date-fns';
-import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2 } from 'lucide-react';
+import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download } from 'lucide-react';
 import { formatMarkdown } from '@/utils/formatMarkdown';
 
 function SummaryModal({
@@ -253,6 +253,54 @@ export function TranscriptionDetail() {
 
   const displayTitle = transcription.title || transcription.original_filename;
   const openSummary = summaries.find((s) => s.id === openSummaryId) || null;
+  const baseName = (transcription.title || transcription.original_filename).replace(/\.[^/.]+$/, '');
+
+  const formatTs = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    const ms = Math.round((seconds % 1) * 1000);
+    return h > 0
+      ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`
+      : `${m}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+  };
+
+  const downloadFile = (content: string, filename: string, mime: string) => {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadJSON = () => {
+    const data = {
+      title: transcription.title,
+      original_filename: transcription.original_filename,
+      language: transcription.language,
+      audio_duration: transcription.audio_duration,
+      speakers: transcription.speakers,
+      segments: transcription.segments.map((seg) => ({
+        start: seg.start,
+        end: seg.end,
+        speaker: seg.speaker ? (transcription.speakers[seg.speaker] || seg.speaker) : null,
+        speaker_id: seg.speaker || null,
+        text: seg.text,
+      })),
+      text: transcription.text,
+    };
+    downloadFile(JSON.stringify(data, null, 2), `${baseName}.json`, 'application/json');
+  };
+
+  const handleDownloadTXT = () => {
+    const lines = transcription.segments.map((seg) => {
+      const speaker = seg.speaker ? (transcription.speakers[seg.speaker] || seg.speaker) : 'Unknown';
+      return `[${formatTs(seg.start)} - ${formatTs(seg.end)}] ${speaker}: ${seg.text}`;
+    });
+    downloadFile(lines.join('\n'), `${baseName}.txt`, 'text/plain');
+  };
 
   return (
     <Layout title={displayTitle}>
@@ -286,6 +334,28 @@ export function TranscriptionDetail() {
             <span className="text-sm text-gray-500 dark:text-gray-400 truncate" title={transcription.original_filename}>
               ({transcription.original_filename})
             </span>
+          )}
+
+          {/* Download buttons */}
+          {transcription.status === 'completed' && (
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                onClick={handleDownloadJSON}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+                title="Download as JSON with timestamps"
+              >
+                <Download className="w-3.5 h-3.5" />
+                JSON
+              </button>
+              <button
+                onClick={handleDownloadTXT}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+                title="Download as plain text with timestamps"
+              >
+                <Download className="w-3.5 h-3.5" />
+                TXT
+              </button>
+            </div>
           )}
         </div>
 
