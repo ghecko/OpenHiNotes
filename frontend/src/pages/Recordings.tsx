@@ -8,8 +8,148 @@ import { Collection } from '@/types';
 import { deviceService } from '@/services/deviceService';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { collectionsApi } from '@/api/collections';
-import { Play, Download, Trash2, Zap, FileText, AlertCircle, Pencil, X, CheckCircle, FolderOpen } from 'lucide-react';
+import { Play, Download, Trash2, Zap, FileText, AlertCircle, Pencil, X, CheckCircle, FolderOpen, TriangleAlert } from 'lucide-react';
 import { format } from 'date-fns';
+
+/* ── Delete confirmation modal ────────────────────────────────────── */
+interface DeleteModalProps {
+  /** Label shown as the recording name */
+  recordingName: string;
+  /** Whether a linked transcript exists */
+  hasTranscript: boolean;
+  onConfirm: (deleteTranscript: boolean) => void;
+  onCancel: () => void;
+}
+
+function DeleteRecordingModal({ recordingName, hasTranscript, onConfirm, onCancel }: DeleteModalProps) {
+  const [alsoDeleteTranscript, setAlsoDeleteTranscript] = useState(false);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onCancel}>
+      <div
+        className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md mx-4 p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-4 mb-4">
+          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+            <TriangleAlert className="w-5 h-5 text-red-600 dark:text-red-400" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-lg font-bold text-gray-900 dark:text-white">Delete Recording</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+              Are you sure you want to delete{' '}
+              <span className="font-medium text-gray-700 dark:text-gray-300">"{recordingName}"</span>?
+              This action cannot be undone.
+            </p>
+          </div>
+        </div>
+
+        {hasTranscript && (
+          <label className="flex items-start gap-3 p-3 mb-4 bg-amber-50 dark:bg-amber-900/15 border border-amber-200 dark:border-amber-800 rounded-lg cursor-pointer hover:bg-amber-100/60 dark:hover:bg-amber-900/25 transition-colors">
+            <input
+              type="checkbox"
+              checked={alsoDeleteTranscript}
+              onChange={(e) => setAlsoDeleteTranscript(e.target.checked)}
+              className="w-4 h-4 mt-0.5 rounded border-gray-300 text-red-600 focus:ring-2 focus:ring-red-500"
+            />
+            <div>
+              <span className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                Also delete associated transcription
+              </span>
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                This recording has a linked transcription. Check this box to delete it as well.
+              </p>
+            </div>
+          </label>
+        )}
+
+        <div className="flex gap-3">
+          <button
+            onClick={onCancel}
+            className="flex-1 px-4 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(alsoDeleteTranscript)}
+            className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Batch delete confirmation modal ──────────────────────────────── */
+interface BatchDeleteModalProps {
+  count: number;
+  withTranscriptsCount: number;
+  onConfirm: (deleteTranscripts: boolean) => void;
+  onCancel: () => void;
+}
+
+function BatchDeleteModal({ count, withTranscriptsCount, onConfirm, onCancel }: BatchDeleteModalProps) {
+  const [alsoDeleteTranscripts, setAlsoDeleteTranscripts] = useState(false);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onCancel}>
+      <div
+        className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md mx-4 p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-4 mb-4">
+          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+            <TriangleAlert className="w-5 h-5 text-red-600 dark:text-red-400" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-lg font-bold text-gray-900 dark:text-white">Delete {count} Recording{count !== 1 ? 's' : ''}</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+              Are you sure you want to delete {count} recording{count !== 1 ? 's' : ''}? This action cannot be undone.
+            </p>
+          </div>
+        </div>
+
+        {withTranscriptsCount > 0 && (
+          <label className="flex items-start gap-3 p-3 mb-4 bg-amber-50 dark:bg-amber-900/15 border border-amber-200 dark:border-amber-800 rounded-lg cursor-pointer hover:bg-amber-100/60 dark:hover:bg-amber-900/25 transition-colors">
+            <input
+              type="checkbox"
+              checked={alsoDeleteTranscripts}
+              onChange={(e) => setAlsoDeleteTranscripts(e.target.checked)}
+              className="w-4 h-4 mt-0.5 rounded border-gray-300 text-red-600 focus:ring-2 focus:ring-red-500"
+            />
+            <div>
+              <span className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                Also delete associated transcriptions ({withTranscriptsCount})
+              </span>
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                {withTranscriptsCount} of {count} recording{count !== 1 ? 's have' : ' has'} linked transcriptions.
+              </p>
+            </div>
+          </label>
+        )}
+
+        <div className="flex gap-3">
+          <button
+            onClick={onCancel}
+            className="flex-1 px-4 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(alsoDeleteTranscripts)}
+            className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete {count}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function Recordings() {
   const device = useAppStore((s) => s.device);
@@ -43,6 +183,10 @@ export function Recordings() {
   // Collections for batch assign
   const [collections, setCollections] = useState<Collection[]>([]);
   const [showCollectionPicker, setShowCollectionPicker] = useState(false);
+
+  // Delete modals
+  const [deleteModalFile, setDeleteModalFile] = useState<string | null>(null);
+  const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
 
   // Orphan alias detection
   const currentFileNames = recordings.map((r) => r.fileName);
@@ -142,30 +286,17 @@ export function Recordings() {
     }
   };
 
-  const handleDeleteRecording = async (fileName: string) => {
-    const transcript = transcriptMap[fileName];
-    let deleteTranscript = false;
+  const handleDeleteRecording = (fileName: string) => {
+    setDeleteModalFile(fileName);
+  };
 
-    if (transcript) {
-      const choice = window.confirm(
-        `Delete recording "${recordingAliases[fileName] || fileName}"?\n\nThis recording has a linked transcription. Click OK to also delete the transcription, or Cancel to keep it.`
-      );
-      if (!choice) {
-        // Ask if they still want to delete just the recording
-        const justRecording = window.confirm('Delete only the recording and keep the transcription?');
-        if (!justRecording) return;
-      } else {
-        deleteTranscript = true;
-      }
-    } else {
-      if (!window.confirm(`Delete "${recordingAliases[fileName] || fileName}"?`)) return;
-    }
-
+  const confirmDeleteRecording = async (fileName: string, deleteTranscript: boolean) => {
+    setDeleteModalFile(null);
     await deleteRecording(fileName);
 
-    if (deleteTranscript && transcript) {
+    if (deleteTranscript && transcriptMap[fileName]) {
       try {
-        await transcriptionsApi.deleteTranscription(transcript.id);
+        await transcriptionsApi.deleteTranscription(transcriptMap[fileName].id);
         setTranscriptMap((prev) => {
           const next = { ...prev };
           delete next[fileName];
@@ -177,22 +308,13 @@ export function Recordings() {
     }
   };
 
-  const handleBatchDelete = async () => {
-    const selected = recordings.filter((r) => selectedRecordings.includes(r.id));
-    const withTranscripts = selected.filter((r) => transcriptMap[r.fileName]);
-    const count = selected.length;
+  const handleBatchDelete = () => {
+    setShowBatchDeleteModal(true);
+  };
 
-    let deleteTranscripts = false;
-    if (withTranscripts.length > 0) {
-      deleteTranscripts = window.confirm(
-        `Delete ${count} recording${count !== 1 ? 's' : ''}?\n\n${withTranscripts.length} of them have linked transcriptions. Click OK to also delete transcriptions, or Cancel to keep them.`
-      );
-      if (!deleteTranscripts) {
-        if (!window.confirm(`Delete ${count} recording${count !== 1 ? 's' : ''} but keep their transcriptions?`)) return;
-      }
-    } else {
-      if (!window.confirm(`Delete ${count} recording${count !== 1 ? 's' : ''}?`)) return;
-    }
+  const confirmBatchDelete = async (deleteTranscripts: boolean) => {
+    setShowBatchDeleteModal(false);
+    const selected = recordings.filter((r) => selectedRecordings.includes(r.id));
 
     for (const rec of selected) {
       try {
@@ -602,6 +724,30 @@ export function Recordings() {
           refreshRecordings();
         }}
       />
+
+      {/* Single delete modal */}
+      {deleteModalFile && (
+        <DeleteRecordingModal
+          recordingName={recordingAliases[deleteModalFile] || deleteModalFile}
+          hasTranscript={!!transcriptMap[deleteModalFile]}
+          onConfirm={(deleteTranscript) => confirmDeleteRecording(deleteModalFile, deleteTranscript)}
+          onCancel={() => setDeleteModalFile(null)}
+        />
+      )}
+
+      {/* Batch delete modal */}
+      {showBatchDeleteModal && (
+        <BatchDeleteModal
+          count={selectedRecordings.length}
+          withTranscriptsCount={
+            recordings
+              .filter((r) => selectedRecordings.includes(r.id))
+              .filter((r) => transcriptMap[r.fileName]).length
+          }
+          onConfirm={confirmBatchDelete}
+          onCancel={() => setShowBatchDeleteModal(false)}
+        />
+      )}
     </Layout>
   );
 }
