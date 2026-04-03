@@ -38,14 +38,14 @@ app/
 ├── routers/
 │   ├── auth.py             # Authentication routes
 │   ├── users.py            # User management (admin)
-│   ├── transcriptions.py   # Transcription CRUD + VoxBench integration
+│   ├── transcriptions.py   # Transcription CRUD + VoxHub integration
 │   ├── templates.py        # Template management (admin)
 │   ├── summaries.py        # Summary generation
 │   ├── chat.py             # Streaming chat endpoint
 │   └── app_settings.py     # Application settings (admin)
 └── services/
     ├── auth.py             # Password hashing, JWT operations
-    ├── transcription.py    # File handling, VoxBench API calls
+    ├── transcription.py    # File handling, VoxHub API calls
     ├── llm.py              # LLM API integration, streaming
     └── settings_service.py # App settings resolution
 ```
@@ -55,12 +55,12 @@ app/
 ### TranscriptionService
 
 - Async file upload handling with user-scoped directories (`/app/uploads/{user_id}/`)
-- [VoxBench](https://github.com/ghecko/VoxBench) API integration with two modes:
+- [VoxHub](https://github.com/ghecko/VoxHub) API integration with two modes:
   - **Normal mode**: synchronous `POST /v1/audio/transcriptions`
   - **Job mode**: async submit → poll with progress callback → fetch result
 - `on_progress` callback enables real-time SSE streaming to the frontend
 - Segment parsing with speaker extraction
-- Configurable SSL verification via `VOXBENCH_VERIFY_SSL`
+- Configurable SSL verification via `VOXHUB_VERIFY_SSL`
 
 ### LLMService
 
@@ -80,7 +80,7 @@ All settings are loaded from environment variables via `pydantic-settings`. See 
 
 ### SSL Verification
 
-The `LLM_VERIFY_SSL` and `WHISPERX_VERIFY_SSL` settings control outbound HTTPS verification:
+The `LLM_VERIFY_SSL` and `VOXHUB_VERIFY_SSL` settings control outbound HTTPS verification:
 
 | Value | Behavior |
 |-------|----------|
@@ -94,7 +94,7 @@ These are applied to all `httpx.AsyncClient` instances in `llm.py` and `transcri
 
 ### `/api/transcriptions/upload-stream`
 
-Streams VoxBench job progress to the frontend:
+Streams VoxHub job progress to the frontend:
 
 ```
 data: {"event": "progress", "status": "uploading", "progress": 0}

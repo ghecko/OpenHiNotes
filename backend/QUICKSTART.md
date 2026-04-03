@@ -92,9 +92,9 @@ curl -X POST http://localhost:8000/api/chat \
 | Error | Fix |
 |-------|-----|
 | `Could not parse rfc1738 URL` | Check `DATABASE_URL` in `.env` |
-| `VoxBench API error: 503` | Ensure [VoxBench](https://github.com/ghecko/VoxBench) is running at `WHISPERX_API_URL` |
+| `VoxHub API error: 503` | Ensure [VoxHub](https://github.com/ghecko/VoxHub) is running at `VOXHUB_API_URL` |
 | `LLM API error: 503` | Ensure LLM service is running at `LLM_API_URL` |
-| `SSL: CERTIFICATE_VERIFY_FAILED` | Set `LLM_VERIFY_SSL=false` or `WHISPERX_VERIFY_SSL=false` in `.env` |
+| `SSL: CERTIFICATE_VERIFY_FAILED` | Set `LLM_VERIFY_SSL=false` or `VOXHUB_VERIFY_SSL=false` in `.env` |
 | `Address already in use` | Kill the process on port 8000 or use a different port |
 
 ## API Documentation

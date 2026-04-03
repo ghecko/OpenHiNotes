@@ -839,29 +839,4 @@ export function TranscriptionDetail() {
                   </>
                 )}
               </div>
-            </div>
-
-            <div className="bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
-              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Chat</h3>
-              <ChatPanel
-                transcriptionId={transcription.id}
-                transcriptionNames={{ [transcription.id]: transcription.title || transcription.original_filename }}
-              />
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Share modal */}
-      {transcription && (
-        <ShareModal
-          isOpen={showShareModal}
-          onClose={() => setShowShareModal(false)}
-          resourceType="transcription"
-          resourceId={transcription.id}
-          resourceName={transcription.title || transcription.original_filename}
-        />
-      )}
-    </Layout>
-  );
-}
+           

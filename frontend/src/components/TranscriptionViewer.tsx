@@ -490,22 +490,4 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
                   >
                     {segment.text}
                     {onSegmentTextUpdate && (
-                      <Pencil className="w-3 h-3 inline-block ml-1 opacity-0 group-hover:opacity-40 transition-opacity" />
-                    )}
-                  </p>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="mt-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-        <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">Full Text</h4>
-        <p className="text-sm text-gray-700 dark:text-gray-300 line-clamp-6 whitespace-pre-wrap">
-          {transcription.text}
-        </p>
-      </div>
-    </div>
-  );
-}
+                      <Pencil className="w-3 h-3 inline-block ml-1 opacity-0 group-hover:opacity-40 transition-opaci

@@ -3,26 +3,39 @@ import { Layout } from '@/components/Layout';
 import { settingsApi, AppSetting } from '@/api/settings';
 import { Save, RotateCcw, Loader, CheckCircle, AlertCircle } from 'lucide-react';
 
-const SETTING_LABELS: Record<string, { label: string; placeholder: string; type: string }> = {
-  voxbench_api_url: {
-    label: 'VoxBench API URL',
-    placeholder: 'http://voxbench:8000',
+const VAD_MODE_OPTIONS = [
+  { value: 'silero', label: 'Silero — Fast, lightweight VAD' },
+  { value: 'pyannote', label: 'Pyannote — High-accuracy segmentation + diarization' },
+  { value: 'hybrid', label: 'Hybrid — Silero gate + Pyannote refiner (best recall + precision)' },
+  { value: 'none', label: 'None — No segmentation (pre-segmented audio)' },
+];
+
+const SETTING_LABELS: Record<string, { label: string; placeholder: string; type: string; options?: { value: string; label: string }[] }> = {
+  voxhub_api_url: {
+    label: 'VoxHub API URL',
+    placeholder: 'http://voxhub:8000',
     type: 'url',
   },
-  voxbench_api_key: {
-    label: 'VoxBench API Key',
+  voxhub_api_key: {
+    label: 'VoxHub API Key',
     placeholder: 'Leave empty if no auth required',
     type: 'password',
   },
-  voxbench_model: {
+  voxhub_model: {
     label: 'Transcription Model',
     placeholder: 'whisper:turbo, voxtral:mini-4b, large-v3',
     type: 'text',
   },
-  voxbench_job_mode: {
-    label: 'VoxBench Job Mode (async)',
+  voxhub_job_mode: {
+    label: 'VoxHub Job Mode (async)',
     placeholder: 'false',
     type: 'toggle',
+  },
+  voxhub_vad_mode: {
+    label: 'VAD Mode',
+    placeholder: 'silero',
+    type: 'select',
+    options: VAD_MODE_OPTIONS,
   },
   llm_api_url: {
     label: 'LLM API URL',
@@ -162,6 +175,20 @@ export function ApiSettings() {
                         }`}
                       />
                     </button>
+                  ) : meta?.type === 'select' && meta.options ? (
+                    <select
+                      value={editValues[setting.key] || ''}
+                      onChange={(e) =>
+                        setEditValues((prev) => ({ ...prev, [setting.key]: e.target.value }))
+                      }
+                      className="flex-1 px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    >
+                      {meta.options.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
                   ) : (
                     <input
                       type={meta?.type === 'password' ? 'password' : 'text'}
@@ -233,11 +260,12 @@ export function ApiSettings() {
         </div>
       ) : (
         <div className="space-y-6">
-          {renderSettingGroup('Transcription (VoxBench)', [
-            'voxbench_api_url',
-            'voxbench_api_key',
-            'voxbench_model',
-            'voxbench_job_mode',
+          {renderSettingGroup('Transcription (VoxHub)', [
+            'voxhub_api_url',
+            'voxhub_api_key',
+            'voxhub_model',
+            'voxhub_job_mode',
+            'voxhub_vad_mode',
           ])}
           {renderSettingGroup('LLM / Chat', [
             'llm_api_url',

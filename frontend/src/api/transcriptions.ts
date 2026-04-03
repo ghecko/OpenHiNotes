@@ -5,6 +5,7 @@ export interface TranscriptionProgressEvent {
   event: 'progress';
   status: string;
   progress: number;
+  stage: 'loading' | 'vad' | 'transcribing' | null;
 }
 
 export interface TranscriptionCompleteEvent {
@@ -54,7 +55,7 @@ export const transcriptionsApi = {
     language: string = 'auto',
     autoSummarize: boolean = false,
     templateId?: string,
-    onProgress?: (status: string, progress: number) => void,
+    onProgress?: (status: string, progress: number, stage: 'loading' | 'vad' | 'transcribing' | null) => void,
     signal?: AbortSignal,
   ): Promise<Transcription> {
     const formData = new FormData();
@@ -124,7 +125,7 @@ export const transcriptionsApi = {
         }
 
         if (evt.event === 'progress') {
-          onProgress?.(evt.status, evt.progress);
+          onProgress?.(evt.status, evt.progress, evt.stage);
         } else if (evt.event === 'complete') {
           return evt.transcription;
         } else if (evt.event === 'error') {

@@ -29,9 +29,9 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/openhinotes
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production-use-a-long-random-string}
-      VOXBENCH_API_URL: ${VOXBENCH_API_URL:-http://voxbench:8000}
-      VOXBENCH_MODEL: ${VOXBENCH_MODEL:-large-v3}
-      VOXBENCH_VERIFY_SSL: ${VOXBENCH_VERIFY_SSL:-true}
+      VOXHUB_API_URL: ${VOXHUB_API_URL:-http://voxhub:8000}
+      VOXHUB_MODEL: ${VOXHUB_MODEL:-large-v3}
+      VOXHUB_VERIFY_SSL: ${VOXHUB_VERIFY_SSL:-true}
       LLM_API_URL: ${LLM_API_URL:-http://host.docker.internal:11434/v1}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-gpt-3.5-turbo}

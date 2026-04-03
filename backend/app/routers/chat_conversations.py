@@ -161,8 +161,4 @@ async def delete_conversation(
     if not conversation:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
 
-    if current_user.role != UserRole.admin and conversation.user_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
-
-    await db.delete(conversation)
-    await db.commit()
+    if current_user.role != UserRole.admin and conversation.user_id != cur

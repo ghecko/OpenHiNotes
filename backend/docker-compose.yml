@@ -24,8 +24,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/openhinotes
       SECRET_KEY: dev-secret-key-change-in-production
-      VOXBENCH_API_URL: http://voxbench:8000
-      VOXBENCH_MODEL: large-v3
+      VOXHUB_API_URL: http://voxhub:8000
+      VOXHUB_MODEL: large-v3
       LLM_API_URL: http://ollama:11434/v1
       LLM_API_KEY: ""
       LLM_MODEL: gpt-3.5-turbo

@@ -625,17 +625,4 @@ export function ChatPanel({
             disabled={isStreaming}
             placeholder="Type a message..."
             rows={3}
-            className="flex-1 px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:opacity-50 resize-none"
-          />
-          <button
-            onClick={handleSendMessage}
-            disabled={isStreaming || !input.trim()}
-            className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors disabled:opacity-50 font-medium flex items-center justify-center gap-2 flex-shrink-0"
-          >
-            <Send className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+            className="flex-1 px-3 py-2 bg-white 

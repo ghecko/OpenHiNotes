@@ -5,8 +5,8 @@ FastAPI backend for managing audio transcriptions from HiDock recording devices.
 ## Features
 
 - JWT-based authentication with admin/user roles
-- Audio file upload and transcription via [VoxBench](https://github.com/ghecko/VoxBench) API
-- VoxBench Job Mode with SSE progress streaming for long audio files
+- Audio file upload and transcription via [VoxHub](https://github.com/ghecko/VoxHub) API
+- VoxHub Job Mode with SSE progress streaming for long audio files
 - Transcription management (list, view, update speakers/notes, delete)
 - Summary generation using OpenAI-compatible LLM API
 - Chat interface with streaming responses
@@ -45,8 +45,8 @@ cp .env.example .env
 Key variables:
 - `DATABASE_URL` — PostgreSQL connection string
 - `SECRET_KEY` — JWT signing key (change in production!)
-- `VOXBENCH_API_URL` — URL to [VoxBench](https://github.com/ghecko/VoxBench) transcription service
-- `VOXBENCH_VERIFY_SSL` — SSL verification for VoxBench calls (`true`, `false`, or CA bundle path)
+- `VOXHUB_API_URL` — URL to [VoxHub](https://github.com/ghecko/VoxHub) transcription service
+- `VOXHUB_VERIFY_SSL` — SSL verification for VoxHub calls (`true`, `false`, or CA bundle path)
 - `LLM_API_URL` — OpenAI-compatible API endpoint
 - `LLM_VERIFY_SSL` — SSL verification for LLM calls (`true`, `false`, or CA bundle path)
 - `ADMIN_EMAIL` / `ADMIN_PASSWORD` — Initial admin credentials
@@ -106,14 +106,14 @@ docker compose up --build
 
 ## External API Integration
 
-### VoxBench API
+### VoxHub API
 
-Sends audio files to [VoxBench](https://github.com/ghecko/VoxBench) for transcription. Supports two modes:
+Sends audio files to [VoxHub](https://github.com/ghecko/VoxHub) for transcription. Supports two modes:
 
 - **Normal mode** — synchronous `POST /v1/audio/transcriptions`
 - **Job mode** — async `POST /v1/audio/transcriptions/jobs` → poll status → fetch result
 
-Job mode is enabled via the `VOXBENCH_JOB_MODE` app setting and provides real-time progress via SSE.
+Job mode is enabled via the `VOXHUB_JOB_MODE` app setting and provides real-time progress via SSE.
 
 ### LLM API
 

@@ -1,12 +1,12 @@
 # OpenHiNotes
 
-A web application for managing, transcribing, and summarizing audio recordings from HiDock devices. Connect your HiDock via WebUSB, transcribe recordings using [VoxBench](https://github.com/ghecko/VoxBench), rename speakers from diarization, and chat with an LLM about your transcripts.
+A web application for managing, transcribing, and summarizing audio recordings from HiDock devices. Connect your HiDock via WebUSB, transcribe recordings using [VoxHub](https://github.com/ghecko/VoxHub), rename speakers from diarization, and chat with an LLM about your transcripts.
 
 ## Features
 
 - **WebUSB device connection** — browse, download, and manage audio files directly from HiDock H1, H1E, P1, and P1 Mini devices in the browser
-- **Server-side transcription** — audio is uploaded to the FastAPI backend, which proxies requests to a [VoxBench](https://github.com/ghecko/VoxBench) API server (OpenAI-compatible)
-- **VoxBench Job Mode** — async transcription with real-time progress streaming via SSE for long audio files
+- **Server-side transcription** — audio is uploaded to the FastAPI backend, which proxies requests to a [VoxHub](https://github.com/ghecko/VoxHub) API server (OpenAI-compatible)
+- **VoxHub Job Mode** — async transcription with real-time progress streaming via SSE for long audio files
 - **Speaker diarization & renaming** — color-coded speakers with inline click-to-edit renaming
 - **Summary templates** — admins define reusable prompt templates; users generate summaries from any transcription with one click
 - **Transcribe & Summarize combo** — run both operations directly from the recordings list
@@ -19,7 +19,7 @@ A web application for managing, transcribing, and summarizing audio recordings f
 
 ```
 ┌──────────────┐       ┌──────────────┐       ┌──────────────────┐
-│   Browser    │ WebUSB│   HiDock     │       │  VoxBench API    │
+│   Browser    │ WebUSB│   HiDock     │       │  VoxHub API    │
 │  (React +   │◄─────►│   Device     │       │  Server          │
 │   Vite)     │       └──────────────┘       └────────▲─────────┘
 │              │                                      │
@@ -43,7 +43,7 @@ A web application for managing, transcribing, and summarizing audio recordings f
 ### Prerequisites
 
 - Docker and Docker Compose
-- A [VoxBench](https://github.com/ghecko/VoxBench) server for transcription
+- A [VoxHub](https://github.com/ghecko/VoxHub) server for transcription
 - Optionally, an OpenAI-compatible LLM endpoint for chat and summaries (e.g. Ollama, LM Studio, OpenAI)
 
 ### Setup
@@ -55,7 +55,7 @@ cd OpenHiNotes
 
 # Copy and edit environment variables
 cp .env.example .env
-# Edit .env with your VoxBench URL, LLM endpoint, secret key, etc.
+# Edit .env with your VoxHub URL, LLM endpoint, secret key, etc.
 
 # Start all services
 docker compose up --build
@@ -81,9 +81,9 @@ All configuration is done through environment variables (see [`.env.example`](.e
 | `SECRET_KEY`           | JWT signing key — change in production           | `change-me-...`                        |
 | `ADMIN_EMAIL`          | Initial admin account email                      | `admin@openhinotes.local`              |
 | `ADMIN_PASSWORD`       | Initial admin account password                   | `admin`                                |
-| `VOXBENCH_API_URL`     | URL of the VoxBench transcription API            | `http://voxbench:8000`                 |
-| `VOXBENCH_MODEL`       | Whisper model to use                             | `large-v3`                             |
-| `VOXBENCH_VERIFY_SSL`  | SSL verification for VoxBench API calls          | `true`                                 |
+| `VOXHUB_API_URL`     | URL of the VoxHub transcription API            | `http://voxhub:8000`                 |
+| `VOXHUB_MODEL`       | Whisper model to use                             | `large-v3`                             |
+| `VOXHUB_VERIFY_SSL`  | SSL verification for VoxHub API calls          | `true`                                 |
 | `LLM_API_URL`          | OpenAI-compatible chat completions endpoint      | `http://host.docker.internal:11434/v1` |
 | `LLM_API_KEY`          | API key for the LLM endpoint (if required)       | *(empty)*                              |
 | `LLM_MODEL`            | Model name for chat and summaries                | `gpt-3.5-turbo`                        |
@@ -194,12 +194,12 @@ The Vite dev server proxies `/api` requests to `http://localhost:8000` automatic
 | Database   | PostgreSQL 16                                                     |
 | Auth       | JWT (python-jose), bcrypt (passlib)                               |
 | Device     | WebUSB API (browser-native)                                       |
-| Transcription | [VoxBench](https://github.com/ghecko/VoxBench) (OpenAI-compatible) |
+| Transcription | [VoxHub](https://github.com/ghecko/VoxHub) (OpenAI-compatible) |
 | Deployment | Docker Compose, Caddy 2                                           |
 
 ## Acknowledgments
 
-This project is a full rewrite of [HiDock Next](https://github.com/HiDock/hidock-next), the original open-source web client for HiDock recording devices. The WebUSB protocol implementation and device communication layer are derived from that project. OpenHiNotes replaces the client-only architecture with a FastAPI backend, adds server-side transcription via [VoxBench](https://github.com/ghecko/VoxBench), authentication, summary templates, and LLM chat capabilities.
+This project is a full rewrite of [HiDock Next](https://github.com/HiDock/hidock-next), the original open-source web client for HiDock recording devices. The WebUSB protocol implementation and device communication layer are derived from that project. OpenHiNotes replaces the client-only architecture with a FastAPI backend, adds server-side transcription via [VoxHub](https://github.com/ghecko/VoxHub), authentication, summary templates, and LLM chat capabilities.
 
 ## License
 

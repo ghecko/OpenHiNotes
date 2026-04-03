@@ -14,22 +14,26 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 # Settings keys that can be configured through the admin UI
 CONFIGURABLE_KEYS = {
-    "voxbench_api_url": {
-        "description": "VoxBench API base URL (e.g. http://server:8000)",
-        "default_from_env": "voxbench_api_url",
+    "voxhub_api_url": {
+        "description": "VoxHub API base URL (e.g. http://server:8000)",
+        "default_from_env": "voxhub_api_url",
     },
-    "voxbench_api_key": {
-        "description": "VoxBench API key (leave empty if no auth required)",
-        "default_from_env": "voxbench_api_key",
+    "voxhub_api_key": {
+        "description": "VoxHub API key (leave empty if no auth required)",
+        "default_from_env": "voxhub_api_key",
         "sensitive": True,
     },
-    "voxbench_model": {
+    "voxhub_model": {
         "description": "Transcription model (e.g. whisper:turbo, voxtral:mini-4b, large-v3)",
-        "default_from_env": "voxbench_model",
+        "default_from_env": "voxhub_model",
     },
-    "voxbench_job_mode": {
+    "voxhub_job_mode": {
         "description": "Enable async Job Mode for long recordings (true/false)",
-        "default_from_env": "voxbench_job_mode",
+        "default_from_env": "voxhub_job_mode",
+    },
+    "voxhub_vad_mode": {
+        "description": "VAD strategy: silero (fast), pyannote (accurate), hybrid (best recall+precision), none (pre-segmented)",
+        "default_from_env": "voxhub_vad_mode",
     },
     "llm_api_url": {
         "description": "LLM API base URL (OpenAI-compatible endpoint)",
@@ -195,11 +199,4 @@ async def reset_setting(
     if key not in CONFIGURABLE_KEYS:
         raise HTTPException(status_code=400, detail=f"Unknown setting: {key}")
 
-    result = await db.execute(select(AppSetting).where(AppSetting.key == key))
-    setting = result.scalars().first()
-
-    if setting:
-        await db.delete(setting)
-        await db.commit()
-
-    return {"key": key, "status": "reset_to_default"}
+    result = await db.execute(select(AppSetting).whe

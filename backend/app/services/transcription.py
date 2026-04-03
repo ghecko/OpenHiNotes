@@ -44,16 +44,18 @@ class TranscriptionService:
         if db:
             from app.services.settings_service import get_effective_setting
             return {
-                "api_url": await get_effective_setting(db, "voxbench_api_url"),
-                "api_key": await get_effective_setting(db, "voxbench_api_key"),
-                "model": await get_effective_setting(db, "voxbench_model"),
-                "job_mode": (await get_effective_setting(db, "voxbench_job_mode")).lower() == "true",
+                "api_url": await get_effective_setting(db, "voxhub_api_url"),
+                "api_key": await get_effective_setting(db, "voxhub_api_key"),
+                "model": await get_effective_setting(db, "voxhub_model"),
+                "job_mode": (await get_effective_setting(db, "voxhub_job_mode")).lower() == "true",
+                "vad_mode": await get_effective_setting(db, "voxhub_vad_mode"),
             }
         return {
-            "api_url": settings.voxbench_api_url,
-            "api_key": settings.voxbench_api_key,
-            "model": settings.voxbench_model,
-            "job_mode": settings.voxbench_job_mode.lower() == "true",
+            "api_url": settings.voxhub_api_url,
+            "api_key": settings.voxhub_api_key,
+            "model": settings.voxhub_model,
+            "job_mode": settings.voxhub_job_mode.lower() == "true",
+            "vad_mode": settings.voxhub_vad_mode,
         }
 
     @staticmethod
@@ -64,13 +66,13 @@ class TranscriptionService:
         return {}
 
     @staticmethod
-    async def transcribe_with_whisperx(
+    async def transcribe_with_voxhub(
         file_path: str,
         language: Optional[str] = None,
         db: Optional[AsyncSession] = None,
-        on_progress: Optional[Callable[[str, float], None]] = None,
+        on_progress: Optional[Callable[[str, float, Optional[str]], None]] = None,
     ) -> Dict[str, Any]:
-        """Call VoxBench/WhisperX API to transcribe audio file.
+        """Call VoxHub/WhisperX API to transcribe audio file.
 
         Supports two modes:
         - Normal (synchronous): POST /v1/audio/transcriptions
@@ -103,10 +105,12 @@ class TranscriptionService:
                 "response_format": "verbose_json",
                 "diarize": "true",
             }
+            if cfg.get("vad_mode"):
+                data["vad_mode"] = cfg["vad_mode"]
             if language:
                 data["language"] = language
 
-            async with httpx.AsyncClient(timeout=300.0, verify=settings.voxbench_ssl_verify) as client:
+            async with httpx.AsyncClient(timeout=300.0, verify=settings.voxhub_ssl_verify) as client:
                 response = await client.post(url, files=files, data=data, headers=headers)
 
         if response.status_code != 200:
@@ -120,9 +124,9 @@ class TranscriptionService:
         language: Optional[str],
         cfg: Dict[str, Any],
         headers: Dict[str, str],
-        on_progress: Optional[Callable[[str, float], None]] = None,
+        on_progress: Optional[Callable[[str, float, Optional[str]], None]] = None,
     ) -> Dict[str, Any]:
-        """Async VoxBench Job Mode — submit, poll, fetch result.
+        """Async VoxHub Job Mode — submit, poll, fetch result.
 
         Args:
             on_progress: optional callback(status, progress_percent) called on each poll.
@@ -131,10 +135,10 @@ class TranscriptionService:
 
         # Step 1: Submit job
         submit_url = f"{base}/v1/audio/transcriptions/jobs"
-        logger.info("VoxBench Job Mode: submitting job to %s", submit_url)
+        logger.info("VoxHub Job Mode: submitting job to %s", submit_url)
 
         if on_progress:
-            on_progress("uploading", 0)
+            on_progress("uploading", 0, "loading")
 
         with open(file_path, "rb") as f:
             files = {"file": (Path(file_path).name, f, "audio/mpeg")}
@@ -142,24 +146,26 @@ class TranscriptionService:
                 "model": cfg["model"],
                 "diarize": "true",
             }
+            if cfg.get("vad_mode"):
+                data["vad_mode"] = cfg["vad_mode"]
             if language:
                 data["language"] = language
 
-            async with httpx.AsyncClient(timeout=60.0, verify=settings.voxbench_ssl_verify) as client:
+            async with httpx.AsyncClient(timeout=60.0, verify=settings.voxhub_ssl_verify) as client:
                 response = await client.post(submit_url, files=files, data=data, headers=headers)
 
         if response.status_code not in (200, 201, 202):
-            raise Exception(f"VoxBench job submit error: {response.status_code} - {response.text}")
+            raise Exception(f"VoxHub job submit error: {response.status_code} - {response.text}")
 
         job_data = response.json()
         job_id = job_data.get("job_id") or job_data.get("id")
         if not job_id:
-            raise Exception(f"VoxBench job submit returned no job_id: {job_data}")
+            raise Exception(f"VoxHub job submit returned no job_id: {job_data}")
 
-        logger.info("VoxBench Job Mode: job submitted, id=%s", job_id)
+        logger.info("VoxHub Job Mode: job submitted, id=%s", job_id)
 
         if on_progress:
-            on_progress("processing", 0)
+            on_progress("processing", 0, "loading")
 
         # Step 2: Poll for completion
         poll_url = f"{base}/v1/audio/transcriptions/jobs/{job_id}"
@@ -168,36 +174,37 @@ class TranscriptionService:
         poll_interval = 3
         status = "unknown"
 
-        async with httpx.AsyncClient(timeout=30.0, verify=settings.voxbench_ssl_verify) as client:
+        async with httpx.AsyncClient(timeout=30.0, verify=settings.voxhub_ssl_verify) as client:
             while elapsed < max_wait:
                 await asyncio.sleep(poll_interval)
                 elapsed += poll_interval
 
                 poll_resp = await client.get(poll_url, headers=headers)
                 if poll_resp.status_code != 200:
-                    raise Exception(f"VoxBench poll error: {poll_resp.status_code} - {poll_resp.text}")
+                    raise Exception(f"VoxHub poll error: {poll_resp.status_code} - {poll_resp.text}")
 
                 status_data = poll_resp.json()
                 status = status_data.get("status", "unknown")
                 progress = status_data.get("progress", 0)
-                logger.info("VoxBench Job %s: status=%s, progress=%.1f%%", job_id, status, progress)
+                stage = status_data.get("stage", None)
+                logger.info("VoxHub Job %s: status=%s, progress=%.1f%%, stage=%s", job_id, status, progress, stage)
 
                 if on_progress:
-                    on_progress(status, progress)
+                    on_progress(status, progress, stage)
 
                 if status == "completed":
                     break
                 elif status == "failed":
                     error_msg = status_data.get("error", "Job failed without error details")
-                    raise Exception(f"VoxBench job failed: {error_msg}")
+                    raise Exception(f"VoxHub job failed: {error_msg}")
                 # Keep polling for "processing", "queued", etc.
 
         if status != "completed":
-            raise Exception(f"VoxBench job timed out after {max_wait}s (status={status})")
+            raise Exception(f"VoxHub job timed out after {max_wait}s (status={status})")
 
         # Step 3: Fetch result with verbose_json to get segments & speaker labels
         result_url = f"{base}/v1/audio/transcriptions/jobs/{job_id}/result"
-        async with httpx.AsyncClient(timeout=30.0, verify=settings.voxbench_ssl_verify) as client:
+        async with httpx.AsyncClient(timeout=30.0, verify=settings.voxhub_ssl_verify) as client:
             result_resp = await client.get(
                 result_url,
                 params={"response_format": "verbose_json"},
@@ -205,14 +212,14 @@ class TranscriptionService:
             )
 
         if result_resp.status_code != 200:
-            raise Exception(f"VoxBench result fetch error: {result_resp.status_code} - {result_resp.text}")
+            raise Exception(f"VoxHub result fetch error: {result_resp.status_code} - {result_resp.text}")
 
-        logger.info("VoxBench Job %s: result fetched successfully", job_id)
+        logger.info("VoxHub Job %s: result fetched successfully", job_id)
         return result_resp.json()
 
     @staticmethod
-    def parse_whisperx_response(response: Dict[str, Any]) -> Dict[str, Any]:
-        """Parse WhisperX/VoxBench response and extract transcript, segments, and speakers."""
+    def parse_voxhub_response(response: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse WhisperX/VoxHub response and extract transcript, segments, and speakers."""
         text = response.get("text", "")
 
         # Parse segments
@@ -251,7 +258,7 @@ class TranscriptionService:
         stored_filename: str,
         original_filename: str,
         language: Optional[str] = None,
-        on_progress: Optional[Callable[[str, float], None]] = None,
+        on_progress: Optional[Callable[[str, float, Optional[str]], None]] = None,
     ) -> Transcription:
         """Create a transcription record and start transcription process."""
         transcription = Transcription(
@@ -267,10 +274,10 @@ class TranscriptionService:
 
         # Transcribe asynchronously
         try:
-            whisperx_response = await TranscriptionService.transcribe_with_whisperx(
+            voxhub_response = await TranscriptionService.transcribe_with_voxhub(
                 file_path, language=language, db=db, on_progress=on_progress
             )
-            parsed = TranscriptionService.parse_whisperx_response(whisperx_response)
+            parsed = TranscriptionService.parse_voxhub_response(voxhub_response)
 
             transcription.text = parsed["text"]
             transcription.segments = parsed["segments"]

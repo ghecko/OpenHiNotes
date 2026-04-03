@@ -44,6 +44,7 @@ export function TranscribeModal({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressStatus, setProgressStatus] = useState('');
+  const [progressStage, setProgressStage] = useState<'loading' | 'vad' | 'transcribing' | null>(null);
   const [language, setLanguage] = useState('auto');
   const [autoSummarize, setAutoSummarize] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
@@ -84,9 +85,10 @@ export function TranscribeModal({
         language,
         autoSummarize,
         autoSummarize ? selectedTemplate : undefined,
-        (status, pct) => {
+        (status, pct, stage) => {
           setProgressStatus(status);
           setProgress(Math.round(pct));
+          setProgressStage(stage);
         },
       );
 
@@ -226,11 +228,15 @@ export function TranscribeModal({
                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
                  {progressStatus === 'uploading'
                    ? 'Uploading to server...'
-                   : progressStatus === 'processing'
-                     ? 'Transcribing...'
-                     : progressStatus === 'completed'
-                       ? 'Completed!'
-                       : 'Transcribing...'}
+                   : progressStatus === 'completed'
+                     ? 'Completed!'
+                     : progressStage === 'loading'
+                       ? 'Loading model...'
+                       : progressStage === 'vad'
+                         ? 'Detecting speech segments...'
+                         : progressStage === 'transcribing'
+                           ? 'Transcribing audio...'
+                           : 'Processing...'}
                </p>
                <span className="text-sm text-gray-500 dark:text-gray-400">{progress}%</span>
              </div>
