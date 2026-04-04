@@ -100,13 +100,13 @@ class TranscriptionService:
 
         with open(file_path, "rb") as f:
             files = {"file": (Path(file_path).name, f, "audio/mpeg")}
+            vad_mode = cfg.get("vad_mode") or "silero"
             data = {
                 "model": cfg["model"],
                 "response_format": "verbose_json",
                 "diarize": "true",
+                "vad_mode": vad_mode,
             }
-            if cfg.get("vad_mode"):
-                data["vad_mode"] = cfg["vad_mode"]
             if language:
                 data["language"] = language
 
@@ -142,12 +142,12 @@ class TranscriptionService:
 
         with open(file_path, "rb") as f:
             files = {"file": (Path(file_path).name, f, "audio/mpeg")}
+            vad_mode = cfg.get("vad_mode") or "silero"
             data = {
                 "model": cfg["model"],
                 "diarize": "true",
+                "vad_mode": vad_mode,
             }
-            if cfg.get("vad_mode"):
-                data["vad_mode"] = cfg["vad_mode"]
             if language:
                 data["language"] = language
 

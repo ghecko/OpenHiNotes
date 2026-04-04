@@ -103,7 +103,9 @@ export function ChatPanel({
   }, []);
 
   useEffect(() => {
-    if (!userHasScrolledUp.current) {
+    // Do not scroll when there are no messages — this prevents the page from
+    // jumping to the Chat section when first opening a transcription.
+    if (!userHasScrolledUp.current && (messages.length > 0 || awaitingFirstChunk)) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages, awaitingFirstChunk]);

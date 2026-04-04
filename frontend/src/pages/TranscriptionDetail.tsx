@@ -101,7 +101,7 @@ export function TranscriptionDetail() {
 
   // Audio playback
   const recordings = useAppStore((s) => s.recordings);
-  const { downloadRecording } = useDeviceConnection();
+  const { downloadRecording, device } = useDeviceConnection();
   const audioRef = useRef<HTMLAudioElement>(null);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioSrc, setAudioSrc] = useState<string>('');
@@ -269,6 +269,13 @@ export function TranscriptionDetail() {
     audio.addEventListener('timeupdate', onTime);
     audio.addEventListener('loadedmetadata', onMeta);
     audio.addEventListener('ended', onEnd);
+
+    // loadedmetadata may have already fired before this effect ran (e.g. for blob
+    // URLs the browser parses metadata synchronously). Sync the duration now if so.
+    if (audio.readyState >= 1 && audio.duration && isFinite(audio.duration)) {
+      setAudioDuration(audio.duration);
+    }
+
     return () => {
       audio.removeEventListener('timeupdate', onTime);
       audio.removeEventListener('loadedmetadata', onMeta);
@@ -277,23 +284,40 @@ export function TranscriptionDetail() {
   }, [audioSrc]);
 
   const handleLoadAudio = useCallback(async () => {
-    if (!sourceRecording || !transcription) return;
+    if (!transcription) return;
     setIsLoadingAudio(true);
     try {
       const cached = deviceService.getCachedBlob(transcription.original_filename);
       if (cached) {
         setAudioBlob(cached);
-        setIsLoadingAudio(false);
         return;
       }
+
+      // Use the already-known sourceRecording, or re-fetch the list from the
+      // device if recordings haven't been loaded yet (e.g. after a page refresh).
+      let rec = sourceRecording;
+      if (!rec && deviceService.isConnected()) {
+        try {
+          const freshRecs = await deviceService.getFileList();
+          rec = freshRecs.find((r) => r.fileName === transcription.original_filename);
+        } catch (e) {
+          console.warn('[OpenHiNotes] Could not refresh recording list:', e);
+        }
+      }
+
+      if (!rec) {
+        console.error('[OpenHiNotes] Recording not found on device:', transcription.original_filename);
+        return;
+      }
+
       const blob = await downloadRecording(
-        sourceRecording.fileName,
-        sourceRecording.size,
+        rec.fileName,
+        rec.size,
         undefined,
-        sourceRecording.fileVersion,
+        rec.fileVersion,
       );
       if (blob) {
-        deviceService.setCachedBlob(sourceRecording.fileName, blob);
+        deviceService.setCachedBlob(rec.fileName, blob);
         setAudioBlob(blob);
       }
     } catch (err) {
@@ -598,11 +622,11 @@ export function TranscriptionDetail() {
                   )}
                 </div>
               </div>
-            ) : sourceRecording ? (
+            ) : (sourceRecording || device?.connected) ? (
               <div className="px-5 py-4 flex items-center gap-3">
                 <Play className="w-4 h-4 text-gray-400 flex-shrink-0" />
                 <span className="text-sm text-gray-600 dark:text-gray-400 flex-1">
-                  Source recording available on device
+                  {sourceRecording ? 'Source recording available on device' : 'Device connected — click to load audio'}
                 </span>
                 <button
                   onClick={handleLoadAudio}
