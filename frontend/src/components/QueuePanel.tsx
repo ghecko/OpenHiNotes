@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ListOrdered,
@@ -10,6 +10,9 @@ import {
   ExternalLink,
   Bell,
   Trash2,
+  XCircle,
+  Server,
+  Ban,
 } from 'lucide-react';
 import { useQueueStore } from '@/store/useQueueStore';
 
@@ -45,7 +48,7 @@ function getStageLabel(stage: string | null | undefined): string {
 
 /** Small badge that goes on the header, showing queue count + opening the panel */
 export function QueueIndicator() {
-  const { items, notifications, isPanelOpen, togglePanel, fetchMyQueue } = useQueueStore();
+  const { items, notifications, isPanelOpen, togglePanel, fetchMyQueue, fetchVoxhubInfo } = useQueueStore();
   const unreadCount = useQueueStore((s) => s.unreadCount());
   const hasFetched = useRef(false);
 
@@ -53,8 +56,16 @@ export function QueueIndicator() {
     if (!hasFetched.current) {
       hasFetched.current = true;
       fetchMyQueue();
+      fetchVoxhubInfo();
     }
-  }, [fetchMyQueue]);
+  }, [fetchMyQueue, fetchVoxhubInfo]);
+
+  // Refresh VoxHub info periodically when items are active
+  useEffect(() => {
+    if (items.length === 0) return;
+    const interval = setInterval(() => fetchVoxhubInfo(), 10000);
+    return () => clearInterval(interval);
+  }, [items.length, fetchVoxhubInfo]);
 
   const activeCount = items.length;
   const showBadge = activeCount > 0 || unreadCount > 0;
@@ -92,7 +103,10 @@ function QueuePanel() {
     setPanelOpen,
     clearNotifications,
     markNotificationRead,
+    cancelQueueItem,
+    voxhubInfo,
   } = useQueueStore();
+  const [cancelling, setCancelling] = useState<string | null>(null);
 
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -137,6 +151,21 @@ function QueuePanel() {
       </div>
 
       <div className="overflow-y-auto max-h-[calc(80vh-48px)]">
+        {/* VoxHub server info */}
+        {voxhubInfo && (voxhubInfo.pending > 0 || voxhubInfo.processing > 0) && (
+          <div className="px-4 py-2 bg-gray-50/50 dark:bg-gray-700/20 border-b border-gray-200/40 dark:border-gray-700/30">
+            <div className="flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+              <Server className="w-3 h-3" />
+              <span>
+                VoxHub: {voxhubInfo.processing > 0 ? `${voxhubInfo.processing} processing` : ''}
+                {voxhubInfo.processing > 0 && voxhubInfo.pending > 0 ? ', ' : ''}
+                {voxhubInfo.pending > 0 ? `${voxhubInfo.pending} pending` : ''}
+                {voxhubInfo.jobs_ahead > 0 ? ` (${voxhubInfo.jobs_ahead} ahead of you)` : ''}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Active Queue Items */}
         {hasActiveItems && (
           <div className="p-3 space-y-2">
@@ -172,6 +201,22 @@ function QueuePanel() {
                       )}
                     </div>
                   </div>
+                  <button
+                    onClick={async () => {
+                      setCancelling(t.id);
+                      await cancelQueueItem(t.id);
+                      setCancelling(null);
+                    }}
+                    disabled={cancelling === t.id}
+                    className="flex-shrink-0 p-1.5 rounded-md text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
+                    title="Cancel transcription"
+                  >
+                    {cancelling === t.id ? (
+                      <Loader className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <XCircle className="w-3.5 h-3.5" />
+                    )}
+                  </button>
                 </div>
 
                 {/* Progress bar for processing items */}
@@ -240,6 +285,9 @@ function QueuePanel() {
                     )}
                     {notif.type === 'queued' && (
                       <Clock className="w-4 h-4 text-amber-500" />
+                    )}
+                    {notif.type === 'cancelled' && (
+                      <Ban className="w-4 h-4 text-gray-500" />
                     )}
                   </div>
                   <div className="min-w-0 flex-1">

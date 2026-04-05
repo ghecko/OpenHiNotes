@@ -155,6 +155,56 @@ class TranscriptionQueue:
                 except asyncio.QueueFull:
                     pass  # Drop if subscriber is too slow
 
+    async def cancel(self, transcription_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+        """Cancel a queued or processing transcription. Returns True if cancelled."""
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Transcription).where(Transcription.id == transcription_id)
+            )
+            transcription = result.scalars().first()
+            if not transcription:
+                return False
+
+            # Only the owner can cancel
+            if transcription.user_id != user_id:
+                return False
+
+            # Only cancel if queued or processing
+            if transcription.status not in (TranscriptionStatus.queued, TranscriptionStatus.processing):
+                return False
+
+            # If processing with a VoxHub job, cancel it
+            if transcription.voxhub_job_id and transcription.status == TranscriptionStatus.processing:
+                await TranscriptionService.cancel_voxhub_job(transcription.voxhub_job_id, db)
+
+            transcription.status = TranscriptionStatus.cancelled
+            transcription.completed_at = datetime.utcnow()
+            transcription.queue_position = None
+
+            # Delete the audio file
+            file_path = Path(settings.uploads_directory) / str(transcription.user_id) / transcription.filename
+            if file_path.exists() and not transcription.keep_audio:
+                try:
+                    os.remove(str(file_path))
+                except OSError:
+                    pass
+                transcription.audio_available = False
+
+            await db.commit()
+
+        # Notify subscribers
+        await self._notify(transcription_id, {
+            "event": "cancelled",
+            "status": "cancelled",
+        })
+
+        # Recalculate positions
+        async with AsyncSessionLocal() as db:
+            await self._recalculate_positions(db)
+
+        logger.info("Transcription %s cancelled by user %s", transcription_id, user_id)
+        return True
+
     async def _recalculate_positions(self, db: AsyncSession):
         """Recalculate queue positions after a job completes."""
         result = await db.execute(
@@ -257,10 +307,22 @@ class TranscriptionQueue:
                     "stage": stage,
                 })
 
+            async def on_job_submitted(job_id: str):
+                """Store VoxHub job_id in DB for cancellation support."""
+                async with AsyncSessionLocal() as db:
+                    await db.execute(
+                        update(Transcription)
+                        .where(Transcription.id == transcription_id)
+                        .values(voxhub_job_id=job_id)
+                    )
+                    await db.commit()
+                logger.info("Transcription %s: VoxHub job_id=%s stored", transcription_id, job_id)
+
             try:
                 async with AsyncSessionLocal() as db:
                     voxhub_response = await TranscriptionService.transcribe_with_voxhub(
-                        file_path, language=language, db=db, on_progress=on_progress
+                        file_path, language=language, db=db,
+                        on_progress=on_progress, on_job_submitted=on_job_submitted,
                     )
 
                 parsed = TranscriptionService.parse_voxhub_response(voxhub_response)
@@ -308,6 +370,10 @@ class TranscriptionQueue:
                     )
                     transcription = result.scalars().first()
                     if transcription:
+                        # If already cancelled (by user), don't overwrite
+                        if transcription.status == TranscriptionStatus.cancelled:
+                            logger.info("Transcription %s was cancelled during processing", transcription_id)
+                            return
                         transcription.status = TranscriptionStatus.failed
                         transcription.error_message = str(e)
                         transcription.completed_at = datetime.utcnow()

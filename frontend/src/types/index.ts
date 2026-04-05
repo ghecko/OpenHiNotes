@@ -29,7 +29,7 @@ export interface RegistrationSettings {
   allowed_domains: string[];
 }
 
-export type TranscriptionStatus = 'pending' | 'queued' | 'processing' | 'completed' | 'failed';
+export type TranscriptionStatus = 'pending' | 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
 export interface TranscriptionSegment {
   start: number;
@@ -194,7 +194,7 @@ export interface QueueStatus {
 }
 
 export interface QueueSSEEvent {
-  event: 'queued' | 'position_update' | 'processing_started' | 'progress' | 'completed' | 'failed' | 'status';
+  event: 'queued' | 'position_update' | 'processing_started' | 'progress' | 'completed' | 'failed' | 'cancelled' | 'status';
   status?: string;
   progress?: number;
   stage?: string | null;

@@ -18,7 +18,7 @@ const SETTING_LABELS: Record<string, { label: string; placeholder: string; type:
   },
   voxhub_api_key: {
     label: 'VoxHub API Key',
-    placeholder: 'Leave empty if no auth required',
+    placeholder: 'Leave empty if VoxHub has no API key configured',
     type: 'password',
   },
   voxhub_model: {
@@ -153,7 +153,8 @@ export function ApiSettings() {
           {groupSettings.map((setting) => {
             const meta = SETTING_LABELS[setting.key];
             const isSensitive = meta?.type === 'password';
-            // For sensitive fields, consider modified only if user typed something
+            // For sensitive fields: modified if user typed something OR
+            // if they explicitly want to clear it (empty value when DB has one)
             const isModified = isSensitive
               ? editValues[setting.key] !== ''
               : editValues[setting.key] !== setting.value;
@@ -250,6 +251,28 @@ export function ApiSettings() {
                       title="Reset to default"
                     >
                       <RotateCcw className="w-4 h-4" />
+                    </button>
+                  )}
+                  {isSensitive && setting.source === 'database' && (
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm(`Clear "${meta?.label || setting.key}"? This will set it to empty.`)) return;
+                        setSaving(setting.key);
+                        try {
+                          await settingsApi.updateSetting(setting.key, '');
+                          setMessage({ type: 'success', text: `${meta?.label || setting.key} cleared` });
+                          await loadSettings();
+                        } catch {
+                          setMessage({ type: 'error', text: `Failed to clear ${setting.key}` });
+                        } finally {
+                          setSaving(null);
+                        }
+                      }}
+                      disabled={isSaving}
+                      className="px-3 py-2 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 rounded-lg transition-colors disabled:opacity-50 text-sm"
+                      title="Clear this key (set to empty)"
+                    >
+                      Clear
                     </button>
                   )}
                 </div>

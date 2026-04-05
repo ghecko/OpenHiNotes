@@ -13,6 +13,7 @@ class TranscriptionStatus(str, Enum):
     processing = "processing"
     completed = "completed"
     failed = "failed"
+    cancelled = "cancelled"
 
 
 class Transcription(Base):
@@ -44,6 +45,7 @@ class Transcription(Base):
     queued_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    voxhub_job_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     keep_audio: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
     audio_available: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default="true")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

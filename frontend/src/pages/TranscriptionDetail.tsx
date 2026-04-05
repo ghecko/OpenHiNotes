@@ -127,7 +127,7 @@ export function TranscriptionDetail() {
           if (event.stage !== undefined) updates.progress_stage = event.stage ?? null;
           if (event.queue_position != null) updates.queue_position = event.queue_position;
           if (event.status) updates.status = event.status as Transcription['status'];
-          if (event.event === 'completed' || event.event === 'failed') {
+          if (event.event === 'completed' || event.event === 'failed' || event.event === 'cancelled') {
             // Reload full data when done
             setTimeout(() => loadData(), 500);
           }

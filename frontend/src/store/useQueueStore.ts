@@ -14,10 +14,17 @@ interface QueueNotification {
   id: string;
   transcriptionId: string;
   title: string;
-  type: 'started' | 'completed' | 'failed' | 'queued';
+  type: 'started' | 'completed' | 'failed' | 'queued' | 'cancelled';
   message: string;
   timestamp: number;
   read: boolean;
+}
+
+interface VoxhubInfo {
+  pending: number;
+  processing: number;
+  total: number;
+  jobs_ahead: number;
 }
 
 interface QueueState {
@@ -29,14 +36,18 @@ interface QueueState {
   isPanelOpen: boolean;
   /** Loading state */
   isLoading: boolean;
+  /** VoxHub server queue info */
+  voxhubInfo: VoxhubInfo | null;
 
   // Actions
   setPanelOpen: (open: boolean) => void;
   togglePanel: () => void;
   fetchMyQueue: () => Promise<void>;
+  fetchVoxhubInfo: () => Promise<void>;
   addQueueItem: (transcription: Transcription) => void;
   updateQueueItem: (transcriptionId: string, updates: Partial<Transcription>) => void;
   removeQueueItem: (transcriptionId: string) => void;
+  cancelQueueItem: (transcriptionId: string) => Promise<boolean>;
   startStreaming: (transcriptionId: string) => void;
   stopStreaming: (transcriptionId: string) => void;
   stopAllStreaming: () => void;
@@ -51,6 +62,7 @@ export const useQueueStore = create<QueueState>()((set, get) => ({
   notifications: [],
   isPanelOpen: false,
   isLoading: false,
+  voxhubInfo: null,
 
   setPanelOpen: (open) => set({ isPanelOpen: open }),
   togglePanel: () => set((s) => ({ isPanelOpen: !s.isPanelOpen })),
@@ -75,6 +87,35 @@ export const useQueueStore = create<QueueState>()((set, get) => ({
       }
     } catch {
       set({ isLoading: false });
+    }
+  },
+
+  fetchVoxhubInfo: async () => {
+    try {
+      const info = await transcriptionsApi.getVoxhubQueueInfo();
+      set({ voxhubInfo: info });
+    } catch {
+      // Ignore — info is optional
+    }
+  },
+
+  cancelQueueItem: async (transcriptionId) => {
+    try {
+      await transcriptionsApi.cancelTranscription(transcriptionId);
+      const item = get().items.find((i) => i.transcription.id === transcriptionId);
+      const title = item?.transcription.title || item?.transcription.original_filename || 'Transcription';
+
+      get().addNotification({
+        transcriptionId,
+        title,
+        type: 'cancelled',
+        message: 'Transcription cancelled',
+      });
+
+      get().removeQueueItem(transcriptionId);
+      return true;
+    } catch {
+      return false;
     }
   },
 
@@ -194,6 +235,22 @@ export const useQueueStore = create<QueueState>()((set, get) => ({
               title,
               type: 'failed',
               message: event.error || 'Transcription failed',
+            });
+            setTimeout(() => {
+              store.removeQueueItem(transcriptionId);
+            }, 500);
+            break;
+
+          case 'cancelled':
+            store.updateQueueItem(transcriptionId, {
+              status: 'cancelled',
+              queue_position: null,
+            });
+            store.addNotification({
+              transcriptionId,
+              title,
+              type: 'cancelled',
+              message: 'Transcription cancelled',
             });
             setTimeout(() => {
               store.removeQueueItem(transcriptionId);

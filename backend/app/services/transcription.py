@@ -81,19 +81,24 @@ class TranscriptionService:
         language: Optional[str] = None,
         db: Optional[AsyncSession] = None,
         on_progress: Optional[Callable[[str, float, Optional[str]], None]] = None,
+        on_job_submitted: Optional[Callable[[str], Any]] = None,
     ) -> Dict[str, Any]:
         """Call VoxHub/WhisperX API to transcribe audio file.
 
         Supports two modes:
         - Normal (synchronous): POST /v1/audio/transcriptions
         - Job (asynchronous): POST /v1/audio/transcriptions/jobs → poll → fetch result
+
+        Args:
+            on_job_submitted: optional callback(job_id) called after job is submitted in job mode.
         """
         cfg = await TranscriptionService._resolve_transcription_settings(db)
         headers = TranscriptionService._build_auth_headers(cfg["api_key"])
 
         if cfg["job_mode"]:
             return await TranscriptionService._transcribe_job_mode(
-                file_path, language, cfg, headers, on_progress=on_progress
+                file_path, language, cfg, headers,
+                on_progress=on_progress, on_job_submitted=on_job_submitted,
             )
         else:
             return await TranscriptionService._transcribe_normal_mode(file_path, language, cfg, headers)
@@ -135,11 +140,13 @@ class TranscriptionService:
         cfg: Dict[str, Any],
         headers: Dict[str, str],
         on_progress: Optional[Callable[[str, float, Optional[str]], None]] = None,
+        on_job_submitted: Optional[Callable[[str], Any]] = None,
     ) -> Dict[str, Any]:
         """Async VoxHub Job Mode — submit, poll, fetch result.
 
         Args:
             on_progress: optional callback(status, progress_percent) called on each poll.
+            on_job_submitted: optional callback(job_id) called after job is submitted.
         """
         base = cfg["api_url"]
 
@@ -172,6 +179,10 @@ class TranscriptionService:
             raise Exception(f"VoxHub job submit returned no job_id: {job_data}")
 
         logger.info("VoxHub Job Mode: job submitted, id=%s", job_id)
+
+        # Notify caller of job_id so it can be stored for cancellation
+        if on_job_submitted:
+            await _call_progress(on_job_submitted, job_id)
 
         await _call_progress(on_progress, "processing", 0, "waiting")
 
@@ -214,6 +225,8 @@ class TranscriptionService:
                 elif status == "failed":
                     error_msg = status_data.get("error", "Job failed without error details")
                     raise Exception(f"VoxHub job failed: {error_msg}")
+                elif status == "cancelled":
+                    raise Exception("VoxHub job was cancelled")
                 # Keep polling for "processing", "queued", etc.
 
         if status != "completed":
@@ -233,6 +246,44 @@ class TranscriptionService:
 
         logger.info("VoxHub Job %s: result fetched successfully", job_id)
         return result_resp.json()
+
+    @staticmethod
+    async def cancel_voxhub_job(job_id: str, db: Optional[AsyncSession] = None) -> bool:
+        """Cancel a VoxHub job. Returns True if successfully cancelled."""
+        cfg = await TranscriptionService._resolve_transcription_settings(db)
+        headers = TranscriptionService._build_auth_headers(cfg["api_key"])
+        url = f"{cfg['api_url']}/v1/audio/transcriptions/jobs/{job_id}/cancel"
+        try:
+            async with httpx.AsyncClient(timeout=10.0, verify=settings.voxhub_ssl_verify) as client:
+                resp = await client.post(url, headers=headers)
+            if resp.status_code == 200:
+                logger.info("VoxHub job %s cancelled", job_id)
+                return True
+            logger.warning("VoxHub cancel job %s returned %s: %s", job_id, resp.status_code, resp.text)
+            return resp.status_code == 409  # Already terminal = treat as success
+        except Exception as e:
+            logger.error("Failed to cancel VoxHub job %s: %s", job_id, e)
+            return False
+
+    @staticmethod
+    async def get_voxhub_queue_info(db: Optional[AsyncSession] = None) -> Dict[str, Any]:
+        """Get VoxHub job queue info (pending + processing counts, job list).
+        Returns dict with 'counts' and 'jobs' keys."""
+        cfg = await TranscriptionService._resolve_transcription_settings(db)
+        if not cfg.get("job_mode"):
+            return {"counts": {}, "jobs": [], "total": 0}
+        headers = TranscriptionService._build_auth_headers(cfg["api_key"])
+        url = f"{cfg['api_url']}/v1/audio/transcriptions/jobs"
+        try:
+            async with httpx.AsyncClient(timeout=10.0, verify=settings.voxhub_ssl_verify) as client:
+                resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                return resp.json()
+            logger.warning("VoxHub jobs list returned %s", resp.status_code)
+            return {"counts": {}, "jobs": [], "total": 0}
+        except Exception as e:
+            logger.error("Failed to fetch VoxHub jobs: %s", e)
+            return {"counts": {}, "jobs": [], "total": 0}
 
     @staticmethod
     def parse_voxhub_response(response: Dict[str, Any]) -> Dict[str, Any]:

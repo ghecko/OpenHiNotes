@@ -556,7 +556,7 @@ async def stream_queue_status(
                     yield f"data: {data}\n\n"
 
                     # Stop streaming after terminal events
-                    if msg.get("event") in ("completed", "failed"):
+                    if msg.get("event") in ("completed", "failed", "cancelled"):
                         break
                 except asyncio.TimeoutError:
                     yield ": keep-alive\n\n"
@@ -568,6 +568,64 @@ async def stream_queue_status(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/queue/cancel/{transcription_id}")
+async def cancel_queued_transcription(
+    transcription_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+):
+    """Cancel a queued or processing transcription. Users can only cancel their own jobs."""
+    from app.services.queue import transcription_queue
+    success = await transcription_queue.cancel(transcription_id, current_user.id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot cancel this transcription. It may not exist, not be yours, or already be finished."
+        )
+    return {"status": "cancelled", "transcription_id": str(transcription_id)}
+
+
+@router.get("/queue/voxhub-info")
+async def get_voxhub_queue_info(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get VoxHub server queue info (how many jobs are pending/processing).
+    Also returns the user's current VoxHub job position if they have one."""
+    from app.services.transcription import TranscriptionService
+
+    voxhub_info = await TranscriptionService.get_voxhub_queue_info(db)
+
+    # Find this user's active transcriptions to calculate their position
+    result = await db.execute(
+        select(Transcription).where(
+            Transcription.user_id == current_user.id,
+            Transcription.status.in_([TranscriptionStatus.queued, TranscriptionStatus.processing]),
+        )
+    )
+    user_transcriptions = result.scalars().all()
+
+    user_job_ids = {t.voxhub_job_id for t in user_transcriptions if t.voxhub_job_id}
+
+    # Calculate jobs ahead of user's first job
+    jobs_ahead = 0
+    voxhub_jobs = voxhub_info.get("jobs", [])
+    if user_job_ids and voxhub_jobs:
+        # Jobs are sorted newest-first; find the user's job and count pending/processing before it
+        for job in reversed(voxhub_jobs):
+            if job.get("id") in user_job_ids:
+                break
+            if job.get("status") in ("pending", "processing"):
+                jobs_ahead += 1
+
+    counts = voxhub_info.get("counts", {})
+    return {
+        "pending": counts.get("pending", 0),
+        "processing": counts.get("processing", 0),
+        "total": voxhub_info.get("total", 0),
+        "jobs_ahead": jobs_ahead,
+    }
 
 
 @router.get("/audio/{transcription_id}")

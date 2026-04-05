@@ -269,6 +269,14 @@ export const transcriptionsApi = {
     return apiClient.get<Transcription[]>('/transcriptions/queue/my');
   },
 
+  async cancelTranscription(id: string): Promise<void> {
+    await apiClient.post(`/transcriptions/queue/cancel/${id}`);
+  },
+
+  async getVoxhubQueueInfo(): Promise<{ pending: number; processing: number; total: number; jobs_ahead: number }> {
+    return apiClient.get('/transcriptions/queue/voxhub-info');
+  },
+
   /**
    * Subscribe to real-time SSE updates for a queued/processing transcription.
    * Returns an abort function to stop listening.
