@@ -70,6 +70,9 @@ export const useQueueStore = create<QueueState>()((set, get) => ({
   fetchMyQueue: async () => {
     set({ isLoading: true });
     try {
+      // Abort any existing SSE streams before replacing items
+      get().stopAllStreaming();
+
       const items = await transcriptionsApi.getMyQueueItems();
       set({
         items: items.map((t) => ({
