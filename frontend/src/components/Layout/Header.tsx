@@ -41,7 +41,7 @@ export function Header({ title }: HeaderProps) {
   }, [showUserMenu]);
 
   return (
-    <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-xl border-b border-gray-200/60 dark:border-gray-700/40 px-6 py-4 flex items-center justify-between shadow-sm shadow-gray-200/50 dark:shadow-gray-900/50">
+    <div className="relative z-40 bg-white/80 dark:bg-gray-800/80 backdrop-blur-xl border-b border-gray-200/60 dark:border-gray-700/40 px-6 py-4 flex items-center justify-between shadow-sm shadow-gray-200/50 dark:shadow-gray-900/50">
       <h1 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight">{title}</h1>
 
       <div className="flex items-center gap-3">
