@@ -24,14 +24,22 @@ function formatTimeAgo(timestamp: number): string {
 
 function getStageLabel(stage: string | null | undefined): string {
   switch (stage) {
+    case 'uploading':
+      return 'Uploading audio...';
+    case 'waiting':
+      return 'Waiting for server...';
     case 'loading':
       return 'Loading model...';
     case 'vad':
       return 'Detecting speech...';
     case 'transcribing':
       return 'Transcribing...';
+    case 'diarizing':
+      return 'Identifying speakers...';
+    case 'aligning':
+      return 'Aligning words...';
     default:
-      return 'Processing...';
+      return stage ? `${stage.charAt(0).toUpperCase() + stage.slice(1)}...` : 'Processing...';
   }
 }
 

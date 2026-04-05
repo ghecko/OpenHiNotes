@@ -1,10 +1,11 @@
 import asyncio
 import httpx
+import inspect
 import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Optional, Dict, Any, AsyncGenerator, Callable
+from typing import Optional, Dict, Any, AsyncGenerator, Callable, Union
 from fastapi import UploadFile
 from app.config import settings
 from app.models.transcription import Transcription, TranscriptionStatus
@@ -13,6 +14,15 @@ from sqlalchemy import select
 import os
 
 logger = logging.getLogger(__name__)
+
+
+async def _call_progress(on_progress, *args):
+    """Call a progress callback, awaiting it if it's async."""
+    if on_progress is None:
+        return
+    result = on_progress(*args)
+    if inspect.isawaitable(result):
+        await result
 
 
 class TranscriptionService:
@@ -137,8 +147,7 @@ class TranscriptionService:
         submit_url = f"{base}/v1/audio/transcriptions/jobs"
         logger.info("VoxHub Job Mode: submitting job to %s", submit_url)
 
-        if on_progress:
-            on_progress("uploading", 0, "loading")
+        await _call_progress(on_progress, "uploading", 0, "uploading")
 
         with open(file_path, "rb") as f:
             files = {"file": (Path(file_path).name, f, "audio/mpeg")}
@@ -164,8 +173,7 @@ class TranscriptionService:
 
         logger.info("VoxHub Job Mode: job submitted, id=%s", job_id)
 
-        if on_progress:
-            on_progress("processing", 0, "loading")
+        await _call_progress(on_progress, "processing", 0, "waiting")
 
         # Step 2: Poll for completion
         poll_url = f"{base}/v1/audio/transcriptions/jobs/{job_id}"
@@ -189,8 +197,7 @@ class TranscriptionService:
                 stage = status_data.get("stage", None)
                 logger.info("VoxHub Job %s: status=%s, progress=%.1f%%, stage=%s", job_id, status, progress, stage)
 
-                if on_progress:
-                    on_progress(status, progress, stage)
+                await _call_progress(on_progress, status, progress, stage)
 
                 if status == "completed":
                     break
