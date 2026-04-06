@@ -6,7 +6,7 @@ import { useAppStore } from '@/store/useAppStore';
 import { QueueIndicator } from '@/components/QueuePanel';
 
 interface HeaderProps {
-  title: string;
+  title?: string;
 }
 
 export function Header({ title }: HeaderProps) {

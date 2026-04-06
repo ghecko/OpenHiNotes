@@ -19,7 +19,7 @@ import {
 
 type StatusFilter = 'all' | 'active' | 'pending' | 'rejected';
 
-export function Users() {
+export function Users({ embedded }: { embedded?: boolean }) {
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -145,8 +145,8 @@ export function Users() {
     { key: 'rejected', label: 'Rejected' },
   ];
 
-  return (
-    <Layout title="User Management">
+  const content = (
+    <>
       <div className="space-y-4">
         {/* Header bar: filter + create */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -310,8 +310,11 @@ export function Users() {
           onCreated={handleUserCreated}
         />
       )}
-    </Layout>
+    </>
   );
+
+  if (embedded) return content;
+  return <Layout title="User Management">{content}</Layout>;
 }
 
 // ── Create User Modal ──────────────────────────────────────────────────
@@ -457,7 +460,7 @@ function CreateUserModal({
             <button
               type="submit"
               disabled={isLoading}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white rounded-lg transition-colors font-medium"
+              className="px-4 py-2 text-sm bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors font-medium disabled:opacity-50"
             >
               {isLoading ? 'Creating...' : 'Create User'}
             </button>

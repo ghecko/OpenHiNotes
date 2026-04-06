@@ -4,7 +4,7 @@ import { templatesApi } from '@/api/templates';
 import { SummaryTemplate } from '@/types';
 import { Trash2, Edit, Plus, Save, X } from 'lucide-react';
 
-export function Templates() {
+export function Templates({ embedded }: { embedded?: boolean }) {
   const [templates, setTemplates] = useState<SummaryTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -84,8 +84,7 @@ export function Templates() {
     setIsCreating(false);
   };
 
-  return (
-    <Layout title="Summary Templates">
+  const content = (
       <div className="space-y-6">
         {!isCreating && !editingId && (
           <button
@@ -225,6 +224,8 @@ export function Templates() {
           )}
         </div>
       </div>
-    </Layout>
   );
+
+  if (embedded) return content;
+  return <Layout title="Summary Templates">{content}</Layout>;
 }

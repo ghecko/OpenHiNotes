@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Layout } from '@/components/Layout';
 import { apiClient } from '@/api/client';
 import {
-  Shield,
   Globe,
   Clock,
   Mail,
@@ -14,7 +13,7 @@ import {
 } from 'lucide-react';
 import type { RegistrationSettings } from '@/types';
 
-export function RegistrationSettingsPage() {
+export function RegistrationSettingsPage({ embedded }: { embedded?: boolean }) {
   const [settings, setSettings] = useState<RegistrationSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -76,23 +75,18 @@ export function RegistrationSettingsPage() {
   };
 
   if (isLoading) {
-    return (
-      <Layout title="Registration Settings">
-        <div className="p-12 text-center text-gray-500 dark:text-gray-400">Loading...</div>
-      </Layout>
-    );
+    const loadingContent = <div className="p-12 text-center text-gray-500 dark:text-gray-400">Loading...</div>;
+    if (embedded) return loadingContent;
+    return <Layout title="Registration Settings">{loadingContent}</Layout>;
   }
 
   if (!settings) {
-    return (
-      <Layout title="Registration Settings">
-        <div className="p-12 text-center text-red-500">Failed to load settings</div>
-      </Layout>
-    );
+    const errorContent = <div className="p-12 text-center text-red-500">Failed to load settings</div>;
+    if (embedded) return errorContent;
+    return <Layout title="Registration Settings">{errorContent}</Layout>;
   }
 
-  return (
-    <Layout title="Registration Settings">
+  const content = (
       <div className="max-w-2xl space-y-6">
         {/* Status messages */}
         {error && (
@@ -265,13 +259,19 @@ export function RegistrationSettingsPage() {
           <button
             onClick={handleSave}
             disabled={isSaving}
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white font-medium rounded-lg transition-colors shadow-sm"
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium rounded-lg transition-colors shadow-sm disabled:opacity-50"
           >
-            <Save className="w-4 h-4" />
-            {isSaving ? 'Saving...' : 'Save Changes'}
+            {isSaving ? (
+              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : (
+              <Save className="w-4 h-4" />
+            )}
+            Save Changes
           </button>
         </div>
       </div>
-    </Layout>
   );
+
+  if (embedded) return content;
+  return <Layout title="Registration Settings">{content}</Layout>;
 }

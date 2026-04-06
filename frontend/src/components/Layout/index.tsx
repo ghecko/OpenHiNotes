@@ -4,7 +4,7 @@ import { Header } from './Header';
 
 interface LayoutProps {
   children: ReactNode;
-  title: string;
+  title?: string;
 }
 
 export function Layout({ children, title }: LayoutProps) {

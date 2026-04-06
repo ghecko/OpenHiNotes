@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import type { UserGroup, UserGroupDetail, User } from '@/types';
 
-export function Groups() {
+export function Groups({ embedded }: { embedded?: boolean }) {
   const [groups, setGroups] = useState<UserGroup[]>([]);
   const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
   const [expandedGroup, setExpandedGroup] = useState<UserGroupDetail | null>(null);
@@ -147,8 +147,8 @@ export function Groups() {
     return () => clearTimeout(timer);
   }, [memberSearchQuery]);
 
-  return (
-    <Layout>
+  const content = (
+    <>
       <div className="max-w-4xl mx-auto p-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
@@ -379,15 +379,18 @@ export function Groups() {
                 <button
                   onClick={editingGroup ? handleUpdateGroup : handleCreateGroup}
                   disabled={!newGroupName.trim()}
-                  className="px-4 py-2 text-sm bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="px-4 py-2 text-sm bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors font-medium"
                 >
-                  {editingGroup ? 'Save' : 'Create'}
+                  {editingGroup ? 'Update' : 'Create'}
                 </button>
               </div>
             </div>
           </div>
         )}
       </div>
-    </Layout>
+    </>
   );
+
+  if (embedded) return content;
+  return <Layout title="User Groups">{content}</Layout>;
 }

@@ -54,7 +54,7 @@ const SETTING_LABELS: Record<string, { label: string; placeholder: string; type:
   },
 };
 
-export function ApiSettings() {
+export function ApiSettings({ embedded }: { embedded?: boolean }) {
   const [settings, setSettings] = useState<AppSetting[]>([]);
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
@@ -284,8 +284,8 @@ export function ApiSettings() {
     );
   };
 
-  return (
-    <Layout title="API Settings">
+  const content = (
+    <>
       {message && (
         <div
           className={`mb-6 p-4 rounded-lg flex items-center gap-2 ${
@@ -367,6 +367,9 @@ export function ApiSettings() {
           </div>
         </div>
       )}
-    </Layout>
+    </>
   );
+
+  if (embedded) return content;
+  return <Layout title="API Settings">{content}</Layout>;
 }
