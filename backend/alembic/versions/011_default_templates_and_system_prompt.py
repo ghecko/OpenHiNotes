@@ -1,6 +1,6 @@
 """Add is_default column to templates and llm_system_prompt setting
 
-Revision ID: 011_default_templates_and_system_prompt
+Revision ID: 011_default_tpl_sysprompt
 Revises: 010_cancel_and_voxhub_job_id
 Create Date: 2026-04-06
 """
@@ -32,4 +32,9 @@ def upgrade() -> None:
         )
         ON CONFLICT (key) DO NOTHING
         """
- 
+    )
+
+
+def downgrade() -> None:
+    op.drop_column("summary_templates", "is_default")
+    op.execute("DELETE FROM app_settings WHERE key = 'llm_system_prompt'")
