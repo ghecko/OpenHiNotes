@@ -9,6 +9,14 @@ from app.schemas.chat import ChatMessage
 class LLMService:
     """Service for LLM operations."""
 
+    DEFAULT_SYSTEM_PROMPT = (
+        "You are a professional meeting assistant. Your role is to analyze transcripts "
+        "and produce clear, well-structured summaries in Markdown format. Always respond "
+        "in the same language as the transcript. Be concise, factual, and action-oriented. "
+        "Preserve speaker attributions when relevant. Use the section structure requested "
+        "by the user prompt or template."
+    )
+
     @staticmethod
     async def _resolve_settings(db: Optional[AsyncSession] = None) -> Dict[str, str]:
         """Resolve LLM settings from DB or fall back to env."""
@@ -18,11 +26,13 @@ class LLMService:
                 "llm_api_url": await get_effective_setting(db, "llm_api_url"),
                 "llm_api_key": await get_effective_setting(db, "llm_api_key"),
                 "llm_model": await get_effective_setting(db, "llm_model"),
+                "llm_system_prompt": await get_effective_setting(db, "llm_system_prompt"),
             }
         return {
             "llm_api_url": settings.llm_api_url,
             "llm_api_key": settings.llm_api_key,
             "llm_model": settings.llm_model,
+            "llm_system_prompt": LLMService.DEFAULT_SYSTEM_PROMPT,
         }
 
     @staticmethod
@@ -47,8 +57,10 @@ class LLMService:
         if transcript_text not in final_prompt:
             final_prompt = f"Here is the transcript:\n\n{transcript_text}\n\n---\n\n{final_prompt}"
 
+        system_prompt = cfg.get("llm_system_prompt") or LLMService.DEFAULT_SYSTEM_PROMPT
+
         messages = [
-            {"role": "system", "content": "You are a helpful assistant that summarizes transcripts."},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": final_prompt},
         ]
 

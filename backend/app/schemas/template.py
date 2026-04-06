@@ -28,6 +28,7 @@ class SummaryTemplateResponse(BaseModel):
     prompt_template: str
     created_by: uuid.UUID
     is_active: bool
+    is_default: bool = False
     created_at: datetime
     updated_at: datetime
 

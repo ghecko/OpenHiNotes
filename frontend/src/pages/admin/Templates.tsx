@@ -191,6 +191,11 @@ export function Templates({ embedded }: { embedded?: boolean }) {
                       </p>
                     </div>
                     <div className="flex items-center gap-2 ml-4">
+                      {template.is_default && (
+                        <span className="px-2 py-1 text-xs font-medium rounded bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300">
+                          Built-in
+                        </span>
+                      )}
                       <span
                         className={`px-2 py-1 text-xs font-medium rounded ${
                           template.is_active

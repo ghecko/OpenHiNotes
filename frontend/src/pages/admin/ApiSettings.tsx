@@ -52,6 +52,11 @@ const SETTING_LABELS: Record<string, { label: string; placeholder: string; type:
     placeholder: 'gpt-3.5-turbo',
     type: 'text',
   },
+  llm_system_prompt: {
+    label: 'LLM System Prompt',
+    placeholder: 'You are a professional meeting assistant...',
+    type: 'textarea',
+  },
 };
 
 export function ApiSettings({ embedded }: { embedded?: boolean }) {
@@ -202,6 +207,16 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
                         }`}
                       />
                     </button>
+                  ) : meta?.type === 'textarea' ? (
+                    <textarea
+                      value={editValues[setting.key] || ''}
+                      onChange={(e) =>
+                        setEditValues((prev) => ({ ...prev, [setting.key]: e.target.value }))
+                      }
+                      placeholder={meta?.placeholder}
+                      rows={4}
+                      className="flex-1 px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono resize-y"
+                    />
                   ) : meta?.type === 'select' && meta.options ? (
                     <select
                       value={editValues[setting.key] || ''}
@@ -320,6 +335,7 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
             'llm_api_url',
             'llm_api_key',
             'llm_model',
+            'llm_system_prompt',
           ])}
 
           {/* Audio Storage Settings */}

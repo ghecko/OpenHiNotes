@@ -16,6 +16,7 @@ class SummaryTemplate(Base):
     prompt_template: Mapped[str] = mapped_column(Text, nullable=False)
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
@@ -25,4 +26,4 @@ class SummaryTemplate(Base):
     creator: Mapped["User"] = relationship(foreign_keys=[created_by])
 
     def __repr__(self) -> str:
-        return f"<SummaryTemplate(id={self.id}, name={self.name})>"
+        return f"<SummaryTemplate(id={self.id}, name={self.name!r})>"
