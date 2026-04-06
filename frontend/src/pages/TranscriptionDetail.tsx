@@ -16,6 +16,7 @@ import { format } from 'date-fns';
 import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, Play, Pause, Volume2, Disc3, Share2, Lock, Eye } from 'lucide-react';
 import { ShareModal } from '@/components/ShareModal';
 import { formatMarkdown } from '@/utils/formatMarkdown';
+import { TemplateSelector } from '@/components/TemplateSelector';
 
 function SummaryModal({
   summary,
@@ -924,18 +925,11 @@ export function TranscriptionDetail() {
                   </>
                 ) : (
                   <>
-                    <select
+                    <TemplateSelector
+                      templates={templates}
                       value={selectedTemplate}
-                      onChange={(e) => setSelectedTemplate(e.target.value)}
-                      className="w-full px-4 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">Select a template...</option>
-                      {templates.map((template) => (
-                        <option key={template.id} value={template.id}>
-                          {template.name}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={setSelectedTemplate}
+                    />
                     <div className="flex gap-3">
                       <button
                         onClick={handleGenerateSummary}

@@ -44,6 +44,7 @@ async def create_template(
         name=template_create.name,
         description=template_create.description,
         prompt_template=template_create.prompt_template,
+        category=template_create.category,
         created_by=current_user.id,
         is_active=template_create.is_active,
     )
@@ -99,6 +100,8 @@ async def update_template(
         template.description = template_update.description
     if template_update.prompt_template is not None:
         template.prompt_template = template_update.prompt_template
+    if template_update.category is not None:
+        template.category = template_update.category
     if template_update.is_active is not None:
         template.is_active = template_update.is_active
 

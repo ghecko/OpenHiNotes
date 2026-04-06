@@ -111,6 +111,7 @@ async def seed_default_templates():
                     name=tpl["name"],
                     description=tpl["description"],
                     prompt_template=tpl["prompt_template"],
+                    category=tpl.get("category"),
                     created_by=admin_user.id,
                     is_active=True,
                     is_default=True,
