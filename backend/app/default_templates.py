@@ -740,7 +740,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     # SECURITY — Pentest Scoping
     # ──────────────────────────────────────────────
     {
-        "name": "Pentest — Scoping Call",
+        "name": "Pentest - Scoping Call",
         "category": "Security",
         "description": "Capture pentest engagement scope: targets, constraints, rules of engagement, and timeline.",
         "prompt_template": (
