@@ -7,6 +7,7 @@ import { collectionsApi } from '@/api/collections';
 import { templatesApi } from '@/api/templates';
 import { settingsApi } from '@/api/settings';
 import { useQueueStore } from '@/store/useQueueStore';
+import { TemplateSelector } from '@/components/TemplateSelector';
 
 interface TranscribeModalProps {
   isOpen: boolean;
@@ -229,19 +230,12 @@ export function TranscribeModal({
               <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-2">
                 Summary Template
               </label>
-              <select
+              <TemplateSelector
+                templates={templates}
                 value={selectedTemplate}
-                onChange={(e) => setSelectedTemplate(e.target.value)}
+                onChange={setSelectedTemplate}
                 disabled={isSubmitting}
-                className="w-full px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-              >
-                <option value="">Select a template...</option>
-                {templates.map((template) => (
-                  <option key={template.id} value={template.id}>
-                    {template.name}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
           )}
         </div>

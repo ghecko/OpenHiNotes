@@ -9,6 +9,7 @@ class SummaryTemplateCreate(BaseModel):
     name: str
     description: Optional[str] = None
     prompt_template: str
+    category: Optional[str] = None
     is_active: bool = True
 
 
@@ -17,6 +18,7 @@ class SummaryTemplateUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     prompt_template: Optional[str] = None
+    category: Optional[str] = None
     is_active: Optional[bool] = None
 
 
@@ -26,8 +28,10 @@ class SummaryTemplateResponse(BaseModel):
     name: str
     description: Optional[str] = None
     prompt_template: str
+    category: Optional[str] = None
     created_by: uuid.UUID
     is_active: bool
+    is_default: bool = False
     created_at: datetime
     updated_at: datetime
 

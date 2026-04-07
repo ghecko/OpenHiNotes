@@ -129,10 +129,11 @@ export function ChatPanel({
   const loadSavedConversations = async () => {
     setIsLoadingConversations(true);
     try {
-      // If scoped, only fetch conversations for this transcript; otherwise fetch all
+      // If scoped, only fetch conversations for this transcript;
+      // if in collection view, fetch for that collection; otherwise fetch all
       const convos = isScoped
         ? await chatConversationsApi.list(transcriptionId)
-        : await chatConversationsApi.list();
+        : await chatConversationsApi.list(undefined, collectionId);
       setConversations(convos);
     } catch (err) {
       console.error('Failed to load conversations:', err);

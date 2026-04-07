@@ -15,6 +15,7 @@ from app.models.resource_share import ResourceType
 from app.dependencies import get_current_user
 from app.services.permissions import PermissionService
 import uuid
+from typing import List
 
 router = APIRouter(prefix="/chat-conversations", tags=["chat-conversations"])
 
@@ -55,12 +56,13 @@ async def create_conversation(
 @router.get("", response_model=list[ChatConversationListItem])
 async def list_conversations(
     transcription_id: uuid.UUID = Query(None),
+    collection_id: uuid.UUID = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List chat conversations, optionally filtered by transcription."""
+    """List chat conversations, optionally filtered by transcription or collection."""
     query = select(ChatConversation).offset(skip).limit(limit)
 
     if current_user.role != UserRole.admin:
@@ -68,6 +70,19 @@ async def list_conversations(
 
     if transcription_id:
         query = query.where(ChatConversation.transcription_id == transcription_id)
+    elif collection_id:
+        # Filter to conversations linked to transcriptions in this collection
+        t_result = await db.execute(
+            select(Transcription.id).where(Transcription.collection_id == collection_id)
+        )
+        collection_transcription_ids = [row[0] for row in t_result.all()]
+        if collection_transcription_ids:
+            query = query.where(
+                ChatConversation.transcription_id.in_(collection_transcription_ids)
+            )
+        else:
+            # No transcriptions in collection — return empty
+            return []
 
     query = query.order_by(ChatConversation.updated_at.desc())
 

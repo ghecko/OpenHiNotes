@@ -17,6 +17,8 @@ from app.routers import collections as collections_router
 from app.routers import app_settings as settings_router
 from app.routers import groups as groups_router
 from app.routers import shares as shares_router
+from app.models.template import SummaryTemplate
+from app.default_templates import DEFAULT_TEMPLATES
 import logging
 
 # Configure logging
@@ -83,6 +85,77 @@ async def create_admin_user():
         logger.error(f"Failed to create admin user: {str(e)}")
 
 
+async def seed_default_templates():
+    """Seed default summary templates if they don't exist yet.
+
+    On subsequent startups, sync categories and add any new templates
+    that were added to DEFAULT_TEMPLATES since the last seed.
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            # Get admin user to assign as creator
+            result = await db.execute(
+                select(User).where(User.email == settings.admin_email)
+            )
+            admin_user = result.scalars().first()
+            if not admin_user:
+                logger.warning("Admin user not found — skipping template seeding")
+                return
+
+            # Load existing default templates
+            result = await db.execute(
+                select(SummaryTemplate).where(SummaryTemplate.is_default == True)
+            )
+            existing = {t.name: t for t in result.scalars().all()}
+
+            if not existing:
+                # First-time seed: create all templates
+                for tpl in DEFAULT_TEMPLATES:
+                    template = SummaryTemplate(
+                        name=tpl["name"],
+                        description=tpl["description"],
+                        prompt_template=tpl["prompt_template"],
+                        category=tpl.get("category"),
+                        created_by=admin_user.id,
+                        is_active=True,
+                        is_default=True,
+                    )
+                    db.add(template)
+                await db.commit()
+                logger.info(f"Seeded {len(DEFAULT_TEMPLATES)} default templates")
+            else:
+                # Sync: update categories + add missing templates
+                updated = 0
+                added = 0
+                for tpl in DEFAULT_TEMPLATES:
+                    if tpl["name"] in existing:
+                        db_tpl = existing[tpl["name"]]
+                        new_cat = tpl.get("category")
+                        if db_tpl.category != new_cat:
+                            db_tpl.category = new_cat
+                            updated += 1
+                    else:
+                        # New template added since last seed
+                        template = SummaryTemplate(
+                            name=tpl["name"],
+                            description=tpl["description"],
+                            prompt_template=tpl["prompt_template"],
+                            category=tpl.get("category"),
+                            created_by=admin_user.id,
+                            is_active=True,
+                            is_default=True,
+                        )
+                        db.add(template)
+                        added += 1
+                await db.commit()
+                if updated or added:
+                    logger.info(f"Default templates sync: {updated} updated, {added} added")
+                else:
+                    logger.info("Default templates already up to date")
+    except Exception as e:
+        logger.error(f"Failed to seed default templates: {str(e)}")
+
+
 @app.on_event("startup")
 async def startup_event():
     """Run on application startup."""
@@ -93,6 +166,9 @@ async def startup_event():
 
     # Create admin user
     await create_admin_user()
+
+    # Seed default templates
+    await seed_default_templates()
 
     # Start the transcription queue worker
     from app.services.queue import transcription_queue

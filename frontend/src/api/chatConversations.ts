@@ -41,8 +41,11 @@ export const chatConversationsApi = {
     return apiClient.post<ChatConversation>('/chat-conversations', data);
   },
 
-  async list(transcriptionId?: string): Promise<ChatConversationListItem[]> {
-    const params = transcriptionId ? `?transcription_id=${transcriptionId}` : '';
+  async list(transcriptionId?: string, collectionId?: string): Promise<ChatConversationListItem[]> {
+    const parts: string[] = [];
+    if (transcriptionId) parts.push(`transcription_id=${transcriptionId}`);
+    if (collectionId) parts.push(`collection_id=${collectionId}`);
+    const params = parts.length ? `?${parts.join('&')}` : '';
     return apiClient.get<ChatConversationListItem[]>(`/chat-conversations${params}`);
   },
 

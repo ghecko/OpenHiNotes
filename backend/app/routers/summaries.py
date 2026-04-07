@@ -9,6 +9,7 @@ from app.models.template import SummaryTemplate
 from app.models.user import User, UserRole
 from app.dependencies import get_current_user
 from app.services.llm import LLMService
+from app.utils.date_extract import extract_meeting_date
 import uuid
 
 router = APIRouter(prefix="/summaries", tags=["summaries"])
@@ -92,10 +93,14 @@ async def create_summary(
             detail="Either template_id or custom_prompt must be provided",
         )
 
+    # Extract meeting date from device filename
+    meeting_date = extract_meeting_date(transcription.original_filename)
+
     # Create summary via LLM
     try:
         summary_text, model_used = await LLMService.create_summary(
-            transcript_text, prompt, summary_create.custom_prompt, db=db
+            transcript_text, prompt, summary_create.custom_prompt, db=db,
+            meeting_date=meeting_date,
         )
     except Exception as e:
         raise HTTPException(

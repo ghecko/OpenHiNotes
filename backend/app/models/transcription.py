@@ -48,6 +48,10 @@ class Transcription(Base):
     voxhub_job_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     keep_audio: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
     audio_available: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default="true")
+    auto_summarize: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
+    auto_summarize_template_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("summary_templates.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False

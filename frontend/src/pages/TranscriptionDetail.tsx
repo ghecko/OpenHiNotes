@@ -16,6 +16,7 @@ import { format } from 'date-fns';
 import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, Play, Pause, Volume2, Disc3, Share2, Lock, Eye } from 'lucide-react';
 import { ShareModal } from '@/components/ShareModal';
 import { formatMarkdown } from '@/utils/formatMarkdown';
+import { TemplateSelector } from '@/components/TemplateSelector';
 
 function SummaryModal({
   summary,
@@ -689,16 +690,25 @@ export function TranscriptionDetail() {
                   )}
                 </div>
               </div>
-            ) : (sourceRecording || device?.connected || transcription.audio_available) ? (
+            ) : (
               <div className="px-5 py-4 space-y-2">
                 <div className="flex items-center gap-3">
-                  <Play className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                  <span className="text-sm text-gray-600 dark:text-gray-400 flex-1">
+                  <Play className={`w-4 h-4 flex-shrink-0 ${
+                    transcription.audio_available || sourceRecording || device?.connected
+                      ? 'text-gray-400' : 'text-gray-300 dark:text-gray-600'
+                  }`} />
+                  <span className={`text-sm flex-1 ${
+                    transcription.audio_available || sourceRecording || device?.connected
+                      ? 'text-gray-600 dark:text-gray-400'
+                      : 'text-gray-400 dark:text-gray-500'
+                  }`}>
                     {transcription.audio_available
                       ? 'Audio stored on server'
                       : sourceRecording
                         ? 'Source recording available on device'
-                        : 'Device connected — click to load audio'}
+                        : device?.connected
+                          ? 'Device connected — click to load audio'
+                          : 'Audio not available — connect device to reload'}
                   </span>
                   {transcription.audio_available ? (
                     <button
@@ -712,8 +722,14 @@ export function TranscriptionDetail() {
                   ) : (
                     <button
                       onClick={handleLoadAudio}
-                      disabled={isLoadingAudio || !device?.connected}
-                      title={!device?.connected ? 'Connect your device to load audio' : undefined}
+                      disabled={isLoadingAudio || !device?.connected || !sourceRecording}
+                      title={
+                        !device?.connected
+                          ? 'Connect your device to load audio'
+                          : !sourceRecording
+                            ? 'Recording not found on device'
+                            : undefined
+                      }
                       className="px-4 py-1.5 text-sm font-medium bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
                       {isLoadingAudio ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
@@ -730,7 +746,7 @@ export function TranscriptionDetail() {
                   </div>
                 )}
               </div>
-            ) : null}
+            )}
           </div>
         )}
 
@@ -924,18 +940,11 @@ export function TranscriptionDetail() {
                   </>
                 ) : (
                   <>
-                    <select
+                    <TemplateSelector
+                      templates={templates}
                       value={selectedTemplate}
-                      onChange={(e) => setSelectedTemplate(e.target.value)}
-                      className="w-full px-4 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">Select a template...</option>
-                      {templates.map((template) => (
-                        <option key={template.id} value={template.id}>
-                          {template.name}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={setSelectedTemplate}
+                    />
                     <div className="flex gap-3">
                       <button
                         onClick={handleGenerateSummary}

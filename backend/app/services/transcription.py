@@ -9,8 +9,10 @@ from typing import Optional, Dict, Any, AsyncGenerator, Callable, Union
 from fastapi import UploadFile
 from app.config import settings
 from app.models.transcription import Transcription, TranscriptionStatus
+from app.models.summary import Summary
+from app.models.chat_conversation import ChatConversation
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete as sa_delete
 import os
 
 logger = logging.getLogger(__name__)
@@ -422,10 +424,20 @@ class TranscriptionService:
 
     @staticmethod
     async def delete_transcription(db: AsyncSession, transcription_id: uuid.UUID) -> bool:
-        """Delete a transcription (hard delete)."""
+        """Delete a transcription and all related records (hard delete)."""
         transcription = await TranscriptionService.get_transcription(db, transcription_id)
         if not transcription:
             return False
+
+        # Delete related summaries first (FK constraint)
+        await db.execute(
+            sa_delete(Summary).where(Summary.transcription_id == transcription_id)
+        )
+        # Delete related chat conversations
+        await db.execute(
+            sa_delete(ChatConversation).where(ChatConversation.transcription_id == transcription_id)
+        )
+
         await db.delete(transcription)
         await db.commit()
         return True

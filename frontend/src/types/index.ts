@@ -135,7 +135,9 @@ export interface SummaryTemplate {
   name: string;
   description: string;
   prompt_template: string;
+  category: string | null;
   is_active: boolean;
+  is_default: boolean;
   created_at: string;
 }
 

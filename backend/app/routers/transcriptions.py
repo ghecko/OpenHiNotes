@@ -12,6 +12,7 @@ from fastapi import (
     Depends,
     UploadFile,
     File,
+    Form,
     Query,
 )
 from fastapi.responses import FileResponse, StreamingResponse
@@ -38,6 +39,7 @@ from app.dependencies import get_current_user
 from app.services.transcription import TranscriptionService
 from app.services.llm import LLMService
 from app.services.permissions import PermissionService
+from app.utils.date_extract import extract_meeting_date
 
 router = APIRouter(prefix="/transcriptions", tags=["transcriptions"])
 
@@ -59,9 +61,9 @@ async def _enrich_with_permissions(
 @router.post("/upload", response_model=TranscriptionResponse, status_code=status.HTTP_201_CREATED)
 async def upload_transcription(
     file: UploadFile = File(...),
-    language: str = Query(None),
-    auto_summarize: bool = Query(False),
-    template_id: uuid.UUID = Query(None),
+    language: str = Form(None),
+    auto_summarize: bool = Form(False),
+    template_id: uuid.UUID = Form(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -122,8 +124,10 @@ async def upload_transcription(
 
             # Create summary
             if transcription.text:
+                meeting_date = extract_meeting_date(transcription.original_filename)
                 summary_text, model_used = await LLMService.create_summary(
-                    transcription.text, template.prompt_template
+                    transcription.text, template.prompt_template,
+                    db=db, meeting_date=meeting_date,
                 )
                 summary = Summary(
                     transcription_id=transcription.id,
@@ -143,9 +147,9 @@ async def upload_transcription(
 @router.post("/upload-stream")
 async def upload_transcription_stream(
     file: UploadFile = File(...),
-    language: str = Query(None),
-    auto_summarize: bool = Query(False),
-    template_id: uuid.UUID = Query(None),
+    language: str = Form(None),
+    auto_summarize: bool = Form(False),
+    template_id: uuid.UUID = Form(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -207,8 +211,10 @@ async def upload_transcription_stream(
                     )
                     template = result.scalars().first()
                     if template:
+                        meeting_date = extract_meeting_date(transcription.original_filename)
                         summary_text, model_used = await LLMService.create_summary(
-                            transcription.text, template.prompt_template
+                            transcription.text, template.prompt_template,
+                            db=db, meeting_date=meeting_date,
                         )
                         summary = Summary(
                             transcription_id=transcription.id,
@@ -413,10 +419,10 @@ async def check_transcriptions_by_filenames(
 @router.post("/queue", response_model=TranscriptionResponse, status_code=status.HTTP_202_ACCEPTED)
 async def queue_transcription(
     file: UploadFile = File(...),
-    language: str = Query(None),
-    keep_audio: bool = Query(False),
-    auto_summarize: bool = Query(False),
-    template_id: uuid.UUID = Query(None),
+    language: str = Form(None),
+    keep_audio: bool = Form(False),
+    auto_summarize: bool = Form(False),
+    template_id: uuid.UUID = Form(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -454,6 +460,8 @@ async def queue_transcription(
         status=TranscriptionStatus.pending,
         keep_audio=keep_audio,
         audio_available=True,
+        auto_summarize=auto_summarize,
+        auto_summarize_template_id=template_id,
     )
     db.add(transcription)
     await db.commit()

@@ -9,7 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update
 from app.database import AsyncSessionLocal
 from app.models.transcription import Transcription, TranscriptionStatus
+from app.models.template import SummaryTemplate
+from app.models.summary import Summary
 from app.services.transcription import TranscriptionService
+from app.services.llm import LLMService
+from app.utils.date_extract import extract_meeting_date
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -352,7 +356,39 @@ class TranscriptionQueue:
                                 logger.warning("Failed to delete audio %s: %s", audio_path, e)
                         transcription.audio_available = False
 
+                    # Capture auto-summarize settings before commit
+                    should_summarize = transcription.auto_summarize
+                    tpl_id = transcription.auto_summarize_template_id
+                    transcript_text = transcription.text
+                    orig_filename = transcription.original_filename
+
                     await db.commit()
+
+                # Auto-summarize if requested and transcription produced text
+                if should_summarize and tpl_id and transcript_text:
+                    try:
+                        async with AsyncSessionLocal() as db:
+                            result = await db.execute(
+                                select(SummaryTemplate).where(SummaryTemplate.id == tpl_id)
+                            )
+                            template = result.scalars().first()
+                            if template:
+                                meeting_date = extract_meeting_date(orig_filename)
+                                summary_text, model_used = await LLMService.create_summary(
+                                    transcript_text, template.prompt_template, db=db,
+                                    meeting_date=meeting_date,
+                                )
+                                summary = Summary(
+                                    transcription_id=transcription_id,
+                                    template_id=tpl_id,
+                                    content=summary_text,
+                                    model_used=model_used,
+                                )
+                                db.add(summary)
+                                await db.commit()
+                                logger.info("Auto-summary created for transcription %s", transcription_id)
+                    except Exception as e:
+                        logger.error("Auto-summary failed for %s: %s", transcription_id, e)
 
                 await self._notify(transcription_id, {
                     "event": "completed",
