@@ -6,8 +6,8 @@ Revises: 014
 from alembic import op
 import sqlalchemy as sa
 
-revision = "015"
-down_revision = "014"
+revision = "015_password_reset"
+down_revision = "014_voice_profiles"
 branch_labels = None
 depends_on = None
 
