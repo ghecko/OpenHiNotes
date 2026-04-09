@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 import uuid
+import secrets
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from app.config import settings
@@ -88,4 +89,84 @@ class AuthService:
             return None
         if not AuthService.verify_password(password, user.hashed_password):
             return None
+        return user
+
+    # ── Password reset ──────────────────────────────────────────────
+
+    @staticmethod
+    def generate_reset_token() -> str:
+        """Generate a secure random reset token."""
+        return secrets.token_urlsafe(48)
+
+    @staticmethod
+    async def create_password_reset_token(
+        db: AsyncSession, user: User, expires_hours: int = 24
+    ) -> str:
+        """Create a password reset token for a user. Returns the token."""
+        token = AuthService.generate_reset_token()
+        user.password_reset_token = AuthService.hash_password(token)
+        user.password_reset_token_expires = datetime.utcnow() + timedelta(hours=expires_hours)
+        await db.commit()
+        await db.refresh(user)
+        return token
+
+    @staticmethod
+    async def validate_reset_token(
+        db: AsyncSession, token: str
+    ) -> Optional[User]:
+        """Validate a password reset token. Returns the user if valid."""
+        # We need to check all users with non-null tokens since we hash them
+        result = await db.execute(
+            select(User).where(
+                User.password_reset_token.isnot(None),
+                User.password_reset_token_expires > datetime.utcnow(),
+            )
+        )
+        users = result.scalars().all()
+        for user in users:
+            if AuthService.verify_password(token, user.password_reset_token):
+                return user
+        return None
+
+    @staticmethod
+    async def reset_password_with_token(
+        db: AsyncSession, token: str, new_password: str
+    ) -> Optional[User]:
+        """Reset password using a valid token. Returns user on success."""
+        user = await AuthService.validate_reset_token(db, token)
+        if not user:
+            return None
+        user.hashed_password = AuthService.hash_password(new_password)
+        user.password_reset_token = None
+        user.password_reset_token_expires = None
+        user.force_password_reset = False
+        await db.commit()
+        await db.refresh(user)
+        return user
+
+    @staticmethod
+    async def force_password_change(
+        db: AsyncSession, user_id: uuid.UUID
+    ) -> Optional[User]:
+        """Flag a user to force password change at next login."""
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalars().first()
+        if not user:
+            return None
+        user.force_password_reset = True
+        await db.commit()
+        await db.refresh(user)
+        return user
+
+    @staticmethod
+    async def change_password(
+        db: AsyncSession, user: User, new_password: str
+    ) -> User:
+        """Change a user's password and clear the force reset flag."""
+        user.hashed_password = AuthService.hash_password(new_password)
+        user.force_password_reset = False
+        user.password_reset_token = None
+        user.password_reset_token_expires = None
+        await db.commit()
+        await db.refresh(user)
         return user

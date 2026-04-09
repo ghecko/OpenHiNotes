@@ -9,6 +9,8 @@ from app.models.user import User
 from app.models.app_settings import AppSetting
 from app.config import settings as env_settings
 from app.services.registration import RegistrationSettingsService
+from app.services.email import EmailSettingsService
+from app.schemas.user import EmailSettingsUpdate, EmailSettingsResponse
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -182,6 +184,67 @@ async def update_registration_settings(
         await RegistrationSettingsService.set_allowed_domains(db, body.allowed_domains)
     await db.commit()
     return await RegistrationSettingsService.get_all(db)
+
+
+# ── Email / SMTP Settings ─────────────────────────────────────────────
+
+
+@router.get("/email", response_model=EmailSettingsResponse)
+async def get_email_settings(
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get email/SMTP settings (admin only)."""
+    data = await EmailSettingsService.get_all(db)
+    is_configured = await EmailSettingsService.is_configured(db)
+    # Mask password for display
+    masked_data = {**data}
+    if masked_data.get("smtp_password"):
+        pwd = masked_data["smtp_password"]
+        masked_data["smtp_password"] = pwd[:2] + "***" + pwd[-2:] if len(pwd) > 4 else "****"
+    return EmailSettingsResponse(**masked_data, is_configured=is_configured)
+
+
+@router.put("/email", response_model=EmailSettingsResponse)
+async def update_email_settings(
+    body: EmailSettingsUpdate,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update email/SMTP settings (admin only)."""
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    await EmailSettingsService.update(db, updates)
+    # Return updated settings
+    data = await EmailSettingsService.get_all(db)
+    is_configured = await EmailSettingsService.is_configured(db)
+    masked_data = {**data}
+    if masked_data.get("smtp_password"):
+        pwd = masked_data["smtp_password"]
+        masked_data["smtp_password"] = pwd[:2] + "***" + pwd[-2:] if len(pwd) > 4 else "****"
+    return EmailSettingsResponse(**masked_data, is_configured=is_configured)
+
+
+@router.post("/email/test")
+async def test_email(
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a test email to the current admin user to verify SMTP settings."""
+    is_configured = await EmailSettingsService.is_configured(db)
+    if not is_configured:
+        raise HTTPException(status_code=400, detail="SMTP is not configured")
+
+    from app.services.email import EmailService
+    success = await EmailService.send_email(
+        db,
+        current_user.email,
+        "OpenHiNotes - Test Email",
+        "<html><body><h2>SMTP Configuration Test</h2><p>If you're reading this, your email settings are working correctly!</p></body></html>",
+        "SMTP Configuration Test\n\nIf you're reading this, your email settings are working correctly!",
+    )
+    if success:
+        return {"message": f"Test email sent to {current_user.email}"}
+    raise HTTPException(status_code=500, detail="Failed to send test email. Check your SMTP settings and server logs.")
 
 
 # ── Audio / Keep-Audio Settings ───────────────────────────────────────

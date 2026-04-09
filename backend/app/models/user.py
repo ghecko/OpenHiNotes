@@ -1,7 +1,8 @@
-from sqlalchemy import String, Boolean, Enum as SQLEnum, DateTime
+from sqlalchemy import String, Boolean, Enum as SQLEnum, DateTime, Text
 from sqlalchemy.orm import mapped_column, Mapped
 import uuid
 from datetime import datetime
+from typing import Optional
 from enum import Enum
 from app.database import Base
 
@@ -44,6 +45,17 @@ class User(Base):
         nullable=False, server_default="self_registered"
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Password reset fields
+    force_password_reset: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+    password_reset_token: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, default=None
+    )
+    password_reset_token_expires: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True, default=None
+    )
 
     def __repr__(self) -> str:
         return f"<User(id={self.id}, email={self.email}, role={self.role}, status={self.status})>"

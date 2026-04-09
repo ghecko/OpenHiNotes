@@ -1,12 +1,14 @@
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.schemas.user import (
     UserCreate, LoginRequest, LoginResponse, UserResponse,
     RegisterResponse, RegistrationSettingsResponse,
+    ChangePasswordRequest, PasswordResetRequest, PasswordResetConfirm,
 )
 from app.services.auth import AuthService
 from app.services.registration import RegistrationSettingsService
+from app.services.email import EmailService, EmailSettingsService
 from app.models.user import User, UserStatus, RegistrationSource
 from app.dependencies import get_current_user
 
@@ -83,7 +85,8 @@ async def login(
     login_request: LoginRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Login user and return JWT access token."""
+    """Login user and return JWT access token.
+    If force_password_reset is set, returns a limited token with force_password_reset=true."""
     user = await AuthService.authenticate_user(db, login_request.email, login_request.password)
     if not user:
         raise HTTPException(
@@ -116,6 +119,7 @@ async def login(
         "access_token": access_token,
         "token_type": "bearer",
         "user": user,
+        "force_password_reset": user.force_password_reset,
     }
 
 
@@ -125,3 +129,105 @@ async def get_me(
 ):
     """Get current user information."""
     return current_user
+
+
+@router.post("/change-password")
+async def change_password(
+    body: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Change password for the current user. Used when force_password_reset is true,
+    or when a user wants to change their password voluntarily."""
+    # Verify current password
+    if not AuthService.verify_password(body.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+
+    if len(body.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be at least 8 characters",
+        )
+
+    if body.current_password == body.new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from current password",
+        )
+
+    await AuthService.change_password(db, current_user, body.new_password)
+    return {"message": "Password changed successfully"}
+
+
+@router.get("/email-configured")
+async def check_email_configured(
+    db: AsyncSession = Depends(get_db),
+):
+    """Check if email/SMTP is configured (public endpoint, no auth).
+    Used by the frontend to show 'forgot password' link vs 'contact admin' message."""
+    configured = await EmailSettingsService.is_configured(db)
+    return {"email_configured": configured}
+
+
+@router.post("/request-password-reset")
+async def request_password_reset(
+    body: PasswordResetRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Request a password reset. If email is configured, sends a reset email.
+    Always returns 200 to prevent email enumeration."""
+    # Check if email gateway is configured
+    email_configured = await EmailSettingsService.is_configured(db)
+
+    if not email_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email is not configured. Please contact your administrator to reset your password.",
+        )
+
+    user = await AuthService.get_user_by_email(db, body.email)
+    if user and user.is_active:
+        # Generate reset token
+        token = await AuthService.create_password_reset_token(db, user)
+
+        # Build reset link
+        base_url = str(request.base_url).rstrip("/")
+        # Use the frontend URL (Origin header or Referer)
+        origin = request.headers.get("origin", "")
+        if origin:
+            reset_link = f"{origin}/reset-password?token={token}"
+        else:
+            reset_link = f"{base_url}/reset-password?token={token}"
+
+        await EmailService.send_password_reset_email(
+            db, user.email, reset_link, user.display_name
+        )
+
+    # Always return success to prevent email enumeration
+    return {"message": "If an account with that email exists, a password reset link has been sent."}
+
+
+@router.post("/reset-password")
+async def reset_password(
+    body: PasswordResetConfirm,
+    db: AsyncSession = Depends(get_db),
+):
+    """Reset password using a valid reset token."""
+    if len(body.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 8 characters",
+        )
+
+    user = await AuthService.reset_password_with_token(db, body.token, body.new_password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+
+    return {"message": "Password has been reset successfully. You can now log in with your new password."}

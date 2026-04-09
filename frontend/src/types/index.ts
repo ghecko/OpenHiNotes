@@ -10,12 +10,14 @@ export interface User {
   is_active: boolean;
   status: UserStatus;
   registration_source: RegistrationSource;
+  force_password_reset: boolean;
   created_at: string;
 }
 
 export interface AuthTokens {
   access_token: string;
   token_type: string;
+  force_password_reset?: boolean;
 }
 
 export interface RegisterResult {

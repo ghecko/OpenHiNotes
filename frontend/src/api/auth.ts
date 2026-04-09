@@ -25,4 +25,26 @@ export const authApi = {
   async getRegistrationSettings(): Promise<RegistrationSettings> {
     return apiClient.get<RegistrationSettings>('/auth/registration-settings');
   },
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>('/auth/change-password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    });
+  },
+
+  async checkEmailConfigured(): Promise<{ email_configured: boolean }> {
+    return apiClient.get<{ email_configured: boolean }>('/auth/email-configured');
+  },
+
+  async requestPasswordReset(email: string): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>('/auth/request-password-reset', { email });
+  },
+
+  async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>('/auth/reset-password', {
+      token,
+      new_password: newPassword,
+    });
+  },
 };

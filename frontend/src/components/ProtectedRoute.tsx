@@ -1,4 +1,4 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/store/useAuthStore';
 
 interface ProtectedRouteProps {
@@ -7,7 +7,8 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, adminOnly = false }: ProtectedRouteProps) {
-  const { isAuthenticated, user, isLoading } = useAuthStore();
+  const { isAuthenticated, user, isLoading, forcePasswordReset } = useAuthStore();
+  const location = useLocation();
 
   if (isLoading) {
     return (
@@ -19,6 +20,11 @@ export function ProtectedRoute({ children, adminOnly = false }: ProtectedRoutePr
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+
+  // Force password change redirect — but allow access to the change-password page itself
+  if (forcePasswordReset && location.pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />;
   }
 
   if (adminOnly && user?.role !== 'admin') {

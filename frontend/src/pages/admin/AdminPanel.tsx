@@ -7,6 +7,7 @@ import {
   Users as UsersIcon,
   UserPlus,
   Plug,
+  Mail,
 } from 'lucide-react';
 
 import { Templates } from './Templates';
@@ -14,14 +15,16 @@ import { Users } from './Users';
 import { Groups } from './Groups';
 import { RegistrationSettingsPage } from './RegistrationSettings';
 import { ApiSettings } from './ApiSettings';
+import { EmailSettings } from './EmailSettings';
 
-type AdminTab = 'users' | 'groups' | 'templates' | 'registration' | 'api';
+type AdminTab = 'users' | 'groups' | 'templates' | 'registration' | 'email' | 'api';
 
 const tabs: { key: AdminTab; label: string; icon: typeof Shield }[] = [
   { key: 'users', label: 'Users', icon: Shield },
   { key: 'groups', label: 'Groups', icon: UsersIcon },
   { key: 'templates', label: 'Templates', icon: FileText },
   { key: 'registration', label: 'Registration', icon: UserPlus },
+  { key: 'email', label: 'Email', icon: Mail },
   { key: 'api', label: 'API Settings', icon: Plug },
 ];
 
@@ -47,6 +50,8 @@ export function AdminPanel() {
         return <Templates embedded />;
       case 'registration':
         return <RegistrationSettingsPage embedded />;
+      case 'email':
+        return <EmailSettings embedded />;
       case 'api':
         return <ApiSettings embedded />;
       default:

@@ -12,6 +12,8 @@ interface AuthState {
   error: string | null;
   /** Set after registration when account needs admin approval */
   pendingMessage: string | null;
+  /** Set when user must change password before proceeding */
+  forcePasswordReset: boolean;
 
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, display_name?: string) => Promise<void>;
@@ -20,6 +22,7 @@ interface AuthState {
   initialize: () => Promise<void>;
   clearError: () => void;
   clearPendingMessage: () => void;
+  clearForcePasswordReset: () => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -31,13 +34,26 @@ export const useAuthStore = create<AuthState>()(
       isLoading: true,
       error: null,
       pendingMessage: null,
+      forcePasswordReset: false,
 
       login: async (email: string, password: string) => {
-        set({ isLoading: true, error: null });
+        set({ isLoading: true, error: null, forcePasswordReset: false });
         try {
           const tokens = await authApi.login(email, password);
           apiClient.setToken(tokens.access_token);
           set({ token: tokens.access_token });
+
+          // Check if user must change password
+          if (tokens.force_password_reset) {
+            const user = await authApi.getMe();
+            set({
+              user,
+              isAuthenticated: true,
+              isLoading: false,
+              forcePasswordReset: true,
+            });
+            return;
+          }
 
           const user = await authApi.getMe();
           set({
@@ -87,6 +103,7 @@ export const useAuthStore = create<AuthState>()(
           isAuthenticated: false,
           error: null,
           pendingMessage: null,
+          forcePasswordReset: false,
         });
       },
 
@@ -101,6 +118,7 @@ export const useAuthStore = create<AuthState>()(
             user,
             isAuthenticated: true,
             isLoading: false,
+            forcePasswordReset: user.force_password_reset || false,
           });
         } catch (error) {
           get().logout();
@@ -126,6 +144,10 @@ export const useAuthStore = create<AuthState>()(
 
       clearPendingMessage: () => {
         set({ pendingMessage: null });
+      },
+
+      clearForcePasswordReset: () => {
+        set({ forcePasswordReset: false });
       },
     }),
     {

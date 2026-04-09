@@ -5,7 +5,7 @@ import { LogIn, Mail, Lock, AlertCircle } from 'lucide-react';
 
 export function Login() {
   const navigate = useNavigate();
-  const { login, error: authError, clearError } = useAuthStore();
+  const { login, error: authError, clearError, forcePasswordReset } = useAuthStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -25,6 +25,12 @@ export function Login() {
 
     try {
       await login(email, password);
+      // Check if force password reset is needed (read fresh state)
+      const state = useAuthStore.getState();
+      if (state.forcePasswordReset) {
+        navigate('/change-password');
+        return;
+      }
       navigate('/dashboard');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Login failed';
@@ -110,6 +116,15 @@ export function Login() {
                   placeholder="••••••••"
                 />
               </div>
+            </div>
+
+            <div className="flex justify-end">
+              <Link
+                to="/forgot-password"
+                className="text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors"
+              >
+                Forgot password?
+              </Link>
             </div>
 
             <button

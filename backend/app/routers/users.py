@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Query
+from fastapi import APIRouter, HTTPException, status, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
 from app.database import get_db
-from app.schemas.user import UserResponse, UserUpdate, AdminUserCreate
+from app.schemas.user import UserResponse, UserUpdate, AdminUserCreate, ResetTokenResponse
 from app.models.user import User, UserRole, UserStatus, RegistrationSource
 from app.services.auth import AuthService
+from app.services.email import EmailService, EmailSettingsService
 from app.dependencies import get_current_user, require_admin
 import uuid
 
@@ -70,10 +71,12 @@ async def search_users(
 @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def admin_create_user(
     body: AdminUserCreate,
+    request: Request,
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a user account directly (admin only). Bypasses registration restrictions."""
+    """Create a user account directly (admin only). Bypasses registration restrictions.
+    Optionally sends a welcome email if SMTP is configured."""
     # Check existing
     existing = await AuthService.get_user_by_email(db, body.email)
     if existing:
@@ -101,6 +104,14 @@ async def admin_create_user(
         status=UserStatus.active,
         registration_source=RegistrationSource.admin_created,
     )
+
+    # If SMTP is configured, send welcome email
+    email_configured = await EmailSettingsService.is_configured(db)
+    if email_configured:
+        await EmailService.send_account_created_email(
+            db, body.email, body.password, body.display_name
+        )
+
     return user
 
 
@@ -131,11 +142,21 @@ async def update_user(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update user role, display_name, or is_active (admin only)."""
+    """Update user profile (admin only). Supports: email, display_name, role, is_active, status, password, force_password_reset."""
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalars().first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if user_update.email is not None:
+        # Check if new email is taken by another user
+        existing = await AuthService.get_user_by_email(db, user_update.email)
+        if existing and existing.id != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already in use by another user",
+            )
+        user.email = user_update.email
 
     if user_update.role is not None:
         try:
@@ -148,6 +169,26 @@ async def update_user(
 
     if user_update.display_name is not None:
         user.display_name = user_update.display_name
+
+    if user_update.status is not None:
+        try:
+            user.status = UserStatus(user_update.status)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status. Must be one of: {', '.join(s.value for s in UserStatus)}",
+            )
+
+    if user_update.password is not None:
+        if len(user_update.password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 8 characters",
+            )
+        user.hashed_password = AuthService.hash_password(user_update.password)
+
+    if user_update.force_password_reset is not None:
+        user.force_password_reset = user_update.force_password_reset
 
     if user_update.is_active is not None:
         user.is_active = user_update.is_active
@@ -229,3 +270,53 @@ async def reject_user(
     await db.commit()
     await db.refresh(user)
     return user
+
+
+@router.post("/{user_id}/force-password-reset", response_model=UserResponse)
+async def force_password_reset(
+    user_id: uuid.UUID,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Flag a user to force password change at next login (admin only)."""
+    user = await AuthService.force_password_change(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return user
+
+
+@router.post("/{user_id}/generate-reset-token", response_model=ResetTokenResponse)
+async def generate_reset_token(
+    user_id: uuid.UUID,
+    request: Request,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a one-time password reset token/link for a user (admin only).
+    The admin can share this link with the user via chat, phone, etc."""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    # Also flag force_password_reset
+    user.force_password_reset = True
+    token = await AuthService.create_password_reset_token(db, user)
+
+    # Build reset link
+    origin = request.headers.get("origin", "")
+    base = origin if origin else str(request.base_url).rstrip("/")
+    reset_link = f"{base}/reset-password?token={token}"
+
+    # If email is configured, also send the reset email
+    email_configured = await EmailSettingsService.is_configured(db)
+    if email_configured:
+        await EmailService.send_password_reset_email(
+            db, user.email, reset_link, user.display_name
+        )
+
+    return ResetTokenResponse(
+        reset_token=token,
+        reset_link=reset_link,
+        expires_in_hours=24,
+    )
