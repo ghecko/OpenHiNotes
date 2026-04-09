@@ -6,6 +6,9 @@ import { useAppStore } from '@/store/useAppStore';
 // Auth Pages
 import { Login } from '@/pages/Login';
 import { Register } from '@/pages/Register';
+import { ForgotPassword } from '@/pages/ForgotPassword';
+import { ResetPassword } from '@/pages/ResetPassword';
+import { ForcePasswordChange } from '@/pages/ForcePasswordChange';
 
 // Protected Pages
 import { Dashboard } from '@/pages/Dashboard';
@@ -42,6 +45,16 @@ function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
+      <Route
+        path="/change-password"
+        element={
+          <ProtectedRoute>
+            <ForcePasswordChange />
+          </ProtectedRoute>
+        }
+      />
 
       <Route
         path="/dashboard"
@@ -138,6 +151,7 @@ function App() {
       <Route path="/admin/groups" element={<Navigate to="/admin?tab=groups" replace />} />
       <Route path="/admin/templates" element={<Navigate to="/admin?tab=templates" replace />} />
       <Route path="/admin/registration" element={<Navigate to="/admin?tab=registration" replace />} />
+      <Route path="/admin/email" element={<Navigate to="/admin?tab=email" replace />} />
       <Route path="/admin/settings" element={<Navigate to="/admin?tab=api" replace />} />
 
       <Route path="/" element={<Navigate to="/dashboard" replace />} />

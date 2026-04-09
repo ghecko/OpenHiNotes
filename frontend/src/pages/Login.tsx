@@ -3,7 +3,7 @@ import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@/store/useAuthStore';
 import { authApi } from '@/api/auth';
 import { OIDCProviderInfo } from '@/types';
-import { LogIn, Mail, Lock, AlertCircle, Shield } from 'lucide-react';
+import { LogIn, Mail, Lock, AlertCircle } from 'lucide-react';
 
 /** Map well-known provider slugs to display-friendly icon names. */
 const PROVIDER_ICONS: Record<string, string> = {
@@ -70,7 +70,15 @@ export function Login() {
       setSearchParams({}, { replace: true });
       setSSOLoading(true);
       loginWithSSO(ssoToken)
-        .then(() => navigate('/dashboard'))
+        .then(() => {
+          // Check if force password reset is needed
+          const state = useAuthStore.getState();
+          if (state.forcePasswordReset) {
+            navigate('/change-password');
+          } else {
+            navigate('/dashboard');
+          }
+        })
         .catch((err) => {
           setError(err instanceof Error ? err.message : 'SSO login failed');
         })
@@ -104,6 +112,12 @@ export function Login() {
 
     try {
       await login(email, password);
+      // Check if force password reset is needed (read fresh state)
+      const state = useAuthStore.getState();
+      if (state.forcePasswordReset) {
+        navigate('/change-password');
+        return;
+      }
       navigate('/dashboard');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Login failed';
@@ -233,6 +247,15 @@ export function Login() {
                   placeholder="••••••••"
                 />
               </div>
+            </div>
+
+            <div className="flex justify-end">
+              <Link
+                to="/forgot-password"
+                className="text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors"
+              >
+                Forgot password?
+              </Link>
             </div>
 
             <button

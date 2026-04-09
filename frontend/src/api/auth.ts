@@ -37,4 +37,27 @@ export const authApi = {
       `/auth/oidc/${slug}/authorize?redirect_uri=${encodeURIComponent(redirectUri)}`
     );
   },
+
+  // Password management
+  async changePassword(currentPassword: string, newPassword: string): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>('/auth/change-password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    });
+  },
+
+  async checkEmailConfigured(): Promise<{ email_configured: boolean }> {
+    return apiClient.get<{ email_configured: boolean }>('/auth/email-configured');
+  },
+
+  async requestPasswordReset(email: string): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>('/auth/request-password-reset', { email });
+  },
+
+  async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
+    return apiClient.post<{ message: string }>('/auth/reset-password', {
+      token,
+      new_password: newPassword,
+    });
+  },
 };
