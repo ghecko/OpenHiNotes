@@ -151,6 +151,15 @@ async def update_user(
 
     if user_update.is_active is not None:
         user.is_active = user_update.is_active
+        # GDPR: delete voice profiles when deactivating a user
+        if not user_update.is_active:
+            from app.services.speaker_identification import delete_all_user_profiles
+            count = await delete_all_user_profiles(db, user_id)
+            if count:
+                import logging
+                logging.getLogger(__name__).info(
+                    "Deleted %d voice profile(s) for deactivated user %s", count, user_id
+                )
 
     await db.commit()
     await db.refresh(user)
@@ -214,6 +223,9 @@ async def reject_user(
 
     user.status = UserStatus.rejected
     user.is_active = False
+    # GDPR: delete voice profiles when rejecting a user
+    from app.services.speaker_identification import delete_all_user_profiles
+    await delete_all_user_profiles(db, user_id)
     await db.commit()
     await db.refresh(user)
     return user

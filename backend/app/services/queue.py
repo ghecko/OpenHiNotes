@@ -331,6 +331,23 @@ class TranscriptionQueue:
 
                 parsed = TranscriptionService.parse_voxhub_response(voxhub_response)
 
+                # Speaker identification: match embeddings against known voice profiles
+                speaker_embeddings = parsed.get("speaker_embeddings")
+                if speaker_embeddings:
+                    try:
+                        from app.services.speaker_identification import match_speakers, apply_speaker_matches
+                        async with AsyncSessionLocal() as db:
+                            matches = await match_speakers(
+                                db, speaker_embeddings,
+                                threshold=settings.speaker_match_threshold,
+                            )
+                            if matches:
+                                parsed["speakers"] = apply_speaker_matches(
+                                    parsed["speakers"], matches
+                                )
+                    except Exception as e:
+                        logger.warning("Speaker identification failed (non-fatal): %s", e)
+
                 async with AsyncSessionLocal() as db:
                     result = await db.execute(
                         select(Transcription).where(Transcription.id == transcription_id)

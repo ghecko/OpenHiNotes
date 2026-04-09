@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Layout } from '@/components/Layout';
 import { useAuthStore } from '@/store/useAuthStore';
-import { Save, Loader } from 'lucide-react';
+import { Save, Loader, Fingerprint } from 'lucide-react';
+import { VoiceProfileManager } from '@/components/VoiceProfileManager';
+import { settingsApi } from '@/api/settings';
 
 export function Settings() {
   const { user } = useAuthStore();
@@ -10,6 +12,23 @@ export function Settings() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
   );
+  const [voiceFingerprintingEnabled, setVoiceFingerprintingEnabled] = useState<boolean | null>(null);
+
+  // Check if voice fingerprinting is enabled by admin (uses /features endpoint, no admin required)
+  useEffect(() => {
+    fetch('/api/settings/features', {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('auth_token')}`,
+      },
+    })
+      .then((res) => res.json())
+      .then((flags) => {
+        setVoiceFingerprintingEnabled(flags.voice_fingerprinting_enabled === true);
+      })
+      .catch(() => {
+        setVoiceFingerprintingEnabled(false);
+      });
+  }, []);
 
   const handleSaveProfile = async () => {
     setIsLoading(true);
@@ -31,7 +50,7 @@ export function Settings() {
 
   return (
     <Layout title="Settings">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
           <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Account</h2>
 
@@ -117,6 +136,17 @@ export function Settings() {
             </div>
           </div>
         </div>
+
+        {/* Voice Fingerprinting */}
+        {voiceFingerprintingEnabled && (
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
+            <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+              <Fingerprint className="w-5 h-5" />
+              Voice Fingerprinting
+            </h2>
+            <VoiceProfileManager />
+          </div>
+        )}
 
         <div className="bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
           <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-4">About</h2>

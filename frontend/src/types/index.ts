@@ -203,3 +203,14 @@ export interface QueueSSEEvent {
   queue_position?: number;
   error?: string;
 }
+
+// Voice fingerprinting
+export interface VoiceProfile {
+  id: string;
+  user_id: string;
+  label: string;
+  embedding_dim: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}

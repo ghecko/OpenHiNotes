@@ -41,6 +41,20 @@ class Settings(BaseSettings):
     # File storage
     uploads_directory: str = "/app/uploads"
 
+    # Voice embedding encryption key (hex string or passphrase).
+    # If empty, a key is derived from SECRET_KEY automatically.
+    # In production, set VOICE_EMBEDDING_KEY to a 64-char hex string
+    # generated with: python -c "import os; print(os.urandom(32).hex())"
+    voice_embedding_key: str = ""
+
+    # Previous encryption key, used during key rotation only.
+    # Set this to the OLD key when rotating to a new VOICE_EMBEDDING_KEY.
+    # Once rotation is complete, remove this variable.
+    voice_embedding_key_old: str = ""
+
+    # Speaker matching threshold (cosine distance, 0.0 = identical, 1.0 = unrelated)
+    speaker_match_threshold: float = 0.5
+
     class Config:
         env_file = ".env"
         case_sensitive = False

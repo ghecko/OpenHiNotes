@@ -14,6 +14,10 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 # Settings keys that can be configured through the admin UI
 CONFIGURABLE_KEYS = {
+    "voice_fingerprinting_enabled": {
+        "description": "Enable speaker voice fingerprinting (users can record voice profiles for auto-identification)",
+        "default_from_env": "",
+    },
     "voxhub_api_url": {
         "description": "VoxHub API base URL (e.g. http://server:8000)",
         "default_from_env": "voxhub_api_url",
@@ -117,6 +121,28 @@ async def get_settings(
             )
 
     return SettingsResponse(settings=settings_list)
+
+
+# ── Feature Flags (readable by all authenticated users) ──────────────
+
+FEATURE_FLAG_KEYS = {"voice_fingerprinting_enabled"}
+
+
+@router.get("/features")
+async def get_feature_flags(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get feature flags (available to all authenticated users)."""
+    result = await db.execute(
+        select(AppSetting).where(AppSetting.key.in_(FEATURE_FLAG_KEYS))
+    )
+    db_settings = {s.key: s.value for s in result.scalars().all()}
+
+    flags = {}
+    for key in FEATURE_FLAG_KEYS:
+        flags[key] = db_settings.get(key, "false").lower() == "true"
+    return flags
 
 
 # ── Registration Settings ──────────────────────────────────────────────

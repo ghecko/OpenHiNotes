@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Layout } from '@/components/Layout';
 import { settingsApi, AppSetting } from '@/api/settings';
-import { Save, RotateCcw, Loader, CheckCircle, AlertCircle, Server } from 'lucide-react';
+import { Save, RotateCcw, Loader, CheckCircle, AlertCircle, Server, Fingerprint } from 'lucide-react';
 
 const VAD_MODE_OPTIONS = [
   { value: 'silero', label: 'Silero — Fast, lightweight VAD' },
@@ -67,10 +67,13 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [keepAudioEnabled, setKeepAudioEnabled] = useState(true);
   const [savingAudio, setSavingAudio] = useState(false);
+  const [voiceFingerprintingEnabled, setVoiceFingerprintingEnabled] = useState(false);
+  const [savingVoice, setSavingVoice] = useState(false);
 
   useEffect(() => {
     loadSettings();
     loadAudioSettings();
+    loadVoiceFingerprintingSetting();
   }, []);
 
   const loadAudioSettings = async () => {
@@ -79,6 +82,33 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
       setKeepAudioEnabled(data.keep_audio_enabled);
     } catch (error) {
       console.error('Failed to load audio settings:', error);
+    }
+  };
+
+  const loadVoiceFingerprintingSetting = async () => {
+    try {
+      const data = await settingsApi.getSettings();
+      const setting = data.find((s) => s.key === 'voice_fingerprinting_enabled');
+      setVoiceFingerprintingEnabled(setting?.value?.toLowerCase() === 'true');
+    } catch (error) {
+      console.error('Failed to load voice fingerprinting setting:', error);
+    }
+  };
+
+  const handleToggleVoiceFingerprinting = async () => {
+    setSavingVoice(true);
+    try {
+      const newValue = !voiceFingerprintingEnabled;
+      await settingsApi.updateSetting('voice_fingerprinting_enabled', newValue ? 'true' : 'false');
+      setVoiceFingerprintingEnabled(newValue);
+      setMessage({
+        type: 'success',
+        text: `Voice fingerprinting ${newValue ? 'enabled' : 'disabled'}`,
+      });
+    } catch (error) {
+      setMessage({ type: 'error', text: 'Failed to update voice fingerprinting setting' });
+    } finally {
+      setSavingVoice(false);
     }
   };
 
@@ -366,6 +396,46 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
                     <span
                       className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
                         keepAudioEnabled ? 'translate-x-7' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Voice Fingerprinting Settings */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Fingerprint className="w-5 h-5 text-gray-500" />
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Voice Fingerprinting
+              </h3>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Enable voice fingerprinting
+                    </label>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                      When enabled, users can record their voice to create a speaker profile.
+                      During transcription, speakers are automatically identified by matching
+                      against known profiles. Voice embeddings are encrypted at rest. Disabling
+                      this hides the feature from all users but does not delete existing profiles.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleToggleVoiceFingerprinting}
+                    disabled={savingVoice}
+                    className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${
+                      voiceFingerprintingEnabled ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
+                    } ${savingVoice ? 'opacity-50' : ''}`}
+                  >
+                    <span
+                      className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                        voiceFingerprintingEnabled ? 'translate-x-7' : 'translate-x-1'
                       }`}
                     />
                   </button>

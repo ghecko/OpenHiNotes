@@ -123,6 +123,7 @@ class TranscriptionService:
                 "response_format": "verbose_json",
                 "diarize": "true",
                 "vad_mode": vad_mode,
+                "return_speaker_embeddings": "true",
             }
             if language:
                 data["language"] = language
@@ -165,6 +166,7 @@ class TranscriptionService:
                 "model": cfg["model"],
                 "diarize": "true",
                 "vad_mode": vad_mode,
+                "return_speaker_embeddings": "true",
             }
             if language:
                 data["language"] = language
@@ -289,7 +291,8 @@ class TranscriptionService:
 
     @staticmethod
     def parse_voxhub_response(response: Dict[str, Any]) -> Dict[str, Any]:
-        """Parse WhisperX/VoxHub response and extract transcript, segments, and speakers."""
+        """Parse WhisperX/VoxHub response and extract transcript, segments, speakers,
+        and optionally speaker_embeddings (if VoxHub returned them)."""
         text = response.get("text", "")
 
         # Parse segments
@@ -313,12 +316,19 @@ class TranscriptionService:
 
         duration = response.get("duration", None)
 
-        return {
+        # Extract per-speaker embeddings if present (requires return_speaker_embeddings=true)
+        speaker_embeddings = response.get("speaker_embeddings", None)
+
+        result = {
             "text": text,
             "segments": segments,
             "speakers": speakers,
             "duration": duration,
         }
+        if speaker_embeddings:
+            result["speaker_embeddings"] = speaker_embeddings
+
+        return result
 
     @staticmethod
     async def create_transcription(
@@ -354,6 +364,21 @@ class TranscriptionService:
             transcription.speakers = parsed["speakers"]
             transcription.audio_duration = parsed["duration"]
             transcription.status = TranscriptionStatus.completed
+
+            # Speaker identification: match VoxHub speaker embeddings against known profiles
+            speaker_embeddings = parsed.get("speaker_embeddings")
+            if speaker_embeddings:
+                try:
+                    from app.services.speaker_identification import match_speakers, apply_speaker_matches
+                    matches = await match_speakers(
+                        db, speaker_embeddings, threshold=settings.speaker_match_threshold
+                    )
+                    if matches:
+                        transcription.speakers = apply_speaker_matches(
+                            transcription.speakers, matches
+                        )
+                except Exception as e:
+                    logger.warning("Speaker identification failed (non-fatal): %s", e)
         except Exception as e:
             transcription.status = TranscriptionStatus.failed
             transcription.error_message = str(e)
