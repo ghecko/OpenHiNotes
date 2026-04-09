@@ -18,6 +18,7 @@ from app.routers import app_settings as settings_router
 from app.routers import groups as groups_router
 from app.routers import shares as shares_router
 from app.routers import voice_profiles as voice_profiles_router
+from app.routers import oidc as oidc_router
 from app.models.template import SummaryTemplate
 from app.default_templates import DEFAULT_TEMPLATES
 import logging
@@ -55,6 +56,8 @@ app.include_router(settings_router.router, prefix="/api")
 app.include_router(groups_router.router, prefix="/api")
 app.include_router(shares_router.router, prefix="/api")
 app.include_router(voice_profiles_router.router, prefix="/api")
+app.include_router(oidc_router.public_router, prefix="/api")
+app.include_router(oidc_router.admin_router, prefix="/api")
 
 
 @app.get("/api/health")

@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { User, AuthTokens, RegisterResult, RegistrationSettings } from '@/types';
+import { User, AuthTokens, RegisterResult, RegistrationSettings, OIDCProviderInfo, OIDCAuthorizeResponse } from '@/types';
 
 export const authApi = {
   async login(email: string, password: string): Promise<AuthTokens> {
@@ -24,5 +24,17 @@ export const authApi = {
 
   async getRegistrationSettings(): Promise<RegistrationSettings> {
     return apiClient.get<RegistrationSettings>('/auth/registration-settings');
+  },
+
+  // OIDC / SSO
+  async getOIDCProviders(): Promise<OIDCProviderInfo[]> {
+    return apiClient.get<OIDCProviderInfo[]>('/auth/oidc/providers');
+  },
+
+  async startOIDCAuth(slug: string): Promise<OIDCAuthorizeResponse> {
+    const redirectUri = `${window.location.origin}/api/auth/oidc/${slug}/callback`;
+    return apiClient.get<OIDCAuthorizeResponse>(
+      `/auth/oidc/${slug}/authorize?redirect_uri=${encodeURIComponent(redirectUri)}`
+    );
   },
 };

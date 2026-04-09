@@ -14,6 +14,7 @@ interface AuthState {
   pendingMessage: string | null;
 
   login: (email: string, password: string) => Promise<void>;
+  loginWithSSO: (token: string) => Promise<void>;
   register: (email: string, password: string, display_name?: string) => Promise<void>;
   logout: () => void;
   loadUser: () => Promise<void>;
@@ -48,6 +49,30 @@ export const useAuthStore = create<AuthState>()(
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Login failed';
           set({
+            error: message,
+            isLoading: false,
+          });
+          throw error;
+        }
+      },
+
+      loginWithSSO: async (ssoToken: string) => {
+        set({ isLoading: true, error: null });
+        try {
+          apiClient.setToken(ssoToken);
+          set({ token: ssoToken });
+
+          const user = await authApi.getMe();
+          set({
+            user,
+            isAuthenticated: true,
+            isLoading: false,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'SSO login failed';
+          apiClient.clearToken();
+          set({
+            token: null,
             error: message,
             isLoading: false,
           });
