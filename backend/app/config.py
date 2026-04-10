@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     # Once rotation is complete, remove this variable.
     voice_embedding_key_old: str = ""
 
+    # OIDC client secret encryption key (hex string or passphrase).
+    # If empty, a key is derived from SECRET_KEY automatically.
+    # In production, set OIDC_ENCRYPTION_KEY to a 64-char hex string
+    # generated with: python -c "import os; print(os.urandom(32).hex())"
+    oidc_encryption_key: str = ""
+
     # Speaker matching threshold (cosine distance, 0.0 = identical, 1.0 = unrelated)
     speaker_match_threshold: float = 0.5
 

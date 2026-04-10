@@ -1,34 +1,36 @@
 # OpenHiNotes
 
-A web application for managing, transcribing, and summarizing audio recordings from HiDock devices. Connect your HiDock via WebUSB, transcribe recordings using [VoxHub](https://github.com/ghecko/VoxHub), rename speakers from diarization, and chat with an LLM about your transcripts.
+A self-hosted web application for managing, transcribing, and summarizing audio recordings from HiDock devices. Connect your HiDock via WebUSB, transcribe recordings using [VoxHub](https://github.com/ghecko/VoxHub), rename speakers from diarization, and chat with an LLM about your transcripts.
 
 ## Features
 
 - **WebUSB device connection** — browse, download, and manage audio files directly from HiDock H1, H1E, P1, and P1 Mini devices in the browser
-- **Server-side transcription** — audio is uploaded to the FastAPI backend, which proxies requests to a [VoxHub](https://github.com/ghecko/VoxHub) API server (OpenAI-compatible)
-- **VoxHub Job Mode** — async transcription with real-time progress streaming via SSE for long audio files
+- **Server-side transcription** — audio is uploaded to the FastAPI backend, which proxies to a [VoxHub](https://github.com/ghecko/VoxHub) API server (OpenAI-compatible)
+- **VoxHub Job Mode** — async transcription with real-time progress streaming via SSE for long recordings
 - **Speaker diarization & renaming** — color-coded speakers with inline click-to-edit renaming
+- **Voice fingerprinting** — users record a voice sample; speakers are automatically identified by name during transcription (AES-256-GCM encrypted at rest)
 - **Summary templates** — admins define reusable prompt templates; users generate summaries from any transcription with one click
-- **Transcribe & Summarize combo** — run both operations directly from the recordings list
-- **LLM chat** — send any transcript as context to an OpenAI-compatible chat endpoint and ask questions about it (streaming responses with typing animation)
-- **Authentication & roles** — JWT-based auth with admin and user roles
+- **LLM chat** — send any transcript as context to an OpenAI-compatible endpoint and ask questions (streaming)
+- **Authentication & roles** — JWT-based auth with admin and user roles, registration controls, domain whitelisting, admin approval flow
+- **SSO / OIDC** — single sign-on via any OpenID Connect provider (Google, Microsoft Entra ID, Keycloak, Okta, Auth0, etc.), multiple providers simultaneously
+- **Collections & sharing** — organize transcriptions into collections, share with users or groups
 - **Dark mode** — system-aware theme with manual toggle, glass-morphism UI
-- **Fully dockerized** — four-service Docker Compose setup with PostgreSQL, FastAPI, Vite, and Caddy (HTTPS required for WebUSB)
+- **Fully dockerized** — Docker Compose with PostgreSQL, FastAPI, Vite/Nginx, and Caddy (HTTPS required for WebUSB)
 
 ## Architecture
 
 ```
 ┌──────────────┐       ┌──────────────┐       ┌──────────────────┐
-│   Browser    │ WebUSB│   HiDock     │       │  VoxHub API    │
-│  (React +   │◄─────►│   Device     │       │  Server          │
-│   Vite)     │       └──────────────┘       └────────▲─────────┘
-│              │                                      │
-│  uploads audio via /api                             │
-│              │                                      │
-└──────┬───────┘                                      │
-       │ HTTPS                                        │
-┌──────▼───────┐       ┌──────────────┐               │
-│    Caddy     │──────►│   FastAPI    │───────────────┘
+│   Browser    │ WebUSB│   HiDock     │       │   VoxHub API     │
+│  (React +    │◄─────►│   Device     │       │   Server         │
+│   Vite)      │       └──────────────┘       └────────▲─────────┘
+│              │                                        │
+│  uploads audio via /api                               │
+│              │                                        │
+└──────┬───────┘                                        │
+       │ HTTPS                                          │
+┌──────▼───────┐       ┌──────────────┐                 │
+│    Caddy     │──────►│   FastAPI    │─────────────────┘
 │  (reverse    │       │   Backend    │
 │   proxy)     │       │              │───────► LLM API (chat/summaries)
 └──────────────┘       └──────┬───────┘
@@ -38,64 +40,149 @@ A web application for managing, transcribing, and summarizing audio recordings f
                        └──────────────┘
 ```
 
-## Quick Start
+---
+
+## Quick Start (Development)
 
 ### Prerequisites
 
 - Docker and Docker Compose
 - A [VoxHub](https://github.com/ghecko/VoxHub) server for transcription
-- Optionally, an OpenAI-compatible LLM endpoint for chat and summaries (e.g. Ollama, LM Studio, OpenAI)
+- Optionally, an OpenAI-compatible LLM endpoint (Ollama, LM Studio, OpenAI, etc.)
 
 ### Setup
 
 ```bash
-# Clone the repository
 git clone https://github.com/ghecko/OpenHiNotes.git
 cd OpenHiNotes
 
-# Copy and edit environment variables
 cp .env.example .env
-# Edit .env with your VoxHub URL, LLM endpoint, secret key, etc.
+# Edit .env — at minimum set VOXHUB_API_URL and LLM_API_URL
 
-# Start all services
 docker compose up --build
 ```
 
-Open **https://localhost:8443** in your browser (accept the self-signed certificate). Caddy provides HTTPS, which is required for WebUSB to work.
+Open **https://localhost:8443** in your browser (accept the self-signed certificate). HTTPS is required for WebUSB.
 
-### Default Admin Account
+Default admin credentials (override in `.env` before first startup):
 
-| Field    | Value                      |
+| Field    | Default                    |
 |----------|----------------------------|
 | Email    | `admin@openhinotes.local`  |
 | Password | `admin`                    |
 
-Change these via the `ADMIN_EMAIL` and `ADMIN_PASSWORD` environment variables before first startup.
+---
 
-## Configuration
+## Production Deployment
 
-All configuration is done through environment variables (see [`.env.example`](.env.example)):
+### 1. Prepare the server
 
-| Variable               | Description                                      | Default                                |
-|------------------------|--------------------------------------------------|----------------------------------------|
-| `SECRET_KEY`           | JWT signing key — change in production           | `change-me-...`                        |
-| `ADMIN_EMAIL`          | Initial admin account email                      | `admin@openhinotes.local`              |
-| `ADMIN_PASSWORD`       | Initial admin account password                   | `admin`                                |
-| `VOXHUB_API_URL`     | URL of the VoxHub transcription API            | `http://voxhub:8000`                 |
-| `VOXHUB_MODEL`       | Whisper model to use                             | `large-v3`                             |
-| `VOXHUB_VERIFY_SSL`  | SSL verification for VoxHub API calls          | `true`                                 |
-| `LLM_API_URL`          | OpenAI-compatible chat completions endpoint      | `http://host.docker.internal:11434/v1` |
-| `LLM_API_KEY`          | API key for the LLM endpoint (if required)       | *(empty)*                              |
-| `LLM_MODEL`            | Model name for chat and summaries                | `gpt-3.5-turbo`                        |
-| `LLM_VERIFY_SSL`       | SSL verification for LLM API calls               | `true`                                 |
-| `CORS_ORIGINS`         | Allowed CORS origins                             | `*`                                    |
+Any Linux host with Docker and Docker Compose installed. The server must be reachable on ports 80 and 443.
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Fill in every variable — pay special attention to the ones marked **required**:
+
+| Variable | Required | Description |
+|---|---|---|
+| `SITE_HOST` | ✅ | Your domain name or IP (e.g. `hinotes.company.com`) |
+| `SECRET_KEY` | ✅ | Random string for JWT signing — generate with `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `POSTGRES_PASSWORD` | ✅ | Strong database password |
+| `ADMIN_EMAIL` | ✅ | Initial admin account email |
+| `ADMIN_PASSWORD` | ✅ | Initial admin password — change after first login |
+| `VOXHUB_API_URL` | ✅ | URL of your VoxHub instance |
+| `LLM_API_URL` | ✅ | OpenAI-compatible LLM endpoint |
+| `LLM_API_KEY` | — | API key if required by your LLM |
+| `LLM_MODEL` | — | Model name (default: `gpt-3.5-turbo`) |
+| `VOICE_EMBEDDING_KEY` | — | AES-256 key for voice fingerprinting encryption. Generate: `python -c "import os; print(os.urandom(32).hex())"` |
+| `OIDC_ENCRYPTION_KEY` | — | AES-256 key for OIDC client secret encryption. Generate: same command. Required if you use SSO. |
+| `CORS_ORIGINS` | — | Allowed CORS origins (default: `*`) |
+
+> **Security note**: `VOICE_EMBEDDING_KEY` and `OIDC_ENCRYPTION_KEY` default to a derivation of `SECRET_KEY` if left empty. Set them explicitly in production so that rotating `SECRET_KEY` doesn't break encrypted data.
+
+### 3. Configure TLS
+
+The production Caddyfile (`Caddyfile.prod`) uses `tls internal` (self-signed). For a real domain with automatic Let's Encrypt certificates, replace that block with your domain:
+
+```caddyfile
+hinotes.company.com {
+    # API routes → backend
+    handle /api/* {
+        reverse_proxy backend:8000
+    }
+
+    # Static frontend
+    handle {
+        reverse_proxy frontend:80
+    }
+}
+```
+
+Caddy will automatically obtain and renew a Let's Encrypt certificate when given a real domain name.
+
+### 4. Launch
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+### 5. First login
+
+1. Open `https://your-domain` in a browser.
+2. Log in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+3. **Change the admin password immediately** via your profile settings.
+4. Configure any remaining settings (VoxHub model, LLM, registration policy) from **Administration → API Settings**.
+
+### 6. Optional: SSO / OIDC
+
+If you want users to sign in with Google, Microsoft, Keycloak, or another provider:
+
+1. Set `OIDC_ENCRYPTION_KEY` in `.env` and restart.
+2. Register an OIDC client with your provider (redirect URI: `https://your-domain/api/auth/oidc/{slug}/callback`).
+3. Go to **Administration → SSO / OIDC → Add Provider**.
+
+Full setup guide: [`docs/SSO_OIDC_SETUP.md`](docs/SSO_OIDC_SETUP.md)
+
+---
+
+## Configuration Reference
+
+All configuration is through environment variables. See [`.env.example`](.env.example) for defaults and comments.
+
+| Variable | Description | Default |
+|---|---|---|
+| `SITE_HOST` | Domain/IP for Caddy TLS and Vite allowedHosts | `localhost` |
+| `SECRET_KEY` | JWT signing key | `change-me-...` |
+| `POSTGRES_PASSWORD` | PostgreSQL password | `postgres` |
+| `ADMIN_EMAIL` | Initial admin email | `admin@openhinotes.local` |
+| `ADMIN_PASSWORD` | Initial admin password | `admin` |
+| `VOXHUB_API_URL` | VoxHub transcription API URL | `http://voxhub:8000` |
+| `VOXHUB_MODEL` | Whisper model name | `large-v3` |
+| `VOXHUB_JOB_MODE` | Enable async Job Mode (`true`/`false`) | `false` |
+| `VOXHUB_VAD_MODE` | VAD strategy: `silero`, `pyannote`, `hybrid`, `none` | `silero` |
+| `VOXHUB_VERIFY_SSL` | SSL verification for VoxHub (`true`/`false`/path) | `true` |
+| `LLM_API_URL` | OpenAI-compatible LLM endpoint | `http://host.docker.internal:11434/v1` |
+| `LLM_API_KEY` | LLM API key | *(empty)* |
+| `LLM_MODEL` | LLM model name | `gpt-3.5-turbo` |
+| `LLM_VERIFY_SSL` | SSL verification for LLM (`true`/`false`/path) | `true` |
+| `VOICE_EMBEDDING_KEY` | AES-256 key for voice embedding encryption | *(derived from SECRET_KEY)* |
+| `VOICE_EMBEDDING_KEY_OLD` | Previous key during rotation only | *(empty)* |
+| `SPEAKER_MATCH_THRESHOLD` | Cosine distance threshold for speaker matching | `0.5` |
+| `OIDC_ENCRYPTION_KEY` | AES-256 key for OIDC client secret encryption | *(derived from SECRET_KEY)* |
+| `CORS_ORIGINS` | Allowed CORS origins | `*` |
 
 ### SSL Verification
 
-The `*_VERIFY_SSL` settings accept three values:
+The `*_VERIFY_SSL` settings accept:
 - `"true"` — use the system CA store (default)
-- `"false"` — disable SSL verification (for self-signed certs in development)
-- A file path — use a custom CA bundle (e.g. `/etc/ssl/certs/ca-certificates.crt`)
+- `"false"` — disable verification (dev only, self-signed certs)
+- A file path — use a custom CA bundle (e.g. `/etc/ssl/certs/ca-bundle.crt`)
+
+---
 
 ## Project Structure
 
@@ -106,55 +193,34 @@ OpenHiNotes/
 │   │   ├── models/           # SQLAlchemy ORM models
 │   │   ├── schemas/          # Pydantic request/response schemas
 │   │   ├── routers/          # API route handlers
-│   │   ├── services/         # Business logic (auth, transcription, LLM)
+│   │   ├── services/         # Business logic (auth, OIDC, transcription, LLM)
 │   │   ├── main.py           # FastAPI app entry point
-│   │   ├── config.py         # Settings from environment
+│   │   ├── config.py         # Settings from environment variables
 │   │   ├── database.py       # Async SQLAlchemy setup
 │   │   └── dependencies.py   # Auth dependencies
-│   ├── alembic/              # Database migrations
+│   ├── alembic/              # Database migrations (auto-applied on startup)
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── frontend/                 # React + Vite + TypeScript application
 │   ├── src/
 │   │   ├── api/              # Backend API client modules
 │   │   ├── components/       # Reusable UI components
-│   │   ├── hooks/            # React hooks (device connection)
-│   │   ├── pages/            # Route pages
-│   │   ├── services/         # WebUSB device protocol
+│   │   ├── pages/            # Route pages (including admin panel)
 │   │   ├── store/            # Zustand state management
 │   │   └── types/            # TypeScript type definitions
 │   ├── package.json
 │   └── Dockerfile
+├── docs/                     # Feature documentation
+│   ├── SSO_OIDC_SETUP.md     # SSO/OIDC provider setup guide
+│   └── VOICE_FINGERPRINTING.md
 ├── docker-compose.yml        # Development orchestration
 ├── docker-compose.prod.yml   # Production orchestration
-├── Caddyfile                 # Reverse proxy with HTTPS
-└── .env.example              # Environment template
+├── Caddyfile                 # Dev reverse proxy (self-signed TLS)
+├── Caddyfile.prod            # Production reverse proxy
+└── .env.example              # Environment variable template
 ```
 
-## API Endpoints
-
-| Method | Path                                    | Auth     | Description                              |
-|--------|-----------------------------------------|----------|------------------------------------------|
-| POST   | `/api/auth/register`                    | Public   | Create a new user account                |
-| POST   | `/api/auth/login`                       | Public   | Obtain a JWT token                       |
-| GET    | `/api/auth/me`                          | User     | Get current user profile                 |
-| GET    | `/api/users`                            | Admin    | List all users                           |
-| PATCH  | `/api/users/{id}/role`                  | Admin    | Change a user's role                     |
-| POST   | `/api/transcriptions/upload`            | User     | Upload audio and transcribe              |
-| POST   | `/api/transcriptions/upload-stream`     | User     | Upload and transcribe with SSE progress  |
-| GET    | `/api/transcriptions`                   | User     | List transcriptions                      |
-| GET    | `/api/transcriptions/{id}`              | User     | Get a single transcription               |
-| PATCH  | `/api/transcriptions/{id}/speakers`     | User     | Rename speakers                          |
-| PATCH  | `/api/transcriptions/{id}/notes`        | User     | Update notes                             |
-| DELETE | `/api/transcriptions/{id}`              | User     | Delete a transcription                   |
-| GET    | `/api/templates`                        | User     | List summary templates                   |
-| POST   | `/api/templates`                        | Admin    | Create a summary template                |
-| PATCH  | `/api/templates/{id}`                   | Admin    | Update a template                        |
-| DELETE | `/api/templates/{id}`                   | Admin    | Delete a template                        |
-| POST   | `/api/summaries`                        | User     | Generate a summary                       |
-| GET    | `/api/summaries`                        | User     | List summaries for a transcription       |
-| POST   | `/api/chat`                             | User     | Chat with LLM (streaming SSE)           |
-| GET    | `/api/health`                           | Public   | Health check                             |
+---
 
 ## Supported Devices
 
@@ -165,9 +231,11 @@ OpenHiNotes/
 | HiDock P1      | `0xAF0E`, `0xB00E`   |
 | HiDock P1 Mini | `0xAF0F`             |
 
+---
+
 ## Development
 
-To run services individually without Docker:
+Run services locally without Docker:
 
 ```bash
 # Backend
@@ -185,21 +253,26 @@ npm run dev
 
 The Vite dev server proxies `/api` requests to `http://localhost:8000` automatically.
 
+---
+
 ## Tech Stack
 
-| Layer      | Technology                                                        |
-|------------|-------------------------------------------------------------------|
-| Frontend   | React 18, Vite 5, TypeScript, Tailwind CSS 3, Zustand, React Router 6 |
-| Backend    | Python 3.11, FastAPI, SQLAlchemy 2 (async), Alembic, Pydantic    |
-| Database   | PostgreSQL 16                                                     |
-| Auth       | JWT (python-jose), bcrypt (passlib)                               |
-| Device     | WebUSB API (browser-native)                                       |
+| Layer | Technology |
+|---|---|
+| Frontend | React 18, Vite 5, TypeScript, Tailwind CSS 3, Zustand, React Router 6 |
+| Backend | Python 3.11, FastAPI, SQLAlchemy 2 (async), Alembic, Pydantic v2 |
+| Database | PostgreSQL 16 |
+| Auth | JWT (python-jose), bcrypt (passlib), OIDC (authlib) |
+| Encryption | AES-256-GCM (cryptography) |
+| Device | WebUSB API (browser-native) |
 | Transcription | [VoxHub](https://github.com/ghecko/VoxHub) (OpenAI-compatible) |
-| Deployment | Docker Compose, Caddy 2                                           |
+| Deployment | Docker Compose, Caddy 2 |
+
+---
 
 ## Acknowledgments
 
-This project is a full rewrite of [HiDock Next](https://github.com/HiDock/hidock-next), the original open-source web client for HiDock recording devices. The WebUSB protocol implementation and device communication layer are derived from that project. OpenHiNotes replaces the client-only architecture with a FastAPI backend, adds server-side transcription via [VoxHub](https://github.com/ghecko/VoxHub), authentication, summary templates, and LLM chat capabilities.
+This project is a full rewrite of [HiDock Next](https://github.com/HiDock/hidock-next), the original open-source web client for HiDock recording devices. The WebUSB protocol implementation and device communication layer are derived from that project. OpenHiNotes replaces the client-only architecture with a FastAPI backend, adds server-side transcription via [VoxHub](https://github.com/ghecko/VoxHub), authentication, SSO/OIDC, summary templates, voice fingerprinting, and LLM chat capabilities.
 
 ## License
 

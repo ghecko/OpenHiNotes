@@ -1,6 +1,6 @@
 export type UserRole = 'admin' | 'user';
 export type UserStatus = 'active' | 'pending' | 'rejected';
-export type RegistrationSource = 'self_registered' | 'admin_created';
+export type RegistrationSource = 'self_registered' | 'admin_created' | 'oidc';
 
 export interface User {
   id: string;
@@ -207,6 +207,56 @@ export interface QueueSSEEvent {
 }
 
 // Voice fingerprinting
+// OIDC / SSO types
+export interface OIDCProviderInfo {
+  slug: string;
+  display_name: string;
+  icon: string | null;
+}
+
+export interface OIDCAuthorizeResponse {
+  authorize_url: string;
+  state: string;
+}
+
+export interface OIDCProviderDetail {
+  id: string;
+  slug: string;
+  display_name: string;
+  icon: string | null;
+  discovery_url: string;
+  client_id: string;
+  client_secret_masked: string;
+  scopes: string;
+  authorize_url_override: string | null;
+  token_url_override: string | null;
+  userinfo_url_override: string | null;
+  jwks_uri_override: string | null;
+  auto_provision: boolean;
+  default_role: string;
+  allowed_domains: string | null;
+  require_approval: boolean;
+  email_claim: string;
+  name_claim: string;
+  role_claim: string | null;
+  role_mapping: string | null;
+  is_enabled: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OIDCDiscoveryTestResult {
+  success: boolean;
+  issuer: string | null;
+  authorization_endpoint: string | null;
+  token_endpoint: string | null;
+  userinfo_endpoint: string | null;
+  jwks_uri: string | null;
+  scopes_supported: string[] | null;
+  error: string | null;
+}
+
 export interface VoiceProfile {
   id: string;
   user_id: string;

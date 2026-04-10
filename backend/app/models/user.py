@@ -24,6 +24,7 @@ class RegistrationSource(str, Enum):
     """How the user account was created."""
     self_registered = "self_registered"
     admin_created = "admin_created"
+    oidc = "oidc"
 
 
 class User(Base):
