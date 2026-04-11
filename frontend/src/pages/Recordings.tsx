@@ -553,11 +553,11 @@ export function Recordings() {
 
       {/* Batch action bar */}
       {hasSelection && (
-        <div className="mb-4 flex items-center gap-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg px-4 py-3">
+        <div className="mb-4 flex items-center flex-wrap gap-x-3 gap-y-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg px-4 py-3">
           <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
             {selectedRecordings.length} selected
           </span>
-          <div className="flex items-center gap-2 ml-auto">
+          <div className="flex items-center flex-wrap gap-2 ml-auto">
             <div className="relative">
               <button
                 onClick={() => setShowCollectionPicker(!showCollectionPicker)}

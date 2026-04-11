@@ -506,7 +506,8 @@ export function TranscriptionDetail() {
     <Layout title={displayTitle}>
       <div className="space-y-6">
         {/* Editable Title */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-start gap-3 flex-wrap">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
           {isEditingTitle ? (
             <input
               ref={titleInputRef}
@@ -515,26 +516,27 @@ export function TranscriptionDetail() {
               onChange={(e) => setEditTitle(e.target.value)}
               onKeyDown={handleTitleKeyDown}
               onBlur={handleSaveTitle}
-              className="flex-1 text-2xl font-bold bg-transparent text-gray-900 dark:text-white border-b-2 border-primary-500 focus:outline-none focus:border-primary-600 py-1"
+              className="flex-1 text-2xl font-bold bg-transparent text-gray-900 dark:text-white border-b-2 border-primary-500 focus:outline-none focus:border-primary-600 py-1 min-w-0"
               maxLength={255}
             />
           ) : (
             <button
               onClick={handleStartEditTitle}
-              className="group flex items-center gap-2 text-left"
+              className="group flex items-center gap-2 text-left min-w-0"
               title="Click to rename"
             >
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors">
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors truncate">
                 {displayTitle}
               </h1>
-              <Pencil className="w-4 h-4 text-gray-400 dark:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+              <Pencil className="w-4 h-4 text-gray-400 dark:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
             </button>
           )}
           {transcription.title && (
-            <span className="text-sm text-gray-500 dark:text-gray-400 truncate" title={transcription.original_filename}>
+            <span className="text-sm text-gray-500 dark:text-gray-400 truncate hidden sm:inline" title={transcription.original_filename}>
               ({transcription.original_filename})
             </span>
           )}
+          </div>
 
           {/* Permission badge + action buttons */}
           <div className="flex items-center gap-2 ml-auto flex-shrink-0 flex-wrap justify-end">

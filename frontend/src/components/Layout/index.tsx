@@ -15,7 +15,7 @@ export function Layout({ children, title }: LayoutProps) {
         <div className="flex-shrink-0 sticky top-0 z-30">
           <Header title={title} />
         </div>
-        <main className="flex-1 overflow-auto bg-gray-50/50 dark:bg-gray-950/50">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden bg-gray-50/50 dark:bg-gray-950/50">
           <div className="p-3 sm:p-6">{children}</div>
         </main>
       </div>
