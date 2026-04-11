@@ -5,14 +5,11 @@ export function formatMarkdown(text: string): string {
   const codeBlocks: string[] = [];
   let processed = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
     const idx = codeBlocks.length;
-    const langLabel = lang
-      ? `<div class="flex items-center justify-between px-3 py-1.5 bg-gray-800 dark:bg-gray-900 rounded-t-lg border-b border-gray-700"><span class="text-xs text-gray-400 font-mono">${lang}</span></div>`
+    const langBadge = lang
+      ? `<span class="absolute top-2 right-3 text-[10px] text-gray-500 dark:text-gray-400 font-mono select-none">${lang}</span>`
       : '';
-    const preClass = lang
-      ? 'bg-gray-900 dark:bg-gray-950 text-gray-100 p-3 overflow-x-auto text-xs font-mono whitespace-pre rounded-b-lg'
-      : 'bg-gray-900 dark:bg-gray-950 text-gray-100 rounded-lg p-3 overflow-x-auto text-xs font-mono whitespace-pre';
     codeBlocks.push(
-      `<div class="my-2">${langLabel}<pre class="${preClass}"><code>${code
+      `<div class="relative my-2">${langBadge}<pre class="bg-gray-900 dark:bg-gray-950 text-gray-100 rounded-lg p-3 overflow-x-auto text-xs font-mono whitespace-pre${lang ? ' pt-6' : ''}"><code>${code
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
