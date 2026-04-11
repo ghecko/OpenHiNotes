@@ -290,22 +290,23 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
               title="Find & Replace"
             >
               <Search className="w-4 h-4" />
-              Find & Replace
+              <span className="hidden sm:inline">Find &amp; Replace</span>
             </button>
           )}
           <button
             onClick={copyToClipboard}
             className="flex items-center gap-2 px-3 py-2 bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+            title={copied ? 'Copied!' : 'Copy all'}
           >
             {copied ? (
               <>
                 <Check className="w-4 h-4" />
-                Copied
+                <span className="hidden sm:inline">Copied</span>
               </>
             ) : (
               <>
                 <Copy className="w-4 h-4" />
-                Copy All
+                <span className="hidden sm:inline">Copy All</span>
               </>
             )}
           </button>
