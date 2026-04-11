@@ -1,4 +1,4 @@
-from sqlalchemy import String, Boolean, Enum as SQLEnum, DateTime, Text
+from sqlalchemy import String, Boolean, Enum as SQLEnum, DateTime, Text, JSON
 from sqlalchemy.orm import mapped_column, Mapped
 import uuid
 from datetime import datetime
@@ -58,5 +58,10 @@ class User(Base):
         DateTime, nullable=True, default=None
     )
 
+    # Client-side recording aliases: filename → display name
+    recording_aliases: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default='{}'
+    )
+
     def __repr__(self) -> str:
-        return f"<User(id={self.id}, email={self.email}, role={self.role}, status={self.status})>"
+        return f"<User(id={self.id}, e

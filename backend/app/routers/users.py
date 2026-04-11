@@ -320,3 +320,26 @@ async def generate_reset_token(
         reset_link=reset_link,
         expires_in_hours=24,
     )
+
+
+# ── Recording aliases ─────────────────────────────────────────────────────────
+
+@router.get("/me/recording-aliases", response_model=dict)
+async def get_recording_aliases(
+    current_user: User = Depends(get_current_user),
+):
+    """Return the current user's recording aliases (filename → display name)."""
+    return current_user.recording_aliases or {}
+
+
+@router.put("/me/recording-aliases", response_model=dict)
+async def update_recording_aliases(
+    aliases: dict,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Replace the current user's recording aliases map."""
+    current_user.recording_aliases = aliases
+    db.add(current_user)
+    await db.commit()
+    return current_user.recording_aliases

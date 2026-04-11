@@ -8,6 +8,7 @@ import { Collection, Transcription } from '@/types';
 import { deviceService } from '@/services/deviceService';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { collectionsApi } from '@/api/collections';
+import { recordingAliasesApi } from '@/api/recordingAliases';
 import { Play, Download, Trash2, Zap, FileText, AlertCircle, Pencil, X, CheckCircle, FolderOpen, TriangleAlert, Server, ServerOff } from 'lucide-react';
 import { format } from 'date-fns';
 import { settingsApi } from '@/api/settings';
@@ -182,7 +183,7 @@ export function Recordings() {
   const selectedRecordings = useAppStore((s) => s.selectedRecordings);
   const recordingAliases = useAppStore((s) => s.recordingAliases);
   const recordingCollections = useAppStore((s) => s.recordingCollections);
-  const { toggleRecordingSelection, clearSelectedRecordings, setRecordingAlias, removeRecordingAlias, cleanOrphanAliases } = useAppStore();
+  const { toggleRecordingSelection, clearSelectedRecordings, setRecordingAliases, setRecordingAlias, removeRecordingAlias, cleanOrphanAliases } = useAppStore();
 
   const {
     connectDevice,
@@ -233,6 +234,7 @@ export function Recordings() {
   const saveAlias = useCallback(() => {
     if (editingAlias === null) return;
     const trimmed = aliasInput.trim();
+    // Optimistic update in store
     if (trimmed) {
       setRecordingAlias(editingAlias, trimmed);
     } else {
@@ -240,7 +242,12 @@ export function Recordings() {
     }
     setEditingAlias(null);
     setAliasInput('');
-  }, [editingAlias, aliasInput, setRecordingAlias, removeRecordingAlias]);
+    // Persist to server (fire-and-forget; store is source of truth for UI)
+    const nextAliases = trimmed
+      ? { ...recordingAliases, [editingAlias]: trimmed }
+      : (() => { const { [editingAlias]: _, ...rest } = recordingAliases; return rest; })();
+    recordingAliasesApi.saveAll(nextAliases).catch(console.error);
+  }, [editingAlias, aliasInput, setRecordingAlias, removeRecordingAlias, recordingAliases]);
 
   const cancelEditingAlias = useCallback(() => {
     setEditingAlias(null);
@@ -279,6 +286,11 @@ export function Recordings() {
   // Load collections for batch assign
   useEffect(() => {
     collectionsApi.list().then(setCollections).catch(console.error);
+  }, []);
+
+  // Load recording aliases from server on mount
+  useEffect(() => {
+    recordingAliasesApi.getAll().then(setRecordingAliases).catch(console.error);
   }, []);
 
   // Load keep_audio admin setting

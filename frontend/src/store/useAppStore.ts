@@ -26,6 +26,7 @@ interface AppState {
   setTheme: (theme: 'dark' | 'light') => void;
   setTranscriptions: (transcriptions: Transcription[]) => void;
   setTemplates: (templates: SummaryTemplate[]) => void;
+  setRecordingAliases: (aliases: Record<string, string>) => void;
   setRecordingAlias: (fileName: string, alias: string) => void;
   removeRecordingAlias: (fileName: string) => void;
   cleanOrphanAliases: (currentFileNames: string[]) => void;
@@ -93,6 +94,10 @@ export const useAppStore = create<AppState>()(
         set({ templates });
       },
 
+      setRecordingAliases: (aliases: Record<string, string>) => {
+        set({ recordingAliases: aliases });
+      },
+
       setRecordingAlias: (fileName: string, alias: string) => {
         set((state) => ({
           recordingAliases: { ...state.recordingAliases, [fileName]: alias },
@@ -136,7 +141,6 @@ export const useAppStore = create<AppState>()(
       name: 'app-storage',
       partialize: (state) => ({
         theme: state.theme,
-        recordingAliases: state.recordingAliases,
         recordingCollections: state.recordingCollections,
       }),
     }
