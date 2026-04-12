@@ -13,6 +13,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "General Meeting",
         "category": "General",
+        "target_type": "record",
         "description": "All-purpose meeting summary with outline, key decisions, and action items.",
         "prompt_template": (
             "Summarize the following meeting transcript.\n\n"
@@ -32,6 +33,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Weekly Team Meeting",
         "category": "General",
+        "target_type": "record",
         "description": "Capture milestones, project updates, goals, and team feedback from weekly syncs.",
         "prompt_template": (
             "Summarize this weekly team meeting transcript.\n\n"
@@ -54,6 +56,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Daily Standup",
         "category": "General",
+        "target_type": "record",
         "description": "Quick daily updates: done, planned, and blockers per team member.",
         "prompt_template": (
             "Summarize this daily standup meeting.\n\n"
@@ -78,6 +81,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "1-to-1 Meeting",
         "category": "HR",
+        "target_type": "record",
         "description": "Captures priorities, achievements, challenges, feedback, and growth goals from 1-on-1s.",
         "prompt_template": (
             "Summarize this 1-on-1 meeting transcript.\n\n"
@@ -102,6 +106,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Job Interview",
         "category": "HR",
+        "target_type": "record",
         "description": "Structured interview summary: background, experience, strengths, Q&A, and next steps.",
         "prompt_template": (
             "Summarize this job interview transcript.\n\n"
@@ -129,6 +134,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Business Call",
         "category": "Client & Sales",
+        "target_type": "record",
         "description": "Captures call discussion, agreements, unresolved issues, and next arrangements.",
         "prompt_template": (
             "Summarize this business call transcript.\n\n"
@@ -151,6 +157,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Client Meeting",
         "category": "Client & Sales",
+        "target_type": "record",
         "description": "Summarizes client discussions, feedback, action items, and follow-ups.",
         "prompt_template": (
             "Summarize this client meeting transcript.\n\n"
@@ -172,6 +179,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Sales Call",
         "category": "Client & Sales",
+        "target_type": "record",
         "description": "Captures client needs, pitch messages, reactions, and follow-up plan for sales reps.",
         "prompt_template": (
             "Summarize this sales call transcript.\n\n"
@@ -192,6 +200,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Customer Onboarding",
         "category": "Client & Sales",
+        "target_type": "record",
         "description": "Tracks onboarding progress, goals, risks, and next steps for new customers.",
         "prompt_template": (
             "Summarize this customer onboarding meeting transcript.\n\n"
@@ -215,6 +224,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Project Kickoff",
         "category": "Project Management",
+        "target_type": "record",
         "description": "Outlines project goals, scope, roles, timeline, risks, and action plan.",
         "prompt_template": (
             "Summarize this project kickoff meeting transcript.\n\n"
@@ -240,6 +250,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Project Status Update",
         "category": "Project Management",
+        "target_type": "record",
         "description": "Regular project meeting: status, completed/pending tasks, blockers, and actions.",
         "prompt_template": (
             "Summarize this project status meeting transcript.\n\n"
@@ -264,6 +275,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Sprint Planning",
         "category": "Project Management",
+        "target_type": "record",
         "description": "Sprint goals, backlog review, capacity, and task assignments for agile teams.",
         "prompt_template": (
             "Summarize this sprint planning meeting transcript.\n\n"
@@ -288,6 +300,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Retrospective",
         "category": "Project Management",
+        "target_type": "record",
         "description": "What went well, what didn't, improvements, and action items from retros.",
         "prompt_template": (
             "Summarize this retrospective meeting transcript.\n\n"
@@ -311,6 +324,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Stakeholder Meeting",
         "category": "Leadership",
+        "target_type": "record",
         "description": "High-level review: business updates, financials, metrics, decisions, and next steps.",
         "prompt_template": (
             "Summarize this stakeholder meeting transcript.\n\n"
@@ -337,6 +351,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Board Meeting",
         "category": "Leadership",
+        "target_type": "record",
         "description": "Executive-level: agenda items, KPIs, decisions, and strategic next steps.",
         "prompt_template": (
             "Summarize this board meeting transcript.\n\n"
@@ -359,6 +374,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "All Hands Meeting",
         "category": "Leadership",
+        "target_type": "record",
         "description": "Company-wide updates, announcements, key decisions, and Q&A highlights.",
         "prompt_template": (
             "Summarize this all-hands meeting transcript.\n\n"
@@ -382,6 +398,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Pentest Kickoff",
         "category": "Security",
+        "target_type": "record",
         "description": "Pentest engagement kickoff: scope, rules of engagement, targets, timeline, and contacts.",
         "prompt_template": (
             "Summarize this penetration testing kickoff meeting transcript.\n\n"
@@ -410,6 +427,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Pentest Weekly Status",
         "category": "Security",
+        "target_type": "record",
         "description": "Weekly pentest progress: findings so far, blockers, risk highlights, and next targets.",
         "prompt_template": (
             "Summarize this weekly pentest status meeting transcript.\n\n"
@@ -433,6 +451,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Pentest Debrief",
         "category": "Security",
+        "target_type": "record",
         "description": "Post-engagement debrief: key findings, risk summary, remediation priorities, and next steps.",
         "prompt_template": (
             "Summarize this penetration test debrief meeting transcript.\n\n"
@@ -458,6 +477,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Security Incident Review",
         "category": "Security",
+        "target_type": "record",
         "description": "Post-incident review: timeline, root cause, impact, lessons learned, and remediation.",
         "prompt_template": (
             "Summarize this security incident review meeting transcript.\n\n"
@@ -485,6 +505,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Brainstorming Session",
         "category": "General",
+        "target_type": "record",
         "description": "Captures ideas generated, key themes, and actionable takeaways from brainstorms.",
         "prompt_template": (
             "Summarize this brainstorming session transcript.\n\n"
@@ -509,6 +530,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Online Course / Lecture",
         "category": "Education",
+        "target_type": "record",
         "description": "Summarizes course sessions: topics, key concepts, examples, and assignments.",
         "prompt_template": (
             "Summarize this online course or lecture recording transcript.\n\n"
@@ -533,6 +555,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Training Session",
         "category": "Education",
+        "target_type": "record",
         "description": "Business training summary: objectives, content, skills acquired, and follow-up actions.",
         "prompt_template": (
             "Summarize this training session transcript.\n\n"
@@ -556,6 +579,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Podcast Summary",
         "category": "Media",
+        "target_type": "record",
         "description": "Episode overview with segments, key moments, guest insights, and conclusion.",
         "prompt_template": (
             "Summarize this podcast episode transcript.\n\n"
@@ -576,6 +600,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "YouTube Video Summary",
         "category": "Media",
+        "target_type": "record",
         "description": "Structured notes with chapters, key points, and standout quotes.",
         "prompt_template": (
             "Summarize this YouTube video transcript.\n\n"
@@ -599,6 +624,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "SOAP Note",
         "category": "Healthcare",
+        "target_type": "record",
         "description": "Clinical SOAP format: Subjective, Objective, Assessment, Plan.",
         "prompt_template": (
             "Summarize this clinical consultation transcript using the SOAP format.\n\n"
@@ -623,6 +649,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Healthcare Consultation",
         "category": "Healthcare",
+        "target_type": "record",
         "description": "Doctor-patient interaction: concerns, findings, advice, and follow-up.",
         "prompt_template": (
             "Summarize this healthcare consultation transcript.\n\n"
@@ -648,6 +675,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "User Interview",
         "category": "UX & Research",
+        "target_type": "record",
         "description": "UX research: user background, usage behavior, pain points, and insights.",
         "prompt_template": (
             "Summarize this user interview transcript.\n\n"
@@ -671,6 +699,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Pipeline Review (MEDDIC)",
         "category": "Client & Sales",
+        "target_type": "record",
         "description": "Sales pipeline review using MEDDIC framework: Metrics, Economic Buyer, Decision Criteria, etc.",
         "prompt_template": (
             "Summarize this pipeline review meeting transcript using the MEDDIC framework.\n\n"
@@ -700,6 +729,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Personal Call",
         "category": "Personal",
+        "target_type": "record",
         "description": "Casual call summary: topics discussed, plans made, and follow-ups.",
         "prompt_template": (
             "Summarize this personal/casual call transcript in a friendly tone.\n\n"
@@ -743,6 +773,7 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "name": "Pentest - Scoping Call",
         "category": "Security",
+        "target_type": "record",
         "description": "Capture pentest engagement scope: targets, constraints, rules of engagement, and timeline.",
         "prompt_template": (
             "Summarize this penetration-testing scoping call transcript.\n\n"

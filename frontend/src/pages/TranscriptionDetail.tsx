@@ -91,6 +91,7 @@ export function TranscriptionDetail() {
   const [editTitle, setEditTitle] = useState('');
   const titleInputRef = useRef<HTMLInputElement>(null);
   const [openSummaryId, setOpenSummaryId] = useState<string | null>(null);
+  const [showAllTemplates, setShowAllTemplates] = useState(false);
 
   // Collection assignment
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -162,7 +163,7 @@ export function TranscriptionDetail() {
       setSummaries(s);
 
       const recType = t.recording_type === 'whisper' ? 'whisper' : 'record';
-      const temps = await templatesApi.getTemplates(false, recType);
+      const temps = await templatesApi.getTemplates(false, showAllTemplates ? undefined : recType);
       setTemplates(temps);
 
       const colls = await collectionsApi.list();
@@ -176,6 +177,18 @@ export function TranscriptionDetail() {
       setIsLoading(false);
     }
   };
+
+  // Reload templates when showAllTemplates toggle changes
+  useEffect(() => {
+    if (!transcription) return;
+    const recType = transcription.recording_type === 'whisper' ? 'whisper' : 'record';
+    templatesApi.getTemplates(false, showAllTemplates ? undefined : recType).then((temps) => {
+      setTemplates(temps);
+      if (temps.length > 0 && !temps.find((t) => t.id === selectedTemplate)) {
+        setSelectedTemplate(temps[0].id);
+      }
+    });
+  }, [showAllTemplates]);
 
   const handleCollectionChange = async (collectionId: string) => {
     if (!transcription) return;
@@ -979,6 +992,17 @@ export function TranscriptionDetail() {
                       value={selectedTemplate}
                       onChange={setSelectedTemplate}
                     />
+                    {isWhisper && (
+                      <label className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={showAllTemplates}
+                          onChange={(e) => setShowAllTemplates(e.target.checked)}
+                          className="rounded border-gray-300 dark:border-gray-600"
+                        />
+                        Show all templates
+                      </label>
+                    )}
                     <div className="flex gap-3">
                       <button
                         onClick={handleGenerateSummary}
