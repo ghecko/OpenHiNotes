@@ -55,11 +55,14 @@ export interface Collection {
   shared_by?: string | null;
 }
 
+export type RecordingType = 'record' | 'whisper';
+
 export interface Transcription {
   id: string;
   user_id: string;
   filename: string;
   original_filename: string;
+  recording_type: RecordingType;
   title: string | null;
   collection_id: string | null;
   audio_duration: number | null;

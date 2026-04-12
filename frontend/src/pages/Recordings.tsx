@@ -9,7 +9,13 @@ import { deviceService } from '@/services/deviceService';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { collectionsApi } from '@/api/collections';
 import { recordingAliasesApi } from '@/api/recordingAliases';
-import { Play, Download, Trash2, Zap, FileText, AlertCircle, Pencil, X, CheckCircle, FolderOpen, TriangleAlert, Server, ServerOff } from 'lucide-react';
+import { Play, Download, Trash2, Zap, FileText, AlertCircle, Pencil, X, CheckCircle, FolderOpen, TriangleAlert, Server, ServerOff, Mic, MessageSquare } from 'lucide-react';
+import type { RecordingType } from '@/types';
+
+/** Detect recording type from HiDock filename convention. */
+function detectRecordingType(fileName: string): RecordingType {
+  return fileName.toLowerCase().startsWith('wip') ? 'whisper' : 'record';
+}
 import { format } from 'date-fns';
 import { settingsApi } from '@/api/settings';
 
@@ -206,6 +212,7 @@ export function Recordings() {
   const aliasInputRef = useRef<HTMLInputElement>(null);
   const [transcriptMap, setTranscriptMap] = useState<Record<string, { id: string; status: string; title: string | null; keep_audio: boolean; audio_available: boolean }>>({});
   const [keepAudioEnabled, setKeepAudioEnabled] = useState(true);
+  const [typeFilter, setTypeFilter] = useState<'all' | RecordingType>('all');
 
   // Collections for batch assign
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -488,6 +495,12 @@ export function Recordings() {
     : 0;
 
   const hasSelection = selectedRecordings.length > 0;
+  const filteredRecordings = typeFilter === 'all'
+    ? recordings
+    : recordings.filter((r) => detectRecordingType(r.fileName) === typeFilter);
+  const filteredServerOnly = typeFilter === 'all'
+    ? serverOnlyRecordings
+    : serverOnlyRecordings.filter((t) => (t.recording_type || detectRecordingType(t.original_filename)) === typeFilter);
 
   return (
     <Layout title="Recordings">
@@ -563,6 +576,25 @@ export function Recordings() {
         </div>
       )}
 
+      {/* Recording type filter tabs */}
+      <div className="mb-4 flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit">
+        {([['all', 'All'], ['record', 'Records'], ['whisper', 'Whispers']] as const).map(([value, label]) => (
+          <button
+            key={value}
+            onClick={() => setTypeFilter(value)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              typeFilter === value
+                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+            }`}
+          >
+            {value === 'record' && <Mic className="w-3.5 h-3.5" />}
+            {value === 'whisper' && <MessageSquare className="w-3.5 h-3.5" />}
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* Batch action bar */}
       {hasSelection && (
         <div className="mb-4 flex items-center flex-wrap gap-x-3 gap-y-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg px-4 py-3">
@@ -622,11 +654,11 @@ export function Recordings() {
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
         <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
           <h2 className="text-lg font-bold text-gray-900 dark:text-white">Device Recordings</h2>
-          {recordings.length > 0 && (
+          {filteredRecordings.length > 0 && (
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
-                checked={selectedRecordings.length === recordings.length && recordings.length > 0}
+                checked={selectedRecordings.length === filteredRecordings.length && filteredRecordings.length > 0}
                 onChange={handleSelectAll}
                 className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
               />
@@ -635,9 +667,9 @@ export function Recordings() {
           )}
         </div>
 
-        {recordings.length === 0 ? (
+        {filteredRecordings.length === 0 ? (
           <div className="p-12 text-center text-gray-500 dark:text-gray-400">
-            No recordings found on device
+            {typeFilter === 'all' ? 'No recordings found on device' : `No ${typeFilter === 'whisper' ? 'whisper' : 'record'} recordings found`}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -647,7 +679,7 @@ export function Recordings() {
                   <th className="px-6 py-3 text-left w-8">
                     <input
                       type="checkbox"
-                      checked={selectedRecordings.length === recordings.length && recordings.length > 0}
+                      checked={selectedRecordings.length === filteredRecordings.length && filteredRecordings.length > 0}
                       onChange={handleSelectAll}
                       className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
                     />
@@ -673,9 +705,10 @@ export function Recordings() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                {recordings.map((recording) => {
+                {filteredRecordings.map((recording) => {
                   const progress = downloadProgress[recording.id] || 0;
                   const isDownloading = progress > 0 && progress < 100;
+                  const recType = detectRecordingType(recording.fileName);
 
                   return (
                     <tr
@@ -714,11 +747,21 @@ export function Recordings() {
                               <span className="font-medium text-gray-900 dark:text-white block truncate">
                                 {recordingAliases[recording.fileName] || recording.fileName}
                               </span>
-                              {recordingAliases[recording.fileName] && (
-                                <span className="text-xs text-gray-400 dark:text-gray-500 block truncate">
-                                  {recording.fileName}
+                              <div className="flex items-center gap-1.5">
+                                <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${
+                                  recType === 'whisper'
+                                    ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400'
+                                    : 'bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400'
+                                }`}>
+                                  {recType === 'whisper' ? <MessageSquare className="w-2.5 h-2.5" /> : <Mic className="w-2.5 h-2.5" />}
+                                  {recType}
                                 </span>
-                              )}
+                                {recordingAliases[recording.fileName] && (
+                                  <span className="text-xs text-gray-400 dark:text-gray-500 truncate">
+                                    {recording.fileName}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                             <Pencil className="w-3.5 h-3.5 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                           </div>
@@ -839,14 +882,14 @@ export function Recordings() {
       </div>
 
       {/* Server-only recordings (not on device but audio available) */}
-      {serverOnlyRecordings.length > 0 && (
+      {filteredServerOnly.length > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden mt-6">
           <div className="p-6 border-b border-gray-200 dark:border-gray-700">
             <div className="flex items-center gap-2">
               <Server className="w-5 h-5 text-blue-500" />
               <h2 className="text-lg font-bold text-gray-900 dark:text-white">Server-Only Audio</h2>
               <span className="text-sm text-gray-500 dark:text-gray-400">
-                ({serverOnlyRecordings.length} recording{serverOnlyRecordings.length !== 1 ? 's' : ''} not on device)
+                ({filteredServerOnly.length} recording{filteredServerOnly.length !== 1 ? 's' : ''} not on device)
               </span>
             </div>
           </div>
@@ -872,18 +915,30 @@ export function Recordings() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                {serverOnlyRecordings.map((t) => (
+                {filteredServerOnly.map((t) => {
+                  const serverRecType = t.recording_type || detectRecordingType(t.original_filename);
+                  return (
                   <tr key={t.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                     <td className="px-6 py-4 text-sm">
                       <div className="min-w-0">
                         <span className="font-medium text-gray-900 dark:text-white block truncate">
                           {t.title || t.original_filename}
                         </span>
-                        {t.title && (
-                          <span className="text-xs text-gray-400 dark:text-gray-500 block truncate">
-                            {t.original_filename}
+                        <div className="flex items-center gap-1.5">
+                          <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${
+                            serverRecType === 'whisper'
+                              ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400'
+                              : 'bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400'
+                          }`}>
+                            {serverRecType === 'whisper' ? <MessageSquare className="w-2.5 h-2.5" /> : <Mic className="w-2.5 h-2.5" />}
+                            {serverRecType}
                           </span>
-                        )}
+                          {t.title && (
+                            <span className="text-xs text-gray-400 dark:text-gray-500 truncate">
+                              {t.original_filename}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
@@ -945,7 +1000,8 @@ export function Recordings() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
