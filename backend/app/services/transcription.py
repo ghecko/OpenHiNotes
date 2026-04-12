@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, AsyncGenerator, Callable, Union
 from fastapi import UploadFile
 from app.config import settings
-from app.models.transcription import Transcription, TranscriptionStatus
+from app.models.transcription import Transcription, TranscriptionStatus, RecordingType
 from app.models.summary import Summary
 from app.models.chat_conversation import ChatConversation
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,20 @@ from sqlalchemy import select, delete as sa_delete
 import os
 
 logger = logging.getLogger(__name__)
+
+
+def detect_recording_type(original_filename: str) -> RecordingType:
+    """Detect recording type from HiDock filename conventions.
+
+    HiDock names files like:
+      - "Rec_2025-01-15_10-30-00.wav"  → multi-speaker record
+      - "Wip_2025-01-15_10-30-00.wav"  → single-speaker whisper memo
+    """
+    stem = Path(original_filename).stem.lower()
+    if stem.startswith("wip"):
+        return RecordingType.whisper
+    return RecordingType.record
+
 
 
 async def _call_progress(on_progress, *args):
@@ -81,6 +95,7 @@ class TranscriptionService:
     async def transcribe_with_voxhub(
         file_path: str,
         language: Optional[str] = None,
+        diarize: bool = True,
         db: Optional[AsyncSession] = None,
         on_progress: Optional[Callable[[str, float, Optional[str]], None]] = None,
         on_job_submitted: Optional[Callable[[str], Any]] = None,
@@ -92,6 +107,7 @@ class TranscriptionService:
         - Job (asynchronous): POST /v1/audio/transcriptions/jobs → poll → fetch result
 
         Args:
+            diarize: whether to run speaker diarization (False for whisper memos).
             on_job_submitted: optional callback(job_id) called after job is submitted in job mode.
         """
         cfg = await TranscriptionService._resolve_transcription_settings(db)
@@ -100,10 +116,11 @@ class TranscriptionService:
         if cfg["job_mode"]:
             return await TranscriptionService._transcribe_job_mode(
                 file_path, language, cfg, headers,
+                diarize=diarize,
                 on_progress=on_progress, on_job_submitted=on_job_submitted,
             )
         else:
-            return await TranscriptionService._transcribe_normal_mode(file_path, language, cfg, headers)
+            return await TranscriptionService._transcribe_normal_mode(file_path, language, cfg, headers, diarize=diarize)
 
     @staticmethod
     async def _transcribe_normal_mode(
@@ -111,6 +128,7 @@ class TranscriptionService:
         language: Optional[str],
         cfg: Dict[str, Any],
         headers: Dict[str, str],
+        diarize: bool = True,
     ) -> Dict[str, Any]:
         """Synchronous transcription — single POST, wait for response."""
         url = f"{cfg['api_url']}/v1/audio/transcriptions"
@@ -121,9 +139,9 @@ class TranscriptionService:
             data = {
                 "model": cfg["model"],
                 "response_format": "verbose_json",
-                "diarize": "true",
+                "diarize": "true" if diarize else "false",
                 "vad_mode": vad_mode,
-                "return_speaker_embeddings": "true",
+                "return_speaker_embeddings": "true" if diarize else "false",
             }
             if language:
                 data["language"] = language
@@ -142,12 +160,14 @@ class TranscriptionService:
         language: Optional[str],
         cfg: Dict[str, Any],
         headers: Dict[str, str],
+        diarize: bool = True,
         on_progress: Optional[Callable[[str, float, Optional[str]], None]] = None,
         on_job_submitted: Optional[Callable[[str], Any]] = None,
     ) -> Dict[str, Any]:
         """Async VoxHub Job Mode — submit, poll, fetch result.
 
         Args:
+            diarize: whether to run speaker diarization.
             on_progress: optional callback(status, progress_percent) called on each poll.
             on_job_submitted: optional callback(job_id) called after job is submitted.
         """
@@ -164,9 +184,9 @@ class TranscriptionService:
             vad_mode = cfg.get("vad_mode") or "silero"
             data = {
                 "model": cfg["model"],
-                "diarize": "true",
+                "diarize": "true" if diarize else "false",
                 "vad_mode": vad_mode,
-                "return_speaker_embeddings": "true",
+                "return_speaker_embeddings": "true" if diarize else "false",
             }
             if language:
                 data["language"] = language
@@ -341,10 +361,12 @@ class TranscriptionService:
         on_progress: Optional[Callable[[str, float, Optional[str]], None]] = None,
     ) -> Transcription:
         """Create a transcription record and start transcription process."""
+        rec_type = detect_recording_type(original_filename)
         transcription = Transcription(
             user_id=user_id,
             filename=stored_filename,
             original_filename=original_filename,
+            recording_type=rec_type,
             language=language,
             status=TranscriptionStatus.processing,
         )
@@ -354,8 +376,9 @@ class TranscriptionService:
 
         # Transcribe asynchronously
         try:
+            should_diarize = rec_type != RecordingType.whisper
             voxhub_response = await TranscriptionService.transcribe_with_voxhub(
-                file_path, language=language, db=db, on_progress=on_progress
+                file_path, language=language, diarize=should_diarize, db=db, on_progress=on_progress
             )
             parsed = TranscriptionService.parse_voxhub_response(voxhub_response)
 
