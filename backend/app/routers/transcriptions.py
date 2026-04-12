@@ -461,10 +461,14 @@ async def queue_transcription(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to save file: {str(e)}")
 
     # Create transcription record with pending status
+    from app.services.transcription import detect_recording_type
+    rec_type = detect_recording_type(original_filename)
+
     transcription = Transcription(
         user_id=current_user.id,
         filename=stored_filename,
         original_filename=original_filename,
+        recording_type=rec_type,
         language=language,
         status=TranscriptionStatus.pending,
         keep_audio=keep_audio,
