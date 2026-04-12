@@ -3,6 +3,7 @@ import json
 import os
 import re
 import uuid
+from typing import Optional
 from pathlib import Path
 
 from fastapi import (
@@ -298,10 +299,12 @@ async def list_transcriptions(
     limit: int = Query(50, ge=1, le=200),
     sort: str = Query("newest", regex="^(newest|oldest)$"),
     filter: str = Query("all", regex="^(all|mine|shared)$"),
+    recording_type: Optional[str] = Query(None, regex="^(record|whisper)$"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List transcriptions. Supports filter: all (mine + shared), mine, shared."""
+    """List transcriptions. Supports filter: all (mine + shared), mine, shared.
+    Optional recording_type filter: record, whisper."""
     order = Transcription.created_at.desc() if sort == "newest" else Transcription.created_at.asc()
 
     if current_user.role == UserRole.admin:
@@ -357,6 +360,12 @@ async def list_transcriptions(
                 .select_from(Transcription)
                 .where(Transcription.id.in_(accessible_ids))
             )
+
+    # Apply recording_type filter if specified
+    if recording_type:
+        type_condition = Transcription.recording_type == recording_type
+        query = query.where(type_condition)
+        count_query = count_query.where(type_condition)
 
     # Execute queries
     total = await db.scalar(count_query)
