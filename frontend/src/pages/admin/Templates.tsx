@@ -45,11 +45,13 @@ export function Templates({ embedded }: { embedded?: boolean }) {
   const [isCreating, setIsCreating] = useState(false);
   const [search, setSearch] = useState('');
   const [showInactive, setShowInactive] = useState(true);
+  const [typeFilter, setTypeFilter] = useState<'all' | 'record' | 'whisper' | 'both'>('all');
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     prompt_template: '',
     category: '',
+    target_type: 'both' as string,
   });
 
   useEffect(() => {
@@ -97,7 +99,7 @@ export function Templates({ embedded }: { embedded?: boolean }) {
         const created = await templatesApi.createTemplate(formData);
         setTemplates((prev) => [...prev, created]);
       }
-      setFormData({ name: '', description: '', prompt_template: '', category: '' });
+      setFormData({ name: '', description: '', prompt_template: '', category: '', target_type: 'both' });
       setEditingId(null);
       setIsCreating(false);
     } catch (error) {
@@ -111,19 +113,20 @@ export function Templates({ embedded }: { embedded?: boolean }) {
       description: template.description || '',
       prompt_template: template.prompt_template,
       category: template.category || '',
+      target_type: template.target_type || 'both',
     });
     setEditingId(template.id);
     setIsCreating(false);
   };
 
   const startCreate = () => {
-    setFormData({ name: '', description: '', prompt_template: '', category: '' });
+    setFormData({ name: '', description: '', prompt_template: '', category: '', target_type: 'both' });
     setEditingId(null);
     setIsCreating(true);
   };
 
   const cancel = () => {
-    setFormData({ name: '', description: '', prompt_template: '', category: '' });
+    setFormData({ name: '', description: '', prompt_template: '', category: '', target_type: 'both' });
     setEditingId(null);
     setIsCreating(false);
   };
@@ -135,6 +138,9 @@ export function Templates({ embedded }: { embedded?: boolean }) {
     if (!showInactive) {
       result = result.filter((t) => t.is_active);
     }
+    if (typeFilter !== 'all') {
+      result = result.filter((t) => (t.target_type || 'both') === typeFilter);
+    }
     if (query) {
       result = result.filter(
         (t) =>
@@ -144,7 +150,7 @@ export function Templates({ embedded }: { embedded?: boolean }) {
       );
     }
     return result;
-  }, [templates, query, showInactive]);
+  }, [templates, query, showInactive, typeFilter]);
 
   const grouped = useMemo(() => groupByCategory(filtered), [filtered]);
   const isSearching = query.length > 0;
@@ -189,6 +195,23 @@ export function Templates({ embedded }: { embedded?: boolean }) {
             </button>
           )}
         </div>
+      </div>
+
+      {/* Type filter tabs */}
+      <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit">
+        {([['all', 'All'], ['record', 'Record'], ['whisper', 'Whisper'], ['both', 'Both']] as const).map(([value, label]) => (
+          <button
+            key={value}
+            onClick={() => setTypeFilter(value)}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+              typeFilter === value
+                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* Create form (only for new templates — edit is inline) */}
@@ -301,8 +324,8 @@ function TemplateForm({
   title,
   inline = false,
 }: {
-  formData: { name: string; description: string; prompt_template: string; category: string };
-  setFormData: (data: { name: string; description: string; prompt_template: string; category: string }) => void;
+  formData: { name: string; description: string; prompt_template: string; category: string; target_type: string };
+  setFormData: (data: { name: string; description: string; prompt_template: string; category: string; target_type: string }) => void;
   onSave: () => void;
   onCancel: () => void;
   title: string;
@@ -315,7 +338,7 @@ function TemplateForm({
     }>
       <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-4">{title}</h2>
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
             <input
@@ -339,6 +362,18 @@ function TemplateForm({
             <datalist id="category-suggestions">
               {CATEGORY_ORDER.map((c) => <option key={c} value={c} />)}
             </datalist>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Target Type</label>
+            <select
+              value={formData.target_type}
+              onChange={(e) => setFormData({ ...formData, target_type: e.target.value })}
+              className="w-full px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            >
+              <option value="both">Both (Record + Whisper)</option>
+              <option value="record">Record only</option>
+              <option value="whisper">Whisper only</option>
+            </select>
           </div>
         </div>
         <div>
@@ -424,6 +459,15 @@ function TemplateCard({
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {template.target_type && template.target_type !== 'both' && (
+            <span className={`px-2 py-1 text-xs font-medium rounded ${
+              template.target_type === 'whisper'
+                ? 'bg-violet-100 dark:bg-violet-900 text-violet-700 dark:text-violet-300'
+                : 'bg-sky-100 dark:bg-sky-900 text-sky-700 dark:text-sky-300'
+            }`}>
+              {template.target_type === 'whisper' ? 'Whisper' : 'Record'}
+            </span>
+          )}
           {template.is_default && (
             <span className="px-2 py-1 text-xs font-medium rounded bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300">
               Built-in
