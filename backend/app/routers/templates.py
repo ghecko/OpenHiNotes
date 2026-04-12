@@ -1,6 +1,7 @@
+from typing import Optional
 from fastapi import APIRouter, HTTPException, status, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from app.database import get_db
 from app.schemas.template import (
     SummaryTemplateCreate,
@@ -20,13 +21,22 @@ async def list_templates(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     include_inactive: bool = Query(False),
+    target_type: Optional[str] = Query(None, regex="^(record|whisper)$"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List summary templates. Admin can include inactive templates."""
+    """List summary templates. Optionally filter by target_type (record/whisper).
+    When target_type is given, returns templates matching that type OR 'both'."""
     query = select(SummaryTemplate)
     if not include_inactive or current_user.role.value != "admin":
         query = query.where(SummaryTemplate.is_active == True)
+    if target_type:
+        query = query.where(
+            or_(
+                SummaryTemplate.target_type == target_type,
+                SummaryTemplate.target_type == "both",
+            )
+        )
     result = await db.execute(query.offset(skip).limit(limit))
     templates = result.scalars().all()
     return templates
@@ -66,6 +76,7 @@ async def create_template(
         description=template_create.description,
         prompt_template=template_create.prompt_template,
         category=template_create.category,
+        target_type=template_create.target_type,
         created_by=current_user.id,
         is_active=template_create.is_active,
     )
@@ -123,6 +134,8 @@ async def update_template(
         template.prompt_template = template_update.prompt_template
     if template_update.category is not None:
         template.category = template_update.category
+    if template_update.target_type is not None:
+        template.target_type = template_update.target_type
     if template_update.is_active is not None:
         template.is_active = template_update.is_active
 

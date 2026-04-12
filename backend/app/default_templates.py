@@ -1,6 +1,7 @@
 """Default summary templates shipped with OpenHiNotes.
 
-Each template is a dict with: name, category, description, prompt_template.
+Each template is a dict with: name, category, description, prompt_template,
+and optionally target_type ("record" | "whisper" | "both", default "both").
 The prompt_template uses {{transcript}} as placeholder and follows a hybrid style:
 short instruction + required Markdown sections — the LLM infers the rest.
 """
@@ -773,6 +774,76 @@ DEFAULT_TEMPLATES: list[dict] = [
             "Potential risks raised during the call (uptime, compliance, data sensitivity).\n\n"
             "## 🎯 Next Steps\n"
             "| Action | Owner | Deadline |\n|---|---|---|\n\n"
+            "{{transcript}}"
+        ),
+    },
+
+    # ──────────────────────────────────────────────
+    # WHISPER-SPECIFIC TEMPLATES
+    # ──────────────────────────────────────────────
+    {
+        "name": "Quick Idea Summary",
+        "category": "General",
+        "target_type": "whisper",
+        "description": "Distill a voice memo into a concise idea summary with next steps.",
+        "prompt_template": (
+            "The following is a transcription of a short voice memo. "
+            "Clean it up and present it as a concise, well-structured note.\n\n"
+            "## 💡 Idea\n"
+            "One-paragraph summary of the core idea or thought.\n\n"
+            "## 🔑 Key Points\n"
+            "Bullet list of the main points mentioned.\n\n"
+            "## 🎯 Next Steps\n"
+            "- [ ] Actionable follow-ups extracted from the memo.\n\n"
+            "{{transcript}}"
+        ),
+    },
+    {
+        "name": "Shopping / Grocery List",
+        "category": "General",
+        "target_type": "whisper",
+        "description": "Extract items from a spoken shopping or grocery list.",
+        "prompt_template": (
+            "The following is a transcription of a voice memo listing items to buy. "
+            "Extract and organize the items into a clean checklist.\n\n"
+            "## 🛒 Shopping List\n"
+            "Group items by category (produce, dairy, meat, pantry, household, etc.). "
+            "Use checkboxes:\n"
+            "- [ ] Item (quantity if mentioned)\n\n"
+            "If any notes or preferences were mentioned (brand, store, etc.), "
+            "add them as sub-bullets under the relevant item.\n\n"
+            "{{transcript}}"
+        ),
+    },
+    {
+        "name": "Action Items Checklist",
+        "category": "General",
+        "target_type": "whisper",
+        "description": "Turn a rambling voice memo into a prioritized task list.",
+        "prompt_template": (
+            "The following is a transcription of a voice memo about tasks or things to do. "
+            "Extract every actionable item and present them as a checklist.\n\n"
+            "## ✅ Action Items\n"
+            "Use checkboxes, ordered by priority (most urgent first):\n"
+            "- [ ] Task description (deadline or context if mentioned)\n\n"
+            "## 📝 Additional Notes\n"
+            "Any context, reminders, or non-actionable thoughts worth keeping.\n\n"
+            "{{transcript}}"
+        ),
+    },
+    {
+        "name": "Voice Memo to Clean Notes",
+        "category": "General",
+        "target_type": "whisper",
+        "description": "Transform a raw voice memo into polished, readable notes.",
+        "prompt_template": (
+            "The following is a raw transcription of a voice memo. "
+            "Rewrite it as clean, well-organized notes. "
+            "Fix grammar, remove filler words, and structure the content logically.\n\n"
+            "Use appropriate headings, bullet points, and emphasis. "
+            "Preserve all meaningful content but make it concise and scannable. "
+            "If the memo contains any tasks or deadlines, format them as checkboxes:\n"
+            "- [ ] Task\n\n"
             "{{transcript}}"
         ),
     },

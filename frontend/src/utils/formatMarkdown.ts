@@ -50,9 +50,9 @@ export function formatMarkdown(text: string): string {
     // Italic: *text* or _text_
     .replace(/(?<!\w)\*(.+?)\*(?!\w)/g, '<em>$1</em>')
     .replace(/(?<!\w)_(.+?)_(?!\w)/g, '<em>$1</em>')
-    // Checkboxes: - [ ] and - [x]
-    .replace(/^[\s]*[-*]\s+\[x\]\s+(.+)$/gim, '<label class="flex items-start gap-2 ml-4 cursor-pointer"><input type="checkbox" checked disabled class="mt-1 rounded border-gray-300 text-primary-600" /><span class="line-through text-gray-500 dark:text-gray-400">$1</span></label>')
-    .replace(/^[\s]*[-*]\s+\[\s?\]\s+(.+)$/gm, '<label class="flex items-start gap-2 ml-4 cursor-pointer"><input type="checkbox" disabled class="mt-1 rounded border-gray-300" /><span>$1</span></label>')
+    // Checkboxes: - [ ] and - [x]  (interactive when wrapped in a handler)
+    .replace(/^[\s]*[-*]\s+\[x\]\s+(.+)$/gim, '<label class="flex items-start gap-2 ml-4 cursor-pointer checkbox-item"><input type="checkbox" checked class="mt-1 rounded border-gray-300 text-primary-600 checkbox-toggle" /><span class="line-through text-gray-500 dark:text-gray-400">$1</span></label>')
+    .replace(/^[\s]*[-*]\s+\[\s?\]\s+(.+)$/gm, '<label class="flex items-start gap-2 ml-4 cursor-pointer checkbox-item"><input type="checkbox" class="mt-1 rounded border-gray-300 checkbox-toggle" /><span>$1</span></label>')
     // Unordered list items: lines starting with "- " or "* "
     .replace(/^[\s]*[-*]\s+(.+)$/gm, '<li class="ml-4">$1</li>')
     // Ordered list items: lines starting with "1. ", "2. ", etc.

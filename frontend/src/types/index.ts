@@ -135,12 +135,15 @@ export interface SharedWithMeItem {
   shared_at: string;
 }
 
+export type TemplateTargetType = 'record' | 'whisper' | 'both';
+
 export interface SummaryTemplate {
   id: string;
   name: string;
   description: string;
   prompt_template: string;
   category: string | null;
+  target_type: TemplateTargetType;
   is_active: boolean;
   is_default: boolean;
   created_at: string;

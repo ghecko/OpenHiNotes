@@ -10,6 +10,7 @@ class SummaryTemplateCreate(BaseModel):
     description: Optional[str] = None
     prompt_template: str
     category: Optional[str] = None
+    target_type: str = "both"  # "record" | "whisper" | "both"
     is_active: bool = True
 
 
@@ -19,6 +20,7 @@ class SummaryTemplateUpdate(BaseModel):
     description: Optional[str] = None
     prompt_template: Optional[str] = None
     category: Optional[str] = None
+    target_type: Optional[str] = None
     is_active: Optional[bool] = None
 
 
@@ -29,6 +31,7 @@ class SummaryTemplateResponse(BaseModel):
     description: Optional[str] = None
     prompt_template: str
     category: Optional[str] = None
+    target_type: str = "both"
     created_by: uuid.UUID
     is_active: bool
     is_default: bool = False

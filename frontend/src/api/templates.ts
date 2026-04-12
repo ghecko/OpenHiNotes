@@ -6,6 +6,7 @@ interface CreateTemplateData {
   description: string;
   prompt_template: string;
   category?: string;
+  target_type?: string;
 }
 
 interface UpdateTemplateData {
@@ -13,13 +14,17 @@ interface UpdateTemplateData {
   description?: string;
   prompt_template?: string;
   category?: string;
+  target_type?: string;
   is_active?: boolean;
 }
 
 export const templatesApi = {
-  async getTemplates(includeInactive = false): Promise<SummaryTemplate[]> {
-    const params = includeInactive ? '?include_inactive=true' : '';
-    return apiClient.get<SummaryTemplate[]>(`/templates${params}`);
+  async getTemplates(includeInactive = false, targetType?: 'record' | 'whisper'): Promise<SummaryTemplate[]> {
+    const params = new URLSearchParams();
+    if (includeInactive) params.set('include_inactive', 'true');
+    if (targetType) params.set('target_type', targetType);
+    const qs = params.toString();
+    return apiClient.get<SummaryTemplate[]>(`/templates${qs ? `?${qs}` : ''}`);
   },
 
   async createTemplate(data: CreateTemplateData): Promise<SummaryTemplate> {

@@ -16,6 +16,10 @@ export const summariesApi = {
     return apiClient.get<Summary[]>(`/summaries?transcription_id=${transcriptionId}`);
   },
 
+  async updateContent(id: string, content: string): Promise<Summary> {
+    return apiClient.patch<Summary>(`/summaries/${id}`, { content });
+  },
+
   async deleteSummary(id: string): Promise<void> {
     return apiClient.delete<void>(`/summaries/${id}`);
   },

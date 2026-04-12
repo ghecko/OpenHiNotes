@@ -15,17 +15,19 @@ import { Transcription, Summary, SummaryTemplate, Collection } from '@/types';
 import { format } from 'date-fns';
 import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, Play, Pause, Volume2, Disc3, Share2, Lock, Eye } from 'lucide-react';
 import { ShareModal } from '@/components/ShareModal';
-import { formatMarkdown } from '@/utils/formatMarkdown';
+import { InteractiveMarkdown } from '@/components/InteractiveMarkdown';
 import { TemplateSelector } from '@/components/TemplateSelector';
 
 function SummaryModal({
   summary,
   onClose,
   onDelete,
+  onContentChange,
 }: {
   summary: Summary;
   onClose: () => void;
   onDelete: (id: string) => void;
+  onContentChange?: (newContent: string) => void;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
@@ -59,9 +61,10 @@ function SummaryModal({
         </div>
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
-          <div
+          <InteractiveMarkdown
+            content={summary.content}
+            onContentChange={onContentChange}
             className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed markdown-content"
-            dangerouslySetInnerHTML={{ __html: formatMarkdown(summary.content) }}
           />
         </div>
       </div>
@@ -98,6 +101,7 @@ export function TranscriptionDetail() {
   // Derived permission
   const permissionLevel = transcription?.permission_level || 'owner';
   const canEdit = permissionLevel === 'owner' || permissionLevel === 'write';
+  const isWhisper = transcription?.recording_type === 'whisper';
   const isOwner = permissionLevel === 'owner';
 
   // Audio playback
@@ -157,7 +161,8 @@ export function TranscriptionDetail() {
       const s = await summariesApi.getSummaries(id);
       setSummaries(s);
 
-      const temps = await templatesApi.getTemplates();
+      const recType = t.recording_type === 'whisper' ? 'whisper' : 'record';
+      const temps = await templatesApi.getTemplates(false, recType);
       setTemplates(temps);
 
       const colls = await collectionsApi.list();
@@ -424,6 +429,17 @@ export function TranscriptionDetail() {
       console.error('Failed to delete summary:', error);
     }
   };
+
+  /** Persist checkbox toggle in summary markdown. */
+  const handleSummaryContentChange = useCallback(async (summaryId: string, newContent: string) => {
+    // Optimistic update
+    setSummaries((prev) => prev.map((s) => s.id === summaryId ? { ...s, content: newContent } : s));
+    try {
+      await summariesApi.updateContent(summaryId, newContent);
+    } catch (err) {
+      console.error('Failed to update summary content:', err);
+    }
+  }, []);
 
   if (isLoading) {
     return (
@@ -752,61 +768,75 @@ export function TranscriptionDetail() {
           </div>
         )}
 
-        <TranscriptionViewer
-          transcription={transcription}
-          currentTime={audioBlob ? playbackTime : undefined}
-          onSeek={audioBlob ? handleSeekAudio : undefined}
-          onSpeakerUpdate={canEdit ? async (speakerId, newName) => {
-            if (!transcription) return;
-            const updatedSpeakers = { ...transcription.speakers, [speakerId]: newName };
-            try {
-              const updated = await transcriptionsApi.updateSpeakers(transcription.id, updatedSpeakers);
-              setTranscription(updated);
-            } catch (error) {
-              console.error('Failed to update speaker:', error);
-            }
-          } : undefined}
-          onSegmentReassign={canEdit ? async (segmentIndex, newSpeaker) => {
-            if (!transcription) return;
-            try {
-              const updated = await transcriptionsApi.reassignSegmentSpeaker(
+        {isWhisper ? (
+          /* ── Whisper: clean note-style view (no speakers, no timeline) ── */
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+            {transcription.text ? (
+              <div className="prose prose-sm dark:prose-invert max-w-none text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">
+                {transcription.text}
+              </div>
+            ) : (
+              <p className="text-gray-500 dark:text-gray-400 italic">No text yet — transcription may still be in progress.</p>
+            )}
+          </div>
+        ) : (
+          /* ── Record: full speaker-aware transcript viewer ── */
+          <TranscriptionViewer
+            transcription={transcription}
+            currentTime={audioBlob ? playbackTime : undefined}
+            onSeek={audioBlob ? handleSeekAudio : undefined}
+            onSpeakerUpdate={canEdit ? async (speakerId, newName) => {
+              if (!transcription) return;
+              const updatedSpeakers = { ...transcription.speakers, [speakerId]: newName };
+              try {
+                const updated = await transcriptionsApi.updateSpeakers(transcription.id, updatedSpeakers);
+                setTranscription(updated);
+              } catch (error) {
+                console.error('Failed to update speaker:', error);
+              }
+            } : undefined}
+            onSegmentReassign={canEdit ? async (segmentIndex, newSpeaker) => {
+              if (!transcription) return;
+              try {
+                const updated = await transcriptionsApi.reassignSegmentSpeaker(
+                  transcription.id,
+                  [segmentIndex],
+                  newSpeaker,
+                );
+                setTranscription(updated);
+              } catch (error) {
+                console.error('Failed to reassign segment speaker:', error);
+              }
+            } : undefined}
+            onSegmentTextUpdate={canEdit ? async (segmentIndex, newText) => {
+              if (!transcription) return;
+              try {
+                const updated = await transcriptionsApi.updateSegmentText(
+                  transcription.id,
+                  segmentIndex,
+                  newText,
+                );
+                setTranscription(updated);
+              } catch (error) {
+                console.error('Failed to update segment text:', error);
+              }
+            } : undefined}
+            onFindReplace={canEdit ? async (find, replace, caseSensitive) => {
+              if (!transcription) return;
+              const updated = await transcriptionsApi.findAndReplace(
                 transcription.id,
-                [segmentIndex],
-                newSpeaker,
+                find,
+                replace,
+                caseSensitive,
               );
               setTranscription(updated);
-            } catch (error) {
-              console.error('Failed to reassign segment speaker:', error);
-            }
-          } : undefined}
-          onSegmentTextUpdate={canEdit ? async (segmentIndex, newText) => {
-            if (!transcription) return;
-            try {
-              const updated = await transcriptionsApi.updateSegmentText(
-                transcription.id,
-                segmentIndex,
-                newText,
-              );
-              setTranscription(updated);
-            } catch (error) {
-              console.error('Failed to update segment text:', error);
-            }
-          } : undefined}
-          onFindReplace={canEdit ? async (find, replace, caseSensitive) => {
-            if (!transcription) return;
-            const updated = await transcriptionsApi.findAndReplace(
-              transcription.id,
-              find,
-              replace,
-              caseSensitive,
-            );
-            setTranscription(updated);
-          } : undefined}
-        />
+            } : undefined}
+          />
+        )}
 
         {transcription.status === 'completed' && (
           <>
-            {showSpeakerEditor ? (
+            {!isWhisper && (showSpeakerEditor ? (
               <SpeakerEditor
                 speakers={transcription.speakers}
                 segments={transcription.segments}
@@ -819,7 +849,7 @@ export function TranscriptionDetail() {
               >
                 Edit Speaker Names
               </button>
-            )}
+            ))}
 
             <div className="bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
               <label className="block text-sm font-semibold text-gray-900 dark:text-white mb-3">
@@ -861,9 +891,10 @@ export function TranscriptionDetail() {
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                    <div
+                    <InteractiveMarkdown
+                      content={summaries[0].content}
+                      onContentChange={(c) => handleSummaryContentChange(summaries[0].id, c)}
                       className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed"
-                      dangerouslySetInnerHTML={{ __html: formatMarkdown(summaries[0].content) }}
                     />
                   </div>
                 </div>
@@ -909,6 +940,7 @@ export function TranscriptionDetail() {
                   summary={openSummary}
                   onClose={() => setOpenSummaryId(null)}
                   onDelete={handleDeleteSummary}
+                  onContentChange={(c) => handleSummaryContentChange(openSummary.id, c)}
                 />
               )}
 

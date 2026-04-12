@@ -121,6 +121,7 @@ async def seed_default_templates():
                         description=tpl["description"],
                         prompt_template=tpl["prompt_template"],
                         category=tpl.get("category"),
+                        target_type=tpl.get("target_type", "both"),
                         created_by=admin_user.id,
                         is_active=True,
                         is_default=True,
@@ -129,15 +130,19 @@ async def seed_default_templates():
                 await db.commit()
                 logger.info(f"Seeded {len(DEFAULT_TEMPLATES)} default templates")
             else:
-                # Sync: update categories + add missing templates
+                # Sync: update categories, target_type + add missing templates
                 updated = 0
                 added = 0
                 for tpl in DEFAULT_TEMPLATES:
                     if tpl["name"] in existing:
                         db_tpl = existing[tpl["name"]]
                         new_cat = tpl.get("category")
+                        new_target = tpl.get("target_type", "both")
                         if db_tpl.category != new_cat:
                             db_tpl.category = new_cat
+                            updated += 1
+                        if str(db_tpl.target_type) != new_target and str(getattr(db_tpl.target_type, 'value', db_tpl.target_type)) != new_target:
+                            db_tpl.target_type = new_target
                             updated += 1
                     else:
                         # New template added since last seed
@@ -146,6 +151,7 @@ async def seed_default_templates():
                             description=tpl["description"],
                             prompt_template=tpl["prompt_template"],
                             category=tpl.get("category"),
+                            target_type=tpl.get("target_type", "both"),
                             created_by=admin_user.id,
                             is_active=True,
                             is_default=True,

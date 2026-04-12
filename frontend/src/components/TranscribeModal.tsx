@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X, Loader, CheckCircle, ExternalLink, Server } from 'lucide-react';
-import { Transcription, SummaryTemplate } from '@/types';
+import { Transcription, SummaryTemplate, RecordingType } from '@/types';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { collectionsApi } from '@/api/collections';
 import { templatesApi } from '@/api/templates';
@@ -63,15 +63,20 @@ export function TranscribeModal({
       .catch(() => {});
   }, []);
 
+  const recordingType: RecordingType = useMemo(
+    () => (/wip/i.test(fileName) ? 'whisper' : 'record'),
+    [fileName],
+  );
+
   useEffect(() => {
     if (autoSummarize) {
       loadTemplates();
     }
-  }, [autoSummarize]);
+  }, [autoSummarize, recordingType]);
 
   const loadTemplates = async () => {
     try {
-      const t = await templatesApi.getTemplates();
+      const t = await templatesApi.getTemplates(false, recordingType);
       setTemplates(t);
       if (t.length > 0) {
         setSelectedTemplate(t[0].id);

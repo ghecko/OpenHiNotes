@@ -162,6 +162,45 @@ async def list_summaries(
     return summaries
 
 
+@router.patch("/{summary_id}", response_model=SummaryResponse)
+async def update_summary_content(
+    summary_id: uuid.UUID,
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a summary's content (e.g. checkbox toggle)."""
+    result = await db.execute(
+        select(Summary).where(Summary.id == summary_id)
+    )
+    summary = result.scalars().first()
+
+    if not summary:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Summary not found",
+        )
+
+    # Check authorization via transcription
+    result = await db.execute(
+        select(Transcription).where(Transcription.id == summary.transcription_id)
+    )
+    transcription = result.scalars().first()
+
+    if transcription and current_user.role != UserRole.admin and transcription.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to update this summary",
+        )
+
+    if "content" in payload:
+        summary.content = payload["content"]
+
+    await db.commit()
+    await db.refresh(summary)
+    return summary
+
+
 @router.delete("/{summary_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_summary(
     summary_id: uuid.UUID,
