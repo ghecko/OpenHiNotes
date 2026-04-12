@@ -12,9 +12,10 @@ import { recordingAliasesApi } from '@/api/recordingAliases';
 import { Play, Download, Trash2, Zap, FileText, AlertCircle, Pencil, X, CheckCircle, FolderOpen, TriangleAlert, Server, ServerOff, Mic, MessageSquare } from 'lucide-react';
 import type { RecordingType } from '@/types';
 
-/** Detect recording type from HiDock filename convention. */
+/** Detect recording type from HiDock filename convention.
+ *  Filenames like "2026Apr12-122705-Wip08.hda" contain the type marker after the timestamp. */
 function detectRecordingType(fileName: string): RecordingType {
-  return fileName.toLowerCase().startsWith('wip') ? 'whisper' : 'record';
+  return /wip/i.test(fileName) ? 'whisper' : 'record';
 }
 import { format } from 'date-fns';
 import { settingsApi } from '@/api/settings';

@@ -22,11 +22,11 @@ def detect_recording_type(original_filename: str) -> RecordingType:
     """Detect recording type from HiDock filename conventions.
 
     HiDock names files like:
-      - "Rec_2025-01-15_10-30-00.wav"  → multi-speaker record
-      - "Wip_2025-01-15_10-30-00.wav"  → single-speaker whisper memo
+      - "2026Apr12-122606-Rec54.hda"  → multi-speaker record
+      - "2026Apr12-122705-Wip08.hda"  → single-speaker whisper memo
+    The type marker (Rec/Wip) appears after the timestamp, not at the start.
     """
-    stem = Path(original_filename).stem.lower()
-    if stem.startswith("wip"):
+    if "wip" in original_filename.lower():
         return RecordingType.whisper
     return RecordingType.record
 
