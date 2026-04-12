@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Query, Request
+from fastapi import APIRouter, HTTPException, status, Depends, Query, Request, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
 from app.database import get_db
@@ -334,11 +334,14 @@ async def get_recording_aliases(
 
 @router.put("/me/recording-aliases", response_model=dict)
 async def update_recording_aliases(
-    aliases: dict,
+    aliases: dict = Body(...),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Replace the current user's recording aliases map."""
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"PUT recording-aliases: received {aliases} for user {current_user.id}")
     from sqlalchemy.orm.attributes import flag_modified
     # Re-fetch within this session to ensure the ORM tracks it properly
     result = await db.execute(select(User).where(User.id == current_user.id))
@@ -347,4 +350,5 @@ async def update_recording_aliases(
     flag_modified(user, "recording_aliases")
     await db.commit()
     await db.refresh(user)
+    logger.info(f"PUT recording-aliases: after commit {user.recording_aliases}")
     return user.recording_aliases or {}
