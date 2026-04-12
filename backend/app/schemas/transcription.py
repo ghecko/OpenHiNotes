@@ -59,6 +59,7 @@ class TranscriptionResponse(BaseModel):
     user_id: uuid.UUID
     filename: str
     original_filename: str
+    recording_type: str = "record"
     title: Optional[str] = None
     collection_id: Optional[uuid.UUID] = None
     audio_duration: Optional[float] = None

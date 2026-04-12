@@ -6,6 +6,12 @@ from enum import Enum
 from app.database import Base
 
 
+class RecordingType(str, Enum):
+    """Whether the source audio is a multi-speaker recording or a single-speaker whisper memo."""
+    record = "record"
+    whisper = "whisper"
+
+
 class TranscriptionStatus(str, Enum):
     """Transcription status enumeration."""
     pending = "pending"
@@ -25,6 +31,9 @@ class Transcription(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    recording_type: Mapped[RecordingType] = mapped_column(
+        SQLEnum(RecordingType), default=RecordingType.record, nullable=False, server_default="record"
+    )
     title: Mapped[str] = mapped_column(String(255), nullable=True)
     collection_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("collections.id", ondelete="SET NULL"), nullable=True, index=True
