@@ -15,7 +15,7 @@ A self-hosted web application for managing, transcribing, and summarizing audio 
 - **SSO / OIDC** — single sign-on via any OpenID Connect provider (Google, Microsoft Entra ID, Keycloak, Okta, Auth0, etc.), multiple providers simultaneously
 - **Collections & sharing** — organize transcriptions into collections, share with users or groups
 - **Dark mode** — system-aware theme with manual toggle, glass-morphism UI
-- **Fully dockerized** — Docker Compose with PostgreSQL, FastAPI, Vite/Nginx, and Caddy (HTTPS required for WebUSB)
+- **Fully dockerized** — Docker Compose with PostgreSQL, FastAPI, and Vite/Nginx — designed to sit behind an existing reverse proxy (Caddy, Nginx, Traefik, etc.) over a shared Docker network
 
 ## Architecture
 
@@ -30,39 +30,75 @@ A self-hosted web application for managing, transcribing, and summarizing audio 
 └──────┬───────┘                                        │
        │ HTTPS                                          │
 ┌──────▼───────┐       ┌──────────────┐                 │
-│    Caddy     │──────►│   FastAPI    │─────────────────┘
-│  (reverse    │       │   Backend    │
-│   proxy)     │       │              │───────► LLM API (chat/summaries)
-└──────────────┘       └──────┬───────┘
-                              │
-                       ┌──────▼───────┐
+│  Your reverse│──────►│   FastAPI    │─────────────────┘
+│  proxy       │       │   Backend    │
+│  (Caddy /    │       │              │───────► LLM API (chat/summaries)
+│   Nginx /    │       └──────┬───────┘
+│   Traefik)   │──────►┌──────▼───────┐
+└──────────────┘       │  React/Nginx │
+       ▲               │  Frontend    │
+       │               └──────────────┘
+ proxy-net                    │
+ (Docker network)      ┌──────▼───────┐
                        │  PostgreSQL  │
                        └──────────────┘
 ```
 
+OpenHiNotes does **not** bundle a reverse proxy. The `frontend` container joins an external Docker network (`proxy-net`) so your existing proxy can reach it by container name (`hinotes-frontend`). The `db` and `backend` containers are isolated on an internal network and are never exposed to the host.
+
 ---
 
-## Quick Start (Development)
+## Quick Start
+
+> **Just want to try it out?** See [docs/STANDALONE_QUICKSTART.md](docs/STANDALONE_QUICKSTART.md) for a one-command setup with a bundled self-signed Caddy — no external reverse proxy needed.
+
+The instructions below assume you already run a reverse proxy on your server (Caddy, Nginx, Traefik, etc.) and want to integrate OpenHiNotes into it.
 
 ### Prerequisites
 
 - Docker and Docker Compose
 - A [VoxHub](https://github.com/ghecko/VoxHub) server for transcription
-- Optionally, an OpenAI-compatible LLM endpoint (Ollama, LM Studio, OpenAI, etc.)
+- A reverse proxy (Caddy, Nginx, Traefik, etc.) serving HTTPS — **required for WebUSB**
+- An external Docker network named `proxy-net` that your reverse proxy already uses
 
-### Setup
+> **Why a separate reverse proxy?** WebUSB requires a secure context (HTTPS). OpenHiNotes is designed to sit behind whatever proxy you already run on your server, keeping the compose file simple and avoiding bundled certificate management.
+
+### 1. Create the shared network (once per host)
+
+```bash
+docker network create proxy-net
+```
+
+### 2. Configure and start
 
 ```bash
 git clone https://github.com/ghecko/OpenHiNotes.git
 cd OpenHiNotes
 
 cp .env.example .env
-# Edit .env — at minimum set VOXHUB_API_URL and LLM_API_URL
+# Edit .env — at minimum set VOXHUB_API_URL, LLM_API_URL, and SITE_HOST
 
-docker compose up --build
+docker compose up -d --build
 ```
 
-Open **https://localhost:8443** in your browser (accept the self-signed certificate). HTTPS is required for WebUSB.
+### 3. Point your reverse proxy at the frontend
+
+The frontend container is named `hinotes-frontend` and listens on port 80. Example Caddy block:
+
+```caddyfile
+hinotes.yourdomain.com {
+    handle /api/* {
+        reverse_proxy backend:8000
+    }
+    handle {
+        reverse_proxy hinotes-frontend:80
+    }
+}
+```
+
+> For Nginx or Traefik, route `/api/*` to the backend container on port 8000 and everything else to `hinotes-frontend:80`.
+
+Open your configured domain in a browser. HTTPS is required for WebUSB to function.
 
 Default admin credentials (override in `.env` before first startup):
 
@@ -77,7 +113,7 @@ Default admin credentials (override in `.env` before first startup):
 
 ### 1. Prepare the server
 
-Any Linux host with Docker and Docker Compose installed. The server must be reachable on ports 80 and 443.
+Any Linux host with Docker and Docker Compose installed. The server must be reachable on ports 80 and 443 via your reverse proxy.
 
 ### 2. Configure environment
 
@@ -104,30 +140,29 @@ Fill in every variable — pay special attention to the ones marked **required**
 
 > **Security note**: `VOICE_EMBEDDING_KEY` and `OIDC_ENCRYPTION_KEY` default to a derivation of `SECRET_KEY` if left empty. Set them explicitly in production so that rotating `SECRET_KEY` doesn't break encrypted data.
 
-### 3. Configure TLS
+### 3. Configure your reverse proxy
 
-The production Caddyfile (`Caddyfile.prod`) uses `tls internal` (self-signed). For a real domain with automatic Let's Encrypt certificates, replace that block with your domain:
+Point your existing proxy at the `hinotes-frontend` container (port 80) for the UI and `backend` container (port 8000) for `/api/*`. Both are reachable via the shared `proxy-net` Docker network.
+
+Example Caddy block for production:
 
 ```caddyfile
 hinotes.company.com {
-    # API routes → backend
     handle /api/* {
         reverse_proxy backend:8000
     }
-
-    # Static frontend
     handle {
-        reverse_proxy frontend:80
+        reverse_proxy hinotes-frontend:80
     }
 }
 ```
 
-Caddy will automatically obtain and renew a Let's Encrypt certificate when given a real domain name.
+If your proxy runs outside Docker, expose the frontend port in `docker-compose.yml` and proxy to `localhost:<port>` instead.
 
 ### 4. Launch
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d --build
+docker compose up -d --build
 ```
 
 ### 5. First login

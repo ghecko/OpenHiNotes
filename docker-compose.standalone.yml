@@ -52,17 +52,32 @@ services:
       - backend
     networks:
       - hinotes-internal
-      - proxy-net
     environment:
       - SITE_HOST=${SITE_HOST:-localhost}
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - hinotes-internal
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile.standalone:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
 
 volumes:
   postgres_data:
   uploads_data:
+  caddy_data:
+  caddy_config:
 
 networks:
   hinotes-internal:
-    name: hinotes-internal
+    name: hinotes-internal-standalone
     driver: bridge
-  proxy-net:
-    external: true

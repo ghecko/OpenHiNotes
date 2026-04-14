@@ -13,7 +13,7 @@ import { useDeviceConnection } from '@/hooks/useDeviceConnection';
 import { deviceService } from '@/services/deviceService';
 import { Transcription, Summary, SummaryTemplate, Collection } from '@/types';
 import { format } from 'date-fns';
-import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, Play, Pause, Volume2, Disc3, Share2, Lock, Eye } from 'lucide-react';
+import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, Play, Pause, Volume2, Disc3, Share2, Lock, Eye, ChevronDown } from 'lucide-react';
 import { ShareModal } from '@/components/ShareModal';
 import { InteractiveMarkdown } from '@/components/InteractiveMarkdown';
 import { TemplateSelector } from '@/components/TemplateSelector';
@@ -98,6 +98,20 @@ export function TranscriptionDetail() {
 
   // Share modal
   const [showShareModal, setShowShareModal] = useState(false);
+
+  // Export dropdown
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   // Derived permission
   const permissionLevel = transcription?.permission_level || 'owner';
@@ -531,6 +545,26 @@ export function TranscriptionDetail() {
     downloadFile(lines.join('\n'), `${baseName}.txt`, 'text/plain');
   };
 
+  const handleExport = (fmt: string) => {
+    setShowExportMenu(false);
+    const token = localStorage.getItem('auth_token');
+    const url = `/api/transcriptions/${transcription.id}/export?format=${fmt}`;
+    // Use anchor click so the browser triggers a download with the correct filename
+    const a = document.createElement('a');
+    a.href = token ? `${url}&token=${token}` : url;
+    // Let the server provide the filename via Content-Disposition
+    a.setAttribute('download', '');
+    // Use fetch + blob for authenticated requests
+    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.blob())
+      .then((blob) => {
+        const objectUrl = URL.createObjectURL(blob);
+        a.href = objectUrl;
+        a.click();
+        URL.revokeObjectURL(objectUrl);
+      });
+  };
+
   return (
     <Layout title={displayTitle}>
       <div className="space-y-6">
@@ -598,26 +632,51 @@ export function TranscriptionDetail() {
               </button>
             )}
 
-            {/* Download buttons */}
+            {/* Export dropdown */}
             {transcription.status === 'completed' && (
-              <>
+              <div className="relative" ref={exportMenuRef}>
                 <button
-                  onClick={handleDownloadJSON}
+                  onClick={() => setShowExportMenu((v) => !v)}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
-                  title="Download as JSON with timestamps"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  JSON
+                  Export
+                  <ChevronDown className="w-3 h-3" />
                 </button>
-                <button
-                  onClick={handleDownloadTXT}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
-                  title="Download as plain text with timestamps"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  TXT
-                </button>
-              </>
+                {showExportMenu && (
+                  <div className="absolute right-0 mt-1 w-44 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20 overflow-hidden">
+                    {(isWhisper
+                      ? [
+                          { fmt: 'txt', label: 'Plain Text (.txt)' },
+                          { fmt: 'md',  label: 'Markdown (.md)' },
+                          { fmt: 'docx', label: 'Word (.docx)' },
+                        ]
+                      : [
+                          { fmt: 'txt',  label: 'Plain Text (.txt)' },
+                          { fmt: 'srt',  label: 'Subtitles (.srt)' },
+                          { fmt: 'vtt',  label: 'WebVTT (.vtt)' },
+                          { fmt: 'md',   label: 'Markdown (.md)' },
+                          { fmt: 'docx', label: 'Word (.docx)' },
+                        ]
+                    ).map(({ fmt, label }) => (
+                      <button
+                        key={fmt}
+                        onClick={() => handleExport(fmt)}
+                        className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    <div className="border-t border-gray-100 dark:border-gray-700" />
+                    <button
+                      onClick={() => { setShowExportMenu(false); handleDownloadJSON(); }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                    >
+                      Raw JSON (.json)
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
