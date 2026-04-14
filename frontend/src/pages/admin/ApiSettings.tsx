@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Layout } from '@/components/Layout';
 import { settingsApi, AppSetting } from '@/api/settings';
-import { Save, RotateCcw, Loader, CheckCircle, AlertCircle, Server, Fingerprint } from 'lucide-react';
+import { Save, RotateCcw, Loader, CheckCircle, AlertCircle, Server, Fingerprint, Users } from 'lucide-react';
 
 const VAD_MODE_OPTIONS = [
   { value: 'silero', label: 'Silero — Fast, lightweight VAD' },
@@ -69,11 +69,14 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
   const [savingAudio, setSavingAudio] = useState(false);
   const [voiceFingerprintingEnabled, setVoiceFingerprintingEnabled] = useState(false);
   const [savingVoice, setSavingVoice] = useState(false);
+  const [allowUserGroupCreation, setAllowUserGroupCreation] = useState(false);
+  const [savingGroups, setSavingGroups] = useState(false);
 
   useEffect(() => {
     loadSettings();
     loadAudioSettings();
     loadVoiceFingerprintingSetting();
+    loadGroupsSettings();
   }, []);
 
   const loadAudioSettings = async () => {
@@ -109,6 +112,29 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
       setMessage({ type: 'error', text: 'Failed to update voice fingerprinting setting' });
     } finally {
       setSavingVoice(false);
+    }
+  };
+
+  const loadGroupsSettings = async () => {
+    try {
+      const data = await settingsApi.getGroupsSettings();
+      setAllowUserGroupCreation(data.allow_user_group_creation);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleToggleUserGroupCreation = async () => {
+    setSavingGroups(true);
+    try {
+      const newValue = !allowUserGroupCreation;
+      await settingsApi.updateGroupsSettings(newValue);
+      setAllowUserGroupCreation(newValue);
+      setMessage({ type: 'success', text: `User group creation ${newValue ? 'enabled' : 'disabled'}` });
+    } catch {
+      setMessage({ type: 'error', text: 'Failed to update group creation setting' });
+    } finally {
+      setSavingGroups(false);
     }
   };
 
@@ -436,6 +462,42 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
                     <span
                       className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
                         voiceFingerprintingEnabled ? 'translate-x-7' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Groups Settings */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Users className="w-5 h-5 text-gray-500" />
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Groups</h3>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Allow users to create groups
+                    </label>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                      When enabled, regular users can create their own groups and invite members.
+                      Admins can always create groups regardless of this setting.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleToggleUserGroupCreation}
+                    disabled={savingGroups}
+                    className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${
+                      allowUserGroupCreation ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
+                    } ${savingGroups ? 'opacity-50' : ''}`}
+                  >
+                    <span
+                      className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                        allowUserGroupCreation ? 'translate-x-7' : 'translate-x-1'
                       }`}
                     />
                   </button>

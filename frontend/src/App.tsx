@@ -20,6 +20,7 @@ import { Collections } from '@/pages/Collections';
 import { CollectionDetail } from '@/pages/CollectionDetail';
 import { Chat } from '@/pages/Chat';
 import { Settings } from '@/pages/Settings';
+import { MyGroups } from '@/pages/MyGroups';
 import { AdminPanel } from '@/pages/admin/AdminPanel';
 
 // Components
@@ -149,6 +150,14 @@ function App() {
       {/* Redirect old admin routes to the new tabbed panel */}
       <Route path="/admin/users" element={<Navigate to="/admin?tab=users" replace />} />
       <Route path="/admin/groups" element={<Navigate to="/admin?tab=groups" replace />} />
+      <Route
+        path="/groups"
+        element={
+          <ProtectedRoute>
+            <MyGroups />
+          </ProtectedRoute>
+        }
+      />
       <Route path="/admin/templates" element={<Navigate to="/admin?tab=templates" replace />} />
       <Route path="/admin/registration" element={<Navigate to="/admin?tab=registration" replace />} />
       <Route path="/admin/email" element={<Navigate to="/admin?tab=email" replace />} />

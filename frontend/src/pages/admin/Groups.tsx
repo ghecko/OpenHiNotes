@@ -12,8 +12,11 @@ import {
   X,
   ChevronRight,
   ChevronDown,
+  Crown,
+  Lock,
+  Unlock,
 } from 'lucide-react';
-import type { UserGroup, UserGroupDetail, User } from '@/types';
+import type { UserGroup, UserGroupDetail, User, SharingPolicy } from '@/types';
 
 export function Groups({ embedded }: { embedded?: boolean }) {
   const [groups, setGroups] = useState<UserGroup[]>([]);
@@ -27,6 +30,7 @@ export function Groups({ embedded }: { embedded?: boolean }) {
   const [memberSearchResults, setMemberSearchResults] = useState<User[]>([]);
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupDesc, setNewGroupDesc] = useState('');
+  const [newGroupPolicy, setNewGroupPolicy] = useState<SharingPolicy>('creator_only');
 
   const loadGroups = useCallback(async () => {
     try {
@@ -66,10 +70,15 @@ export function Groups({ embedded }: { embedded?: boolean }) {
   const handleCreateGroup = async () => {
     if (!newGroupName.trim()) return;
     try {
-      await groupsApi.create({ name: newGroupName, description: newGroupDesc || undefined });
+      await groupsApi.create({
+        name: newGroupName,
+        description: newGroupDesc || undefined,
+        sharing_policy: newGroupPolicy,
+      });
       setShowCreateModal(false);
       setNewGroupName('');
       setNewGroupDesc('');
+      setNewGroupPolicy('creator_only');
       await loadGroups();
     } catch {
       // ignore
@@ -82,11 +91,16 @@ export function Groups({ embedded }: { embedded?: boolean }) {
       await groupsApi.update(editingGroup.id, {
         name: newGroupName,
         description: newGroupDesc || undefined,
+        sharing_policy: newGroupPolicy,
       });
       setEditingGroup(null);
       setNewGroupName('');
       setNewGroupDesc('');
+      setNewGroupPolicy('creator_only');
       await loadGroups();
+      if (expandedGroupId === editingGroup.id) {
+        await loadGroupDetail(editingGroup.id);
+      }
     } catch {
       // ignore
     }
@@ -128,7 +142,17 @@ export function Groups({ embedded }: { embedded?: boolean }) {
     }
   };
 
-  // Search users for adding to group
+  const handleToggleSharingPolicy = async (group: UserGroup) => {
+    const newPolicy: SharingPolicy =
+      group.sharing_policy === 'creator_only' ? 'members_allowed' : 'creator_only';
+    try {
+      const updated = await groupsApi.update(group.id, { sharing_policy: newPolicy });
+      setGroups((prev) => prev.map((g) => (g.id === group.id ? updated : g)));
+    } catch {
+      // ignore
+    }
+  };
+
   useEffect(() => {
     if (!memberSearchQuery || memberSearchQuery.length < 2) {
       setMemberSearchResults([]);
@@ -160,6 +184,7 @@ export function Groups({ embedded }: { embedded?: boolean }) {
               setShowCreateModal(true);
               setNewGroupName('');
               setNewGroupDesc('');
+              setNewGroupPolicy('creator_only');
             }}
             className="flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors text-sm font-medium"
           >
@@ -197,7 +222,27 @@ export function Groups({ embedded }: { embedded?: boolean }) {
                       <Users className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                     </div>
                     <div>
-                      <h3 className="font-medium text-gray-900 dark:text-white">{group.name}</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-medium text-gray-900 dark:text-white">{group.name}</h3>
+                        {/* Sharing policy badge */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleToggleSharingPolicy(group); }}
+                          title={
+                            group.sharing_policy === 'creator_only'
+                              ? 'Only owner can share to this group — click to allow members'
+                              : 'Any member can share to this group — click to restrict to owner'
+                          }
+                          className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium transition-colors ${
+                            group.sharing_policy === 'creator_only'
+                              ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200'
+                              : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200'
+                          }`}
+                        >
+                          {group.sharing_policy === 'creator_only'
+                            ? <><Lock className="w-3 h-3" /> Owner only</>
+                            : <><Unlock className="w-3 h-3" /> Members can share</>}
+                        </button>
+                      </div>
                       {group.description && (
                         <p className="text-sm text-gray-500 dark:text-gray-400">{group.description}</p>
                       )}
@@ -213,6 +258,7 @@ export function Groups({ embedded }: { embedded?: boolean }) {
                         setEditingGroup(group);
                         setNewGroupName(group.name);
                         setNewGroupDesc(group.description || '');
+                        setNewGroupPolicy(group.sharing_policy);
                       }}
                       className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                     >
@@ -234,9 +280,7 @@ export function Groups({ embedded }: { embedded?: boolean }) {
                 {expandedGroupId === group.id && expandedGroup && (
                   <div className="border-t border-gray-200 dark:border-gray-700 p-4">
                     <div className="flex items-center justify-between mb-3">
-                      <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                        Members
-                      </h4>
+                      <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">Members</h4>
                       <button
                         onClick={() => {
                           setShowAddMember(group.id);
@@ -250,7 +294,6 @@ export function Groups({ embedded }: { embedded?: boolean }) {
                       </button>
                     </div>
 
-                    {/* Add member search */}
                     {showAddMember === group.id && (
                       <div className="mb-3 relative">
                         <div className="flex items-center gap-2 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-700">
@@ -263,10 +306,7 @@ export function Groups({ embedded }: { embedded?: boolean }) {
                             className="flex-1 bg-transparent text-sm outline-none text-gray-900 dark:text-white placeholder-gray-400"
                             autoFocus
                           />
-                          <button
-                            onClick={() => setShowAddMember(null)}
-                            className="text-gray-400 hover:text-gray-600"
-                          >
+                          <button onClick={() => setShowAddMember(null)} className="text-gray-400 hover:text-gray-600">
                             <X className="w-4 h-4" />
                           </button>
                         </div>
@@ -289,7 +329,6 @@ export function Groups({ embedded }: { embedded?: boolean }) {
                       </div>
                     )}
 
-                    {/* Members list */}
                     {expandedGroup.members.length === 0 ? (
                       <p className="text-sm text-gray-400 italic">No members yet</p>
                     ) : (
@@ -305,22 +344,27 @@ export function Groups({ embedded }: { embedded?: boolean }) {
                                   {(member.display_name || member.email).charAt(0).toUpperCase()}
                                 </span>
                               </div>
-                              <div>
+                              <div className="flex items-center gap-1.5">
                                 <span className="text-sm font-medium text-gray-900 dark:text-white">
                                   {member.display_name || member.email}
                                 </span>
                                 {member.display_name && (
-                                  <span className="text-xs text-gray-400 ml-2">{member.email}</span>
+                                  <span className="text-xs text-gray-400">{member.email}</span>
+                                )}
+                                {member.id === group.owner_id && (
+                                  <Crown className="w-3.5 h-3.5 text-amber-500" title="Group owner" />
                                 )}
                               </div>
                             </div>
-                            <button
-                              onClick={() => handleRemoveMember(group.id, member.id)}
-                              className="p-1 text-gray-400 hover:text-red-500 transition-colors"
-                              title="Remove member"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {member.id !== group.owner_id && (
+                              <button
+                                onClick={() => handleRemoveMember(group.id, member.id)}
+                                className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                                title="Remove member"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -341,9 +385,7 @@ export function Groups({ embedded }: { embedded?: boolean }) {
               </h2>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Name
-                  </label>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
                   <input
                     type="text"
                     value={newGroupName}
@@ -365,13 +407,46 @@ export function Groups({ embedded }: { embedded?: boolean }) {
                     className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm resize-none"
                   />
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Sharing policy
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNewGroupPolicy('creator_only')}
+                      className={`flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors ${
+                        newGroupPolicy === 'creator_only'
+                          ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300'
+                          : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:border-gray-400'
+                      }`}
+                    >
+                      <Lock className="w-4 h-4" />
+                      <span>Owner only</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewGroupPolicy('members_allowed')}
+                      className={`flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors ${
+                        newGroupPolicy === 'members_allowed'
+                          ? 'border-green-400 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
+                          : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:border-gray-400'
+                      }`}
+                    >
+                      <Unlock className="w-4 h-4" />
+                      <span>Members can share</span>
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {newGroupPolicy === 'creator_only'
+                      ? 'Only the group owner can share resources to this group.'
+                      : 'Any member can share resources to this group.'}
+                  </p>
+                </div>
               </div>
               <div className="flex justify-end gap-3 mt-6">
                 <button
-                  onClick={() => {
-                    setShowCreateModal(false);
-                    setEditingGroup(null);
-                  }}
+                  onClick={() => { setShowCreateModal(false); setEditingGroup(null); }}
                   className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
                 >
                   Cancel
@@ -379,7 +454,7 @@ export function Groups({ embedded }: { embedded?: boolean }) {
                 <button
                   onClick={editingGroup ? handleUpdateGroup : handleCreateGroup}
                   disabled={!newGroupName.trim()}
-                  className="px-4 py-2 text-sm bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors font-medium"
+                  className="px-4 py-2 text-sm bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors font-medium disabled:opacity-50"
                 >
                   {editingGroup ? 'Update' : 'Create'}
                 </button>

@@ -88,14 +88,19 @@ export interface Transcription {
 }
 
 // Access control types
+export type SharingPolicy = 'creator_only' | 'members_allowed';
+
 export interface UserGroup {
   id: string;
   name: string;
   description: string | null;
   created_by: string;
+  owner_id: string;
+  sharing_policy: SharingPolicy;
   created_at: string;
   updated_at: string;
   member_count: number;
+  is_owner: boolean;
 }
 
 export interface UserGroupDetail extends UserGroup {

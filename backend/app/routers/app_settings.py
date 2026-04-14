@@ -296,6 +296,53 @@ async def update_audio_settings(
     return {"keep_audio_enabled": body.keep_audio_enabled}
 
 
+# ── Groups Settings ────────────────────────────────────────────────────
+
+ALLOW_USER_GROUP_CREATION_KEY = "allow_user_group_creation"
+
+
+class GroupsSettingsUpdate(BaseModel):
+    allow_user_group_creation: bool
+
+
+@router.get("/groups")
+async def get_groups_settings(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get group-related settings. Available to all authenticated users."""
+    result = await db.execute(
+        select(AppSetting).where(AppSetting.key == ALLOW_USER_GROUP_CREATION_KEY)
+    )
+    setting = result.scalars().first()
+    allowed = setting.value.lower() == "true" if setting else False  # default: disabled
+    return {"allow_user_group_creation": allowed}
+
+
+@router.put("/groups")
+async def update_groups_settings(
+    body: GroupsSettingsUpdate,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update group creation settings (admin only)."""
+    result = await db.execute(
+        select(AppSetting).where(AppSetting.key == ALLOW_USER_GROUP_CREATION_KEY)
+    )
+    setting = result.scalars().first()
+    if setting:
+        setting.value = str(body.allow_user_group_creation).lower()
+    else:
+        setting = AppSetting(
+            key=ALLOW_USER_GROUP_CREATION_KEY,
+            value=str(body.allow_user_group_creation).lower(),
+            description="Allow non-admin users to create their own groups",
+        )
+        db.add(setting)
+    await db.commit()
+    return {"allow_user_group_creation": body.allow_user_group_creation}
+
+
 # ── Generic key/value settings ─────────────────────────────────────────
 
 

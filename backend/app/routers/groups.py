@@ -12,16 +12,34 @@ from app.schemas.user_group import (
     GroupMemberResponse,
 )
 from app.models.user import User, UserRole
-from app.models.user_group import UserGroup, user_group_members
+from app.models.user_group import UserGroup, user_group_members, SharingPolicy
+from app.models.app_settings import AppSetting
 from app.dependencies import get_current_user, require_admin
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
+ALLOW_USER_GROUP_CREATION_KEY = "allow_user_group_creation"
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+async def _user_group_creation_allowed(db: AsyncSession) -> bool:
+    """Return True if non-admin users are allowed to create groups."""
+    result = await db.execute(
+        select(AppSetting).where(AppSetting.key == ALLOW_USER_GROUP_CREATION_KEY)
+    )
+    setting = result.scalars().first()
+    return setting.value.lower() == "true" if setting else False
+
+
+def _is_group_owner(group: UserGroup, user: User) -> bool:
+    return group.owner_id == user.id or user.role == UserRole.admin
+
 
 async def _enrich_with_member_count(
-    groups: list[UserGroup], db: AsyncSession
+    groups: list[UserGroup], db: AsyncSession, current_user: User | None = None
 ) -> list[dict]:
-    """Add member_count to each group."""
+    """Add member_count (and is_owner) to each group."""
     if not groups:
         return []
     group_ids = [g.id for g in groups]
@@ -42,26 +60,43 @@ async def _enrich_with_member_count(
             "name": g.name,
             "description": g.description,
             "created_by": g.created_by,
+            "owner_id": g.owner_id,
+            "sharing_policy": g.sharing_policy.value if hasattr(g.sharing_policy, "value") else g.sharing_policy,
             "created_at": g.created_at,
             "updated_at": g.updated_at,
             "member_count": counts.get(g.id, 0),
+            "is_owner": _is_group_owner(g, current_user) if current_user else False,
         }
         result.append(data)
     return result
 
 
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
 @router.get("", response_model=list[GroupResponse])
 async def list_groups(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
+    mine: bool = Query(False, description="Only return groups owned by the current user"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List groups. Admins see all, users see groups they belong to."""
-    if current_user.role == UserRole.admin:
+    """List groups.
+    - Admins: see all groups (or just their own with mine=true)
+    - Users: see groups they belong to or own
+    """
+    if current_user.role == UserRole.admin and not mine:
         query = select(UserGroup).order_by(UserGroup.name).offset(skip).limit(limit)
+    elif mine:
+        query = (
+            select(UserGroup)
+            .where(UserGroup.owner_id == current_user.id)
+            .order_by(UserGroup.name)
+            .offset(skip)
+            .limit(limit)
+        )
     else:
-        # User sees groups they are a member of
+        # Member groups (includes owned groups since owner is also a member)
         query = (
             select(UserGroup)
             .join(user_group_members, UserGroup.id == user_group_members.c.group_id)
@@ -73,25 +108,51 @@ async def list_groups(
 
     result = await db.execute(query)
     groups = list(result.scalars().all())
-    return await _enrich_with_member_count(groups, db)
+    return await _enrich_with_member_count(groups, db, current_user)
 
 
 @router.post("", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)
 async def create_group(
     group_create: GroupCreate,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new group (admin only)."""
+    """Create a new group.
+    - Admins: always allowed.
+    - Regular users: only when allow_user_group_creation setting is enabled.
+    """
+    if current_user.role != UserRole.admin:
+        if not await _user_group_creation_allowed(db):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Group creation is restricted to administrators",
+            )
+
+    policy = SharingPolicy.creator_only
+    if group_create.sharing_policy in ("creator_only", "members_allowed"):
+        policy = SharingPolicy(group_create.sharing_policy)
+
     group = UserGroup(
         name=group_create.name,
         description=group_create.description,
         created_by=current_user.id,
+        owner_id=current_user.id,
+        sharing_policy=policy,
     )
     db.add(group)
     await db.commit()
     await db.refresh(group)
-    enriched = await _enrich_with_member_count([group], db)
+
+    # Auto-add creator as a member of their own group
+    await db.execute(
+        user_group_members.insert().values(
+            group_id=group.id,
+            user_id=current_user.id,
+        )
+    )
+    await db.commit()
+
+    enriched = await _enrich_with_member_count([group], db, current_user)
     return enriched[0]
 
 
@@ -108,7 +169,7 @@ async def get_group(
     if not group:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
 
-    # Non-admin must be a member
+    # Non-admin must be a member or owner
     if current_user.role != UserRole.admin:
         member_check = await db.execute(
             select(user_group_members.c.user_id).where(
@@ -116,10 +177,9 @@ async def get_group(
                 user_group_members.c.user_id == current_user.id,
             )
         )
-        if not member_check.first():
+        if not member_check.first() and group.owner_id != current_user.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
 
-    # Get members
     members_result = await db.execute(
         select(User)
         .join(user_group_members, User.id == user_group_members.c.user_id)
@@ -133,6 +193,9 @@ async def get_group(
         "name": group.name,
         "description": group.description,
         "created_by": group.created_by,
+        "owner_id": group.owner_id,
+        "sharing_policy": group.sharing_policy.value if hasattr(group.sharing_policy, "value") else group.sharing_policy,
+        "is_owner": _is_group_owner(group, current_user),
         "created_at": group.created_at,
         "updated_at": group.updated_at,
         "member_count": len(members),
@@ -141,7 +204,7 @@ async def get_group(
                 "id": m.id,
                 "email": m.email,
                 "display_name": m.display_name,
-                "role": m.role.value if hasattr(m.role, 'value') else m.role,
+                "role": m.role.value if hasattr(m.role, "value") else m.role,
             }
             for m in members
         ],
@@ -152,41 +215,53 @@ async def get_group(
 async def update_group(
     group_id: uuid.UUID,
     group_update: GroupUpdate,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update a group (admin only)."""
+    """Update a group.
+    - Admins: can update any group.
+    - Owner: can update their own group's name, description, and sharing_policy.
+    """
     result = await db.execute(select(UserGroup).where(UserGroup.id == group_id))
     group = result.scalars().first()
 
     if not group:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
 
+    if not _is_group_owner(group, current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the group owner can edit this group")
+
     if group_update.name is not None:
         group.name = group_update.name
     if group_update.description is not None:
         group.description = group_update.description
+    if group_update.sharing_policy is not None:
+        if group_update.sharing_policy not in ("creator_only", "members_allowed"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sharing_policy")
+        group.sharing_policy = SharingPolicy(group_update.sharing_policy)
 
     await db.commit()
     await db.refresh(group)
-    enriched = await _enrich_with_member_count([group], db)
+    enriched = await _enrich_with_member_count([group], db, current_user)
     return enriched[0]
 
 
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(
     group_id: uuid.UUID,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a group (admin only). Also removes associated shares."""
+    """Delete a group. Admins can delete any group; owners can delete their own."""
     result = await db.execute(select(UserGroup).where(UserGroup.id == group_id))
     group = result.scalars().first()
 
     if not group:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
 
-    # Delete group shares
+    if not _is_group_owner(group, current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the group owner can delete this group")
+
     from app.models.resource_share import ResourceShare, GranteeType
     shares_result = await db.execute(
         select(ResourceShare).where(
@@ -205,23 +280,23 @@ async def delete_group(
 async def add_member(
     group_id: uuid.UUID,
     member_add: GroupMemberAdd,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Add a user to a group (admin only)."""
-    # Verify group exists
+    """Add a user to a group. Admins or group owner only."""
     result = await db.execute(select(UserGroup).where(UserGroup.id == group_id))
     group = result.scalars().first()
     if not group:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
 
-    # Verify user exists
+    if not _is_group_owner(group, current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the group owner can manage members")
+
     user_result = await db.execute(select(User).where(User.id == member_add.user_id))
     user = user_result.scalars().first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    # Check not already a member
     existing = await db.execute(
         select(user_group_members).where(
             user_group_members.c.group_id == group_id,
@@ -229,20 +304,12 @@ async def add_member(
         )
     )
     if existing.first():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="User is already a member of this group",
-        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User is already a member of this group")
 
     await db.execute(
-        user_group_members.insert().values(
-            group_id=group_id,
-            user_id=member_add.user_id,
-        )
+        user_group_members.insert().values(group_id=group_id, user_id=member_add.user_id)
     )
     await db.commit()
-
-    # Return updated group detail
     return await get_group(group_id, current_user, db)
 
 
@@ -250,17 +317,29 @@ async def add_member(
 async def remove_member(
     group_id: uuid.UUID,
     user_id: uuid.UUID,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Remove a user from a group (admin only)."""
-    result = await db.execute(
+    """Remove a user from a group. Admins or group owner only."""
+    result = await db.execute(select(UserGroup).where(UserGroup.id == group_id))
+    group = result.scalars().first()
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+
+    if not _is_group_owner(group, current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the group owner can manage members")
+
+    # Owner cannot remove themselves
+    if user_id == group.owner_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot remove the group owner")
+
+    member_result = await db.execute(
         select(user_group_members).where(
             user_group_members.c.group_id == group_id,
             user_group_members.c.user_id == user_id,
         )
     )
-    if not result.first():
+    if not member_result.first():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
 
     await db.execute(

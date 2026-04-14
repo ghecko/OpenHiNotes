@@ -36,4 +36,12 @@ export const settingsApi = {
   async updateAudioSettings(keepAudioEnabled: boolean): Promise<AudioSettings> {
     return apiClient.put<AudioSettings>('/settings/audio', { keep_audio_enabled: keepAudioEnabled });
   },
+
+  async getGroupsSettings(): Promise<{ allow_user_group_creation: boolean }> {
+    return apiClient.get('/settings/groups');
+  },
+
+  async updateGroupsSettings(allowUserGroupCreation: boolean): Promise<{ allow_user_group_creation: boolean }> {
+    return apiClient.put('/settings/groups', { allow_user_group_creation: allowUserGroupCreation });
+  },
 };

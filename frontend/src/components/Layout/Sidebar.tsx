@@ -7,6 +7,7 @@ import {
   FolderOpen,
   MessageSquare,
   Shield,
+  Users,
   ChevronLeft,
   ChevronRight,
   X,
@@ -56,6 +57,7 @@ export function Sidebar() {
     { path: '/upload', label: 'Upload', icon: Upload },
     { path: '/transcriptions', label: 'Transcriptions', icon: FileText },
     { path: '/collections', label: 'Collections', icon: FolderOpen },
+    { path: '/groups', label: 'My Groups', icon: Users },
     { path: '/chat', label: 'Chat', icon: MessageSquare },
   ];
 

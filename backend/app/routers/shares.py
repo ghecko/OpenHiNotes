@@ -11,7 +11,7 @@ from app.schemas.resource_share import (
     SharedWithMeItem,
 )
 from app.models.user import User, UserRole
-from app.models.user_group import UserGroup, user_group_members
+from app.models.user_group import UserGroup, user_group_members, SharingPolicy
 from app.models.transcription import Transcription
 from app.models.collection import Collection
 from app.models.resource_share import (
@@ -57,9 +57,37 @@ async def create_share(
         if not result.scalars().first():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     else:
-        result = await db.execute(select(UserGroup).where(UserGroup.id == share_create.grantee_id))
-        if not result.scalars().first():
+        grp_result = await db.execute(select(UserGroup).where(UserGroup.id == share_create.grantee_id))
+        target_group = grp_result.scalars().first()
+        if not target_group:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+
+        # Enforce sharing_policy (admins always bypass)
+        policy = target_group.sharing_policy
+        if hasattr(policy, "value"):
+            policy = policy.value
+
+        if current_user.role != UserRole.admin:
+            if policy == SharingPolicy.creator_only.value:
+                # Only the group owner can share
+                if target_group.owner_id != current_user.id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="This group only allows its owner to share resources to it",
+                    )
+            else:
+                # members_allowed → the user must be a member of the group
+                member_check = await db.execute(
+                    select(user_group_members.c.user_id).where(
+                        user_group_members.c.group_id == target_group.id,
+                        user_group_members.c.user_id == current_user.id,
+                    )
+                )
+                if not member_check.first():
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="You must be a member of this group to share resources to it",
+                    )
 
     # Check for existing share (upsert)
     existing_result = await db.execute(

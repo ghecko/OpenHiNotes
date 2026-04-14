@@ -9,12 +9,14 @@ class GroupCreate(BaseModel):
     """Schema for creating a user group."""
     name: str
     description: Optional[str] = None
+    sharing_policy: Optional[str] = None  # "creator_only" | "members_allowed" (default: creator_only)
 
 
 class GroupUpdate(BaseModel):
     """Schema for updating a user group."""
     name: Optional[str] = None
     description: Optional[str] = None
+    sharing_policy: Optional[str] = None  # "creator_only" | "members_allowed"
 
 
 class GroupMemberAdd(BaseModel):
@@ -39,9 +41,12 @@ class GroupResponse(BaseModel):
     name: str
     description: Optional[str] = None
     created_by: uuid.UUID
+    owner_id: uuid.UUID
+    sharing_policy: str = "creator_only"
     created_at: datetime
     updated_at: datetime
     member_count: int = 0
+    is_owner: bool = False   # populated per-request, not from DB
 
     class Config:
         from_attributes = True
