@@ -31,6 +31,7 @@ export function Groups({ embedded }: { embedded?: boolean }) {
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupDesc, setNewGroupDesc] = useState('');
   const [newGroupPolicy, setNewGroupPolicy] = useState<SharingPolicy>('creator_only');
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const loadGroups = useCallback(async () => {
     try {
@@ -69,6 +70,7 @@ export function Groups({ embedded }: { embedded?: boolean }) {
 
   const handleCreateGroup = async () => {
     if (!newGroupName.trim()) return;
+    setModalError(null);
     try {
       await groupsApi.create({
         name: newGroupName,
@@ -80,13 +82,14 @@ export function Groups({ embedded }: { embedded?: boolean }) {
       setNewGroupDesc('');
       setNewGroupPolicy('creator_only');
       await loadGroups();
-    } catch {
-      // ignore
+    } catch (err) {
+      setModalError(err instanceof Error ? err.message : 'Failed to create group');
     }
   };
 
   const handleUpdateGroup = async () => {
     if (!editingGroup) return;
+    setModalError(null);
     try {
       await groupsApi.update(editingGroup.id, {
         name: newGroupName,
@@ -101,8 +104,8 @@ export function Groups({ embedded }: { embedded?: boolean }) {
       if (expandedGroupId === editingGroup.id) {
         await loadGroupDetail(editingGroup.id);
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      setModalError(err instanceof Error ? err.message : 'Failed to update group');
     }
   };
 
@@ -185,6 +188,7 @@ export function Groups({ embedded }: { embedded?: boolean }) {
               setNewGroupName('');
               setNewGroupDesc('');
               setNewGroupPolicy('creator_only');
+              setModalError(null);
             }}
             className="flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors text-sm font-medium"
           >
@@ -259,6 +263,7 @@ export function Groups({ embedded }: { embedded?: boolean }) {
                         setNewGroupName(group.name);
                         setNewGroupDesc(group.description || '');
                         setNewGroupPolicy(group.sharing_policy);
+                        setModalError(null);
                       }}
                       className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                     >
@@ -383,6 +388,11 @@ export function Groups({ embedded }: { embedded?: boolean }) {
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
                 {editingGroup ? 'Edit Group' : 'New Group'}
               </h2>
+              {modalError && (
+                <div className="mb-4 px-3 py-2 rounded-lg text-sm bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800">
+                  {modalError}
+                </div>
+              )}
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
@@ -446,7 +456,7 @@ export function Groups({ embedded }: { embedded?: boolean }) {
               </div>
               <div className="flex justify-end gap-3 mt-6">
                 <button
-                  onClick={() => { setShowCreateModal(false); setEditingGroup(null); }}
+                  onClick={() => { setShowCreateModal(false); setEditingGroup(null); setModalError(null); }}
                   className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
                 >
                   Cancel

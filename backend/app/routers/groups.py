@@ -128,6 +128,16 @@ async def create_group(
                 detail="Group creation is restricted to administrators",
             )
 
+    # Name must be globally unique — return friendly 409 instead of DB IntegrityError
+    name_clash = await db.execute(
+        select(UserGroup).where(UserGroup.name == group_create.name)
+    )
+    if name_clash.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A group named '{group_create.name}' already exists",
+        )
+
     policy = SharingPolicy.creator_only
     if group_create.sharing_policy in ("creator_only", "members_allowed"):
         policy = SharingPolicy(group_create.sharing_policy)
@@ -231,7 +241,19 @@ async def update_group(
     if not _is_group_owner(group, current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the group owner can edit this group")
 
-    if group_update.name is not None:
+    if group_update.name is not None and group_update.name != group.name:
+        # Name must be globally unique
+        name_clash = await db.execute(
+            select(UserGroup).where(
+                UserGroup.name == group_update.name,
+                UserGroup.id != group_id,
+            )
+        )
+        if name_clash.scalars().first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"A group named '{group_update.name}' already exists",
+            )
         group.name = group_update.name
     if group_update.description is not None:
         group.description = group_update.description
