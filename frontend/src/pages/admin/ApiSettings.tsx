@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Layout } from '@/components/Layout';
 import { settingsApi, AppSetting } from '@/api/settings';
-import { Save, RotateCcw, Loader, CheckCircle, AlertCircle, Server, Fingerprint, Users } from 'lucide-react';
+import { Save, RotateCcw, Loader, CheckCircle, AlertCircle } from 'lucide-react';
 
 const VAD_MODE_OPTIONS = [
   { value: 'silero', label: 'Silero — Fast, lightweight VAD' },
@@ -65,92 +65,10 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
   const [isLoading, setIsLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [keepAudioEnabled, setKeepAudioEnabled] = useState(true);
-  const [savingAudio, setSavingAudio] = useState(false);
-  const [voiceFingerprintingEnabled, setVoiceFingerprintingEnabled] = useState(false);
-  const [savingVoice, setSavingVoice] = useState(false);
-  const [allowUserGroupCreation, setAllowUserGroupCreation] = useState(false);
-  const [savingGroups, setSavingGroups] = useState(false);
 
   useEffect(() => {
     loadSettings();
-    loadAudioSettings();
-    loadVoiceFingerprintingSetting();
-    loadGroupsSettings();
   }, []);
-
-  const loadAudioSettings = async () => {
-    try {
-      const data = await settingsApi.getAudioSettings();
-      setKeepAudioEnabled(data.keep_audio_enabled);
-    } catch (error) {
-      console.error('Failed to load audio settings:', error);
-    }
-  };
-
-  const loadVoiceFingerprintingSetting = async () => {
-    try {
-      const data = await settingsApi.getSettings();
-      const setting = data.find((s) => s.key === 'voice_fingerprinting_enabled');
-      setVoiceFingerprintingEnabled(setting?.value?.toLowerCase() === 'true');
-    } catch (error) {
-      console.error('Failed to load voice fingerprinting setting:', error);
-    }
-  };
-
-  const handleToggleVoiceFingerprinting = async () => {
-    setSavingVoice(true);
-    try {
-      const newValue = !voiceFingerprintingEnabled;
-      await settingsApi.updateSetting('voice_fingerprinting_enabled', newValue ? 'true' : 'false');
-      setVoiceFingerprintingEnabled(newValue);
-      setMessage({
-        type: 'success',
-        text: `Voice fingerprinting ${newValue ? 'enabled' : 'disabled'}`,
-      });
-    } catch (error) {
-      setMessage({ type: 'error', text: 'Failed to update voice fingerprinting setting' });
-    } finally {
-      setSavingVoice(false);
-    }
-  };
-
-  const loadGroupsSettings = async () => {
-    try {
-      const data = await settingsApi.getGroupsSettings();
-      setAllowUserGroupCreation(data.allow_user_group_creation);
-    } catch {
-      // ignore
-    }
-  };
-
-  const handleToggleUserGroupCreation = async () => {
-    setSavingGroups(true);
-    try {
-      const newValue = !allowUserGroupCreation;
-      await settingsApi.updateGroupsSettings(newValue);
-      setAllowUserGroupCreation(newValue);
-      setMessage({ type: 'success', text: `User group creation ${newValue ? 'enabled' : 'disabled'}` });
-    } catch {
-      setMessage({ type: 'error', text: 'Failed to update group creation setting' });
-    } finally {
-      setSavingGroups(false);
-    }
-  };
-
-  const handleToggleKeepAudio = async () => {
-    setSavingAudio(true);
-    try {
-      const newValue = !keepAudioEnabled;
-      await settingsApi.updateAudioSettings(newValue);
-      setKeepAudioEnabled(newValue);
-      setMessage({ type: 'success', text: `Keep audio ${newValue ? 'enabled' : 'disabled'}` });
-    } catch (error) {
-      setMessage({ type: 'error', text: 'Failed to update audio setting' });
-    } finally {
-      setSavingAudio(false);
-    }
-  };
 
   const loadSettings = async () => {
     setIsLoading(true);
@@ -393,118 +311,6 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
             'llm_model',
             'llm_system_prompt',
           ])}
-
-          {/* Audio Storage Settings */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Server className="w-5 h-5 text-gray-500" />
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Audio Storage</h3>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      Allow users to keep audio
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                      When enabled, users can choose to save audio files on the server alongside their transcriptions.
-                      When disabled, audio is always deleted after transcription completes.
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleToggleKeepAudio}
-                    disabled={savingAudio}
-                    className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${
-                      keepAudioEnabled ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
-                    } ${savingAudio ? 'opacity-50' : ''}`}
-                  >
-                    <span
-                      className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
-                        keepAudioEnabled ? 'translate-x-7' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Voice Fingerprinting Settings */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Fingerprint className="w-5 h-5 text-gray-500" />
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Voice Fingerprinting
-              </h3>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      Enable voice fingerprinting
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                      When enabled, users can record their voice to create a speaker profile.
-                      During transcription, speakers are automatically identified by matching
-                      against known profiles. Voice embeddings are encrypted at rest. Disabling
-                      this hides the feature from all users but does not delete existing profiles.
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleToggleVoiceFingerprinting}
-                    disabled={savingVoice}
-                    className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${
-                      voiceFingerprintingEnabled ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
-                    } ${savingVoice ? 'opacity-50' : ''}`}
-                  >
-                    <span
-                      className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
-                        voiceFingerprintingEnabled ? 'translate-x-7' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Groups Settings */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Users className="w-5 h-5 text-gray-500" />
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Groups</h3>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      Allow users to create groups
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                      When enabled, regular users can create their own groups and invite members.
-                      Admins can always create groups regardless of this setting.
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleToggleUserGroupCreation}
-                    disabled={savingGroups}
-                    className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${
-                      allowUserGroupCreation ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
-                    } ${savingGroups ? 'opacity-50' : ''}`}
-                  >
-                    <span
-                      className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
-                        allowUserGroupCreation ? 'translate-x-7' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
 
           <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
             <p className="text-sm text-gray-600 dark:text-gray-400">

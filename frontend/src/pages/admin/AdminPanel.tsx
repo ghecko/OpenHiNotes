@@ -9,6 +9,7 @@ import {
   Plug,
   KeyRound,
   Mail,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 import { Templates } from './Templates';
@@ -16,10 +17,11 @@ import { Users } from './Users';
 import { Groups } from './Groups';
 import { RegistrationSettingsPage } from './RegistrationSettings';
 import { ApiSettings } from './ApiSettings';
+import { FeatureSettings } from './FeatureSettings';
 import { OIDCSettings } from './OIDCSettings';
 import { EmailSettings } from './EmailSettings';
 
-type AdminTab = 'users' | 'groups' | 'templates' | 'registration' | 'sso' | 'email' | 'api';
+type AdminTab = 'users' | 'groups' | 'templates' | 'registration' | 'sso' | 'email' | 'features' | 'api';
 
 const tabs: { key: AdminTab; label: string; icon: typeof Shield }[] = [
   { key: 'users', label: 'Users', icon: Shield },
@@ -28,6 +30,7 @@ const tabs: { key: AdminTab; label: string; icon: typeof Shield }[] = [
   { key: 'registration', label: 'Registration', icon: UserPlus },
   { key: 'sso', label: 'SSO / OIDC', icon: KeyRound },
   { key: 'email', label: 'Email', icon: Mail },
+  { key: 'features', label: 'Features', icon: SlidersHorizontal },
   { key: 'api', label: 'API Settings', icon: Plug },
 ];
 
@@ -57,6 +60,8 @@ export function AdminPanel() {
         return <OIDCSettings embedded />;
       case 'email':
         return <EmailSettings embedded />;
+      case 'features':
+        return <FeatureSettings embedded />;
       case 'api':
         return <ApiSettings embedded />;
       default:
