@@ -81,6 +81,8 @@ export interface Transcription {
   completed_at: string | null;
   keep_audio: boolean;
   audio_available: boolean;
+  auto_summarize: boolean;
+  auto_summarize_template_id: string | null;
   created_at: string;
   updated_at: string;
   permission_level?: PermissionLevel | null;
@@ -215,6 +217,7 @@ export interface QueueSSEEvent {
   stage?: string | null;
   queue_position?: number;
   error?: string;
+  auto_summarize?: boolean;
 }
 
 // Voice fingerprinting

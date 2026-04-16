@@ -78,6 +78,8 @@ class TranscriptionResponse(BaseModel):
     completed_at: Optional[datetime] = None
     keep_audio: bool = False
     audio_available: bool = False
+    auto_summarize: bool = False
+    auto_summarize_template_id: Optional[uuid.UUID] = None
     created_at: datetime
     updated_at: datetime
     # Access control fields (populated by routers, not from DB)

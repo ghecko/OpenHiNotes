@@ -297,6 +297,14 @@ class TranscriptionQueue:
 
             async def on_progress(status_str: str, progress: float, stage: str = None):
                 """Update progress in DB and notify subscribers."""
+                # Don't forward VoxHub "completed" as a progress event — the
+                # official "completed" event is sent after speaker identification
+                # + DB commit.  Sending it early would cause the frontend to
+                # close the SSE stream before the real data is saved.
+                if status_str == "completed":
+                    status_str = "processing"
+                    stage = "finalizing"
+
                 async with AsyncSessionLocal() as db:
                     await db.execute(
                         update(Transcription)
@@ -384,8 +392,20 @@ class TranscriptionQueue:
 
                     await db.commit()
 
+                # Determine if auto-summarize will run
+                will_summarize = bool(should_summarize and tpl_id and transcript_text)
+
+                # Notify completion immediately so the frontend can load the
+                # transcript — don't block on auto-summarize.
+                await self._notify(transcription_id, {
+                    "event": "completed",
+                    "status": "completed",
+                    "progress": 100,
+                    "auto_summarize": will_summarize,
+                })
+
                 # Auto-summarize if requested and transcription produced text
-                if should_summarize and tpl_id and transcript_text:
+                if will_summarize:
                     try:
                         async with AsyncSessionLocal() as db:
                             result = await db.execute(
@@ -409,12 +429,6 @@ class TranscriptionQueue:
                                 logger.info("Auto-summary created for transcription %s", transcription_id)
                     except Exception as e:
                         logger.error("Auto-summary failed for %s: %s", transcription_id, e)
-
-                await self._notify(transcription_id, {
-                    "event": "completed",
-                    "status": "completed",
-                    "progress": 100,
-                })
 
                 logger.info("Transcription %s completed successfully", transcription_id)
 

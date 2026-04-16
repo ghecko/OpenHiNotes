@@ -45,6 +45,8 @@ function getStageLabel(stage: string | null | undefined): string {
       return 'Extracting voice prints...';
     case 'aligning':
       return 'Aligning words...';
+    case 'finalizing':
+      return 'Finalizing transcript...';
     default:
       return stage ? `${stage.charAt(0).toUpperCase() + stage.slice(1)}...` : 'Processing...';
   }

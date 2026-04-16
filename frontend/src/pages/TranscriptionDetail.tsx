@@ -93,6 +93,9 @@ export function TranscriptionDetail() {
   const [openSummaryId, setOpenSummaryId] = useState<string | null>(null);
   const [showAllTemplates, setShowAllTemplates] = useState(false);
 
+  // Auto-summarize status
+  const [isAutoSummarizing, setIsAutoSummarizing] = useState(false);
+
   // Collection assignment
   const [collections, setCollections] = useState<Collection[]>([]);
 
@@ -140,16 +143,39 @@ export function TranscriptionDetail() {
     const abort = transcriptionsApi.streamQueueStatus(
       transcription.id,
       (event) => {
+        // Handle terminal events outside the state updater (side-effects
+        // should not live inside setState callbacks).
+        if (event.event === 'completed' || event.event === 'failed' || event.event === 'cancelled') {
+          const willAutoSummarize = event.event === 'completed' && event.auto_summarize;
+          setTranscription((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              status: event.status as Transcription['status'],
+              progress: event.event === 'completed' ? 100 : prev.progress,
+              queue_position: null,
+            };
+          });
+          // Reload full data shortly after — transcript & speakers are
+          // committed before the SSE event is sent.
+          setTimeout(() => loadData(), 600);
+          // If auto-summarize will run, start polling for it
+          if (willAutoSummarize) {
+            setIsAutoSummarizing(true);
+          }
+          return;
+        }
+
+        // Progress / position updates — never set status to "completed"
+        // from a progress event (defense-in-depth against backend race).
         setTranscription((prev) => {
           if (!prev) return prev;
           const updates: Partial<Transcription> = {};
           if (event.progress != null) updates.progress = event.progress;
           if (event.stage !== undefined) updates.progress_stage = event.stage ?? null;
           if (event.queue_position != null) updates.queue_position = event.queue_position;
-          if (event.status) updates.status = event.status as Transcription['status'];
-          if (event.event === 'completed' || event.event === 'failed' || event.event === 'cancelled') {
-            // Reload full data when done
-            setTimeout(() => loadData(), 500);
+          if (event.status && event.status !== 'completed' && event.status !== 'failed') {
+            updates.status = event.status as Transcription['status'];
           }
           return { ...prev, ...updates };
         });
@@ -191,6 +217,50 @@ export function TranscriptionDetail() {
       setIsLoading(false);
     }
   };
+
+  // Detect auto-summarize in progress when loading data for a just-completed transcription
+  useEffect(() => {
+    if (
+      transcription?.status === 'completed' &&
+      transcription?.auto_summarize &&
+      summaries.length === 0
+    ) {
+      setIsAutoSummarizing(true);
+    } else if (summaries.length > 0) {
+      setIsAutoSummarizing(false);
+    }
+  }, [transcription?.id, transcription?.status, transcription?.auto_summarize, summaries.length]);
+
+  // Poll for auto-summary completion
+  useEffect(() => {
+    if (!isAutoSummarizing || !transcription?.id) return;
+
+    let cancelled = false;
+    const poll = async () => {
+      let attempts = 0;
+      const maxAttempts = 40; // ~2 minutes at 3s intervals
+      while (!cancelled && attempts < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 3000));
+        if (cancelled) break;
+        attempts++;
+        try {
+          const s = await summariesApi.getSummaries(transcription.id);
+          if (s.length > 0) {
+            setSummaries(s);
+            setIsAutoSummarizing(false);
+            return;
+          }
+        } catch {
+          // Ignore polling errors
+        }
+      }
+      // Timed out — stop showing indicator
+      if (!cancelled) setIsAutoSummarizing(false);
+    };
+
+    poll();
+    return () => { cancelled = true; };
+  }, [isAutoSummarizing, transcription?.id]);
 
   // Reload templates when showAllTemplates toggle changes
   useEffect(() => {
@@ -945,6 +1015,16 @@ export function TranscriptionDetail() {
               <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">
                 Summaries {summaries.length > 0 && <span className="text-sm font-normal text-gray-500">({summaries.length})</span>}
               </h3>
+
+              {/* Auto-summarize in progress indicator */}
+              {isAutoSummarizing && (
+                <div className="mb-4 flex items-center gap-3 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <Loader className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" />
+                  <span className="text-sm text-blue-700 dark:text-blue-300">
+                    Generating summary automatically...
+                  </span>
+                </div>
+              )}
 
               {summaries.length === 1 ? (
                 /* Single summary: show inline with delete button */

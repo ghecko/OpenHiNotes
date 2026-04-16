@@ -219,7 +219,9 @@ export const useQueueStore = create<QueueState>()((set, get) => ({
               transcriptionId,
               title,
               type: 'completed',
-              message: 'Transcription completed!',
+              message: event.auto_summarize
+                ? 'Transcription completed! Generating summary...'
+                : 'Transcription completed!',
             });
             // Remove from active queue after a short delay
             setTimeout(() => {
