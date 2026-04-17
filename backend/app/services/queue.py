@@ -296,7 +296,11 @@ class TranscriptionQueue:
             file_path = f"{settings.uploads_directory}/{user_id}/{stored_filename}"
 
             async def on_progress(status_str: str, progress: float, stage: str = None):
-                """Update progress in DB and notify subscribers."""
+                """Update progress in DB and notify subscribers.
+
+                Raises if the transcription was cancelled by the user so the
+                polling loop exits and the processing lock is released promptly.
+                """
                 # Don't forward VoxHub "completed" as a progress event — the
                 # official "completed" event is sent after speaker identification
                 # + DB commit.  Sending it early would cause the frontend to
@@ -306,6 +310,11 @@ class TranscriptionQueue:
                     stage = "finalizing"
 
                 async with AsyncSessionLocal() as db:
+                    row = await db.execute(
+                        select(Transcription.status).where(Transcription.id == transcription_id)
+                    )
+                    if row.scalar_one_or_none() == TranscriptionStatus.cancelled:
+                        raise Exception(f"Transcription {transcription_id} cancelled by user")
                     await db.execute(
                         update(Transcription)
                         .where(Transcription.id == transcription_id)
