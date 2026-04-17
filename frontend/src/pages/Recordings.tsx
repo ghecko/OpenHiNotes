@@ -1009,21 +1009,23 @@ export function Recordings() {
         </div>
       )}
 
-      <TranscribeModal
-        isOpen={transcribeModal}
-        onClose={() => {
-          setTranscribeModal(false);
-          setSelectedAudio(null);
-          setAutoSummarize(false);
-        }}
-        audioFile={selectedAudio}
-        fileName={selectedFileName}
-        initialTitle={recordingAliases[selectedFileName] || undefined}
-        initialCollectionId={recordingCollections[selectedFileName] || undefined}
-        onComplete={() => {
-          refreshRecordings();
-        }}
-      />
+      {transcribeModal && (
+        <TranscribeModal
+          isOpen={true}
+          onClose={() => {
+            setTranscribeModal(false);
+            setSelectedAudio(null);
+            setAutoSummarize(false);
+          }}
+          audioFile={selectedAudio}
+          fileName={selectedFileName}
+          initialTitle={recordingAliases[selectedFileName] || undefined}
+          initialCollectionId={recordingCollections[selectedFileName] || undefined}
+          onComplete={() => {
+            refreshRecordings();
+          }}
+        />
+      )}
 
       {/* Single delete modal */}
       {deleteModalFile && (
