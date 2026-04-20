@@ -83,7 +83,7 @@ export function TranscribeModal({
 
   const loadTemplates = async () => {
     try {
-      const t = await templatesApi.getTemplates(false, recordingType);
+      const t = await templatesApi.getTemplates({ targetType: recordingType });
       setTemplates(t);
       if (t.length > 0) {
         setSelectedTemplate(t[0].id);

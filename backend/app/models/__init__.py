@@ -9,9 +9,10 @@ from app.models.user_group import UserGroup, user_group_members
 from app.models.resource_share import ResourceShare
 from app.models.oidc_provider import OIDCProvider
 from app.models.user_identity import UserIdentity
+from app.models.notification import Notification
 
 __all__ = [
     "User", "Collection", "Transcription", "SummaryTemplate", "Summary",
     "AppSetting", "ChatConversation", "UserGroup", "user_group_members", "ResourceShare",
-    "OIDCProvider", "UserIdentity",
+    "OIDCProvider", "UserIdentity", "Notification",
 ]

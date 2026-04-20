@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
+  BookTemplate,
 } from 'lucide-react';
 import { useEffect } from 'react';
 import { useAuthStore } from '@/store/useAuthStore';
@@ -58,12 +59,19 @@ export function Sidebar() {
     { path: '/transcriptions', label: 'Transcriptions', icon: FileText },
     { path: '/collections', label: 'Collections', icon: FolderOpen },
     { path: '/groups', label: 'My Groups', icon: Users },
+    { path: '/templates', label: 'My Templates', icon: BookTemplate },
     { path: '/chat', label: 'Chat', icon: MessageSquare },
   ];
 
-  const adminItems = user?.role === 'admin' ? [
-    { path: '/admin', label: 'Administration', icon: Shield },
-  ] : [];
+  const adminItems = (() => {
+    if (user?.role === 'admin') {
+      return [{ path: '/admin', label: 'Administration', icon: Shield }];
+    }
+    if (user?.role === 'template_manager') {
+      return [{ path: '/admin', label: 'Template management', icon: Shield }];
+    }
+    return [];
+  })();
 
   const sidebarContent = (
     <>

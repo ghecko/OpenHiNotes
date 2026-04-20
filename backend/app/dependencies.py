@@ -71,3 +71,20 @@ async def require_admin(
             detail="Admin access required",
         )
     return current_user
+
+
+async def require_template_manager(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Require template management privileges.
+
+    Allows both full admins and the scoped ``template_manager`` role.
+    Used by endpoints in the templates router that moderate or manage
+    templates system-wide (approve/reject, toggle, global delete/edit).
+    """
+    if current_user.role not in (UserRole.admin, UserRole.template_manager):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Template management access required",
+        )
+    return current_user

@@ -273,11 +273,17 @@ export function Users({ embedded }: { embedded?: boolean }) {
                           className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${
                             user.role === 'admin'
                               ? 'bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300'
-                              : 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
+                              : user.role === 'template_manager'
+                                ? 'bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200'
+                                : 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
                           }`}
                         >
-                          {user.role === 'admin' ? <Shield className="w-3 h-3" /> : <UserIcon className="w-3 h-3" />}
-                          {user.role}
+                          {user.role === 'admin' || user.role === 'template_manager' ? (
+                            <Shield className="w-3 h-3" />
+                          ) : (
+                            <UserIcon className="w-3 h-3" />
+                          )}
+                          {user.role === 'template_manager' ? 'template manager' : user.role}
                         </span>
                       </td>
                       <td className="px-6 py-4 text-sm">{statusBadge(user)}</td>
@@ -507,12 +513,15 @@ function CreateUserModal({
               className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/50"
             >
               <option value="user">User</option>
+              <option value="template_manager">Template manager</option>
               <option value="admin">Admin</option>
             </select>
           </div>
 
           <p className="text-xs text-gray-500 dark:text-gray-400">
             Admin-created accounts bypass registration restrictions and are immediately active.
+            Template managers can review user-submitted templates and manage any template
+            (including built-in), but have no other admin privileges.
           </p>
 
           <div className="flex justify-end gap-3 pt-2">
@@ -651,6 +660,7 @@ function EditUserModal({
                 className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/50"
               >
                 <option value="user">User</option>
+                <option value="template_manager">Template manager</option>
                 <option value="admin">Admin</option>
               </select>
             </div>

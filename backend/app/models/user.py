@@ -8,8 +8,16 @@ from app.database import Base
 
 
 class UserRole(str, Enum):
-    """User role enumeration."""
+    """User role enumeration.
+
+    - ``admin``: full system administration.
+    - ``template_manager``: scoped admin for template management. Can review
+      pending submissions and manage (edit/toggle/delete) any template,
+      including built-in ones, but has no other admin privileges.
+    - ``user``: regular authenticated user.
+    """
     admin = "admin"
+    template_manager = "template_manager"
     user = "user"
 
 

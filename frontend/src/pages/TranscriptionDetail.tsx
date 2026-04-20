@@ -203,7 +203,7 @@ export function TranscriptionDetail() {
       setSummaries(s);
 
       const recType = t.recording_type === 'whisper' ? 'whisper' : 'record';
-      const temps = await templatesApi.getTemplates(false, showAllTemplates ? undefined : recType);
+      const temps = await templatesApi.getTemplates({ targetType: showAllTemplates ? undefined : recType });
       setTemplates(temps);
 
       const colls = await collectionsApi.list();
@@ -266,7 +266,7 @@ export function TranscriptionDetail() {
   useEffect(() => {
     if (!transcription) return;
     const recType = transcription.recording_type === 'whisper' ? 'whisper' : 'record';
-    templatesApi.getTemplates(false, showAllTemplates ? undefined : recType).then((temps) => {
+    templatesApi.getTemplates({ targetType: showAllTemplates ? undefined : recType }).then((temps) => {
       setTemplates(temps);
       if (temps.length > 0 && !temps.find((t) => t.id === selectedTemplate)) {
         setSelectedTemplate(temps[0].id);

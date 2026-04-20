@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
+import { useAuthStore } from '@/store/useAuthStore';
 import {
   FileText,
   Shield,
@@ -10,9 +11,11 @@ import {
   KeyRound,
   Mail,
   SlidersHorizontal,
+  ClipboardCheck,
 } from 'lucide-react';
 
 import { Templates } from './Templates';
+import { TemplateReview } from './TemplateReview';
 import { Users } from './Users';
 import { Groups } from './Groups';
 import { RegistrationSettingsPage } from './RegistrationSettings';
@@ -21,12 +24,22 @@ import { FeatureSettings } from './FeatureSettings';
 import { OIDCSettings } from './OIDCSettings';
 import { EmailSettings } from './EmailSettings';
 
-type AdminTab = 'users' | 'groups' | 'templates' | 'registration' | 'sso' | 'email' | 'features' | 'api';
+type AdminTab =
+  | 'users'
+  | 'groups'
+  | 'templates'
+  | 'template-review'
+  | 'registration'
+  | 'sso'
+  | 'email'
+  | 'features'
+  | 'api';
 
 const tabs: { key: AdminTab; label: string; icon: typeof Shield }[] = [
   { key: 'users', label: 'Users', icon: Shield },
   { key: 'groups', label: 'Groups', icon: UsersIcon },
   { key: 'templates', label: 'Templates', icon: FileText },
+  { key: 'template-review', label: 'Template review', icon: ClipboardCheck },
   { key: 'registration', label: 'Registration', icon: UserPlus },
   { key: 'sso', label: 'SSO / OIDC', icon: KeyRound },
   { key: 'email', label: 'Email', icon: Mail },
@@ -34,11 +47,26 @@ const tabs: { key: AdminTab; label: string; icon: typeof Shield }[] = [
   { key: 'api', label: 'API Settings', icon: Plug },
 ];
 
+// Tabs visible to a scoped ``template_manager``. A template_manager uses
+// the same AdminPanel UI but only sees template-related tabs.
+const TEMPLATE_MANAGER_TABS: AdminTab[] = ['templates', 'template-review'];
+
 export function AdminPanel() {
+  const user = useAuthStore((s) => s.user);
+  const isAdmin = user?.role === 'admin';
+  const visibleTabs = useMemo(
+    () =>
+      isAdmin
+        ? tabs
+        : tabs.filter((t) => TEMPLATE_MANAGER_TABS.includes(t.key)),
+    [isAdmin],
+  );
+  const defaultTab: AdminTab = isAdmin ? 'users' : 'template-review';
+
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialTab = (searchParams.get('tab') as AdminTab) || 'users';
+  const initialTab = (searchParams.get('tab') as AdminTab) || defaultTab;
   const [activeTab, setActiveTab] = useState<AdminTab>(
-    tabs.some((t) => t.key === initialTab) ? initialTab : 'users'
+    visibleTabs.some((t) => t.key === initialTab) ? initialTab : defaultTab
   );
 
   const handleTabChange = (tab: AdminTab) => {
@@ -54,6 +82,8 @@ export function AdminPanel() {
         return <Groups embedded />;
       case 'templates':
         return <Templates embedded />;
+      case 'template-review':
+        return <TemplateReview embedded />;
       case 'registration':
         return <RegistrationSettingsPage embedded />;
       case 'sso':
@@ -70,12 +100,12 @@ export function AdminPanel() {
   };
 
   return (
-    <Layout title="Administration">
+    <Layout title={isAdmin ? 'Administration' : 'Template management'}>
       <div className="space-y-6">
         {/* Tab navigation */}
         <div className="border-b border-gray-200 dark:border-gray-700">
           <nav className="flex gap-1 -mb-px overflow-x-auto" aria-label="Admin tabs">
-            {tabs.map(({ key, label, icon: Icon }) => {
+            {visibleTabs.map(({ key, label, icon: Icon }) => {
               const isActive = activeTab === key;
               return (
                 <button

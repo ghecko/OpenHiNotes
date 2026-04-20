@@ -5,6 +5,7 @@ import { useAuthStore } from '@/store/useAuthStore';
 import { useAppStore } from '@/store/useAppStore';
 import { useLayoutStore } from '@/store/useLayoutStore';
 import { QueueIndicator } from '@/components/QueuePanel';
+import { NotificationsBell } from '@/components/NotificationsBell';
 
 interface HeaderProps {
   title?: string;
@@ -70,6 +71,9 @@ export function Header({ title }: HeaderProps) {
 
         {/* Queue indicator */}
         <QueueIndicator />
+
+        {/* Notifications bell */}
+        <NotificationsBell />
 
         {/* Theme toggle */}
         <button
