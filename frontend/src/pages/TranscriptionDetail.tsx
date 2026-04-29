@@ -134,6 +134,10 @@ export function TranscriptionDetail() {
   const [playbackTime, setPlaybackTime] = useState(0);
   const [audioDuration, setAudioDuration] = useState(0);
   const [volume, setVolume] = useState(1);
+  // Sequential resolution for the device-side audio path. See the
+  // useEffect below for the state machine.
+  type DeviceLookupState = 'idle' | 'checking' | 'found' | 'not_found';
+  const [deviceLookupState, setDeviceLookupState] = useState<DeviceLookupState>('idle');
 
   // Subscribe to real-time updates when transcription is queued/processing
   useEffect(() => {
@@ -376,12 +380,86 @@ export function TranscriptionDetail() {
     ? recordings.find((r) => r.fileName === transcription.original_filename)
     : undefined;
 
+  // Seed audioDuration from server-side transcription metadata as soon as
+  // transcription is loaded. This is the load-bearing fallback for audio
+  // duration display — it doesn't depend on the <audio> element existing,
+  // on loadedmetadata firing, or on the seek-to-EOF hack succeeding. The
+  // audio events effect below may still refine this value with a more
+  // precise client-side duration if the browser delivers one.
+  useEffect(() => {
+    if (transcription?.audio_duration && transcription.audio_duration > 0) {
+      setAudioDuration(transcription.audio_duration);
+    }
+  }, [transcription?.audio_duration]);
+
   // Check blob cache on mount / when recording is found
   useEffect(() => {
     if (!transcription) return;
     const cached = deviceService.getCachedBlob(transcription.original_filename);
     if (cached) setAudioBlob(cached);
   }, [transcription?.original_filename]);
+
+  // Resolve where the audio for this transcription is reachable from.
+  // Priority order:
+  //   1. Server-side audio (audio_available + keep_audio): no device probe
+  //      needed, the auto-load effect below will fetch it.
+  //   2. Device disconnected: nothing to probe; UI shows the connect prompt.
+  //   3. Device connected and the recording is already in the store: mark
+  //      as 'found' immediately.
+  //   4. Device connected and the store is empty (typically right after a
+  //      hard refresh, since `recordings` is not persisted): fetch the file
+  //      list and resolve to 'found' or 'not_found' from the response.
+  //
+  // We deliberately read `recordings` via getState() instead of including
+  // it in the dep array: the empty-store path writes to it, which would
+  // otherwise re-trigger the effect.
+  useEffect(() => {
+    if (!transcription?.original_filename) {
+      setDeviceLookupState('idle');
+      return;
+    }
+    if (transcription.audio_available && transcription.keep_audio) {
+      setDeviceLookupState('idle');
+      return;
+    }
+    if (!device?.connected) {
+      setDeviceLookupState('idle');
+      return;
+    }
+    const currentRecordings = useAppStore.getState().recordings;
+    const known = currentRecordings.some(
+      (r) => r.fileName === transcription.original_filename,
+    );
+    if (known) {
+      setDeviceLookupState('found');
+      return;
+    }
+    let cancelled = false;
+    setDeviceLookupState('checking');
+    deviceService
+      .getFileList()
+      .then((recs) => {
+        if (cancelled) return;
+        useAppStore.getState().setRecordings(recs);
+        const found = recs.some(
+          (r) => r.fileName === transcription.original_filename,
+        );
+        setDeviceLookupState(found ? 'found' : 'not_found');
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.warn('[OpenHiNotes] Failed to refresh device file list:', err);
+        setDeviceLookupState('not_found');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    transcription?.original_filename,
+    transcription?.audio_available,
+    transcription?.keep_audio,
+    device?.connected,
+  ]);
 
   // Create / revoke object URL from blob
   useEffect(() => {
@@ -391,29 +469,6 @@ export function TranscriptionDetail() {
     return () => URL.revokeObjectURL(url);
   }, [audioBlob]);
 
-  // Wire up audio element events
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const onTime = () => setPlaybackTime(audio.currentTime);
-    const onMeta = () => setAudioDuration(audio.duration);
-    const onEnd = () => setIsPlaying(false);
-    audio.addEventListener('timeupdate', onTime);
-    audio.addEventListener('loadedmetadata', onMeta);
-    audio.addEventListener('ended', onEnd);
-
-    // loadedmetadata may have already fired before this effect ran (e.g. for blob
-    // URLs the browser parses metadata synchronously). Sync the duration now if so.
-    if (audio.readyState >= 1 && audio.duration && isFinite(audio.duration)) {
-      setAudioDuration(audio.duration);
-    }
-
-    return () => {
-      audio.removeEventListener('timeupdate', onTime);
-      audio.removeEventListener('loadedmetadata', onMeta);
-      audio.removeEventListener('ended', onEnd);
-    };
-  }, [audioSrc]);
 
   const handleLoadAudioFromServer = useCallback(async () => {
     if (!transcription || !transcription.audio_available) return;
@@ -806,7 +861,22 @@ export function TranscriptionDetail() {
         </div>
 
         {/* Audio player */}
-        {audioSrc && <audio ref={audioRef} src={audioSrc} />}
+        {audioSrc && (
+          <audio
+            ref={audioRef}
+            src={audioSrc}
+            onTimeUpdate={(e) => setPlaybackTime(e.currentTarget.currentTime)}
+            onLoadedMetadata={(e) => {
+              const d = e.currentTarget.duration;
+              if (isFinite(d) && d > 0) setAudioDuration(d);
+            }}
+            onDurationChange={(e) => {
+              const d = e.currentTarget.duration;
+              if (isFinite(d) && d > 0) setAudioDuration(d);
+            }}
+            onEnded={() => setIsPlaying(false)}
+          />
+        )}
         {transcription.status === 'completed' && (
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
             {audioBlob ? (
@@ -864,11 +934,13 @@ export function TranscriptionDetail() {
                   }`}>
                     {transcription.audio_available
                       ? 'Audio stored on server'
-                      : sourceRecording
-                        ? 'Source recording available on device'
-                        : device?.connected
-                          ? 'Device connected — click to load audio'
-                          : 'Audio not available — connect device to reload'}
+                      : !device?.connected
+                        ? 'Audio not available — connect device to reload'
+                        : deviceLookupState === 'checking'
+                          ? 'Checking device for source recording…'
+                          : deviceLookupState === 'not_found'
+                            ? 'Source recording not found on device'
+                            : 'Source recording available on device — click to load'}
                   </span>
                   {transcription.audio_available ? (
                     <button
@@ -882,18 +954,31 @@ export function TranscriptionDetail() {
                   ) : (
                     <button
                       onClick={handleLoadAudio}
-                      disabled={isLoadingAudio || !device?.connected || !sourceRecording}
+                      disabled={
+                        isLoadingAudio ||
+                        !device?.connected ||
+                        deviceLookupState === 'checking' ||
+                        deviceLookupState === 'not_found'
+                      }
                       title={
                         !device?.connected
                           ? 'Connect your device to load audio'
-                          : !sourceRecording
-                            ? 'Recording not found on device'
-                            : undefined
+                          : deviceLookupState === 'checking'
+                            ? 'Checking device…'
+                            : deviceLookupState === 'not_found'
+                              ? 'Recording not found on device'
+                              : undefined
                       }
                       className="px-4 py-1.5 text-sm font-medium bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
-                      {isLoadingAudio ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                      {isLoadingAudio ? `Loading… ${loadAudioProgress}%` : 'Load from Device'}
+                      {(isLoadingAudio || deviceLookupState === 'checking')
+                        ? <Loader className="w-3.5 h-3.5 animate-spin" />
+                        : <Download className="w-3.5 h-3.5" />}
+                      {isLoadingAudio
+                        ? `Loading… ${loadAudioProgress}%`
+                        : deviceLookupState === 'checking'
+                          ? 'Checking device…'
+                          : 'Load from Device'}
                     </button>
                   )}
                 </div>
