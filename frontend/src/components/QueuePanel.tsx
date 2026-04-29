@@ -25,6 +25,24 @@ function formatTimeAgo(timestamp: number): string {
   return `${hours}h ago`;
 }
 
+function ElapsedTime({ startedAt }: { startedAt: string | null | undefined }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick(n => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  if (!startedAt) return null;
+  const seconds = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000);
+  if (seconds < 5) return null;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return (
+    <span className="text-[11px] text-gray-400 dark:text-gray-500">
+      {m > 0 ? `${m}m ${s}s` : `${s}s`}
+    </span>
+  );
+}
+
 function getStageLabel(stage: string | null | undefined): string {
   switch (stage) {
     case 'uploading':
@@ -203,6 +221,7 @@ function QueuePanel() {
                           <span className="text-xs text-blue-600 dark:text-blue-400">
                             {getStageLabel(t.progress_stage)}
                           </span>
+                          <ElapsedTime startedAt={t.started_at} />
                         </>
                       )}
                     </div>
