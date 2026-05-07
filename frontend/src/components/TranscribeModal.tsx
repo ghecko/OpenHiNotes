@@ -1,11 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, Loader, CheckCircle, ExternalLink, Server } from 'lucide-react';
-import { Transcription, SummaryTemplate, RecordingType } from '@/types';
+import { X, Loader, CheckCircle, ExternalLink, Server, Users, FolderOpen } from 'lucide-react';
+import { Transcription, SummaryTemplate, RecordingType, Collection, UserGroup } from '@/types';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { collectionsApi } from '@/api/collections';
 import { templatesApi } from '@/api/templates';
 import { settingsApi } from '@/api/settings';
+import { groupsApi } from '@/api/groups';
+import { sharesApi } from '@/api/shares';
 import { useQueueStore } from '@/store/useQueueStore';
 import { TemplateSelector } from '@/components/TemplateSelector';
 
@@ -54,6 +56,15 @@ export function TranscribeModal({
   const [submittedTranscription, setSubmittedTranscription] = useState<Transcription | null>(null);
   const [keepAudioAllowed, setKeepAudioAllowed] = useState(true);
 
+  // ── New: editable title, collection, and group share ──
+  const [title, setTitle] = useState<string>('');
+  const [collectionId, setCollectionId] = useState<string>('');
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [groups, setGroups] = useState<UserGroup[]>([]);
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
+  const [groupSharePermission, setGroupSharePermission] = useState<'read' | 'write'>('read');
+  const [showGroupShare, setShowGroupShare] = useState(false);
+
   useEffect(() => {
     settingsApi.getAudioSettings()
       .then((s) => {
@@ -62,6 +73,19 @@ export function TranscribeModal({
       })
       .catch(() => {});
   }, []);
+
+  // Reset / pre-fill editable fields when the modal opens
+  useEffect(() => {
+    if (!isOpen) return;
+    setTitle(initialTitle || '');
+    setCollectionId(initialCollectionId || '');
+    setSelectedGroupIds([]);
+    setGroupSharePermission('read');
+    setShowGroupShare(false);
+    // Load collections and groups for pickers
+    collectionsApi.list().then(setCollections).catch(() => {});
+    groupsApi.list().then(setGroups).catch(() => {});
+  }, [isOpen, initialTitle, initialCollectionId]);
 
   const detectedType: RecordingType = useMemo(
     () => (/wip/i.test(fileName) ? 'whisper' : 'record'),
@@ -112,24 +136,44 @@ export function TranscribeModal({
         recordingType,
       );
 
-      // If an alias / initial title was provided, set it
-      if (initialTitle && transcription.id) {
+      // Apply user-chosen title (falls back to initialTitle prop if untouched)
+      const trimmedTitle = title.trim();
+      if (trimmedTitle && transcription.id) {
         try {
-          await transcriptionsApi.updateTitle(transcription.id, initialTitle);
-          transcription.title = initialTitle;
+          await transcriptionsApi.updateTitle(transcription.id, trimmedTitle);
+          transcription.title = trimmedTitle;
         } catch {
-          console.warn('Could not set initial title from alias');
+          console.warn('Could not set transcription title');
         }
       }
 
-      // If a collection was pre-assigned, assign it
-      if (initialCollectionId && transcription.id) {
+      // Assign to collection if user picked one
+      if (collectionId && transcription.id) {
         try {
-          await collectionsApi.assignTranscription(initialCollectionId, transcription.id);
-          transcription.collection_id = initialCollectionId;
+          await collectionsApi.assignTranscription(collectionId, transcription.id);
+          transcription.collection_id = collectionId;
         } catch {
           console.warn('Could not assign to collection');
         }
+      }
+
+      // Share with selected groups
+      if (selectedGroupIds.length > 0 && transcription.id) {
+        await Promise.all(
+          selectedGroupIds.map((gid) =>
+            sharesApi
+              .create({
+                resource_type: 'transcription',
+                resource_id: transcription.id,
+                grantee_type: 'group',
+                grantee_id: gid,
+                permission: groupSharePermission,
+              })
+              .catch((err) => {
+                console.warn('Could not share with group', gid, err);
+              }),
+          ),
+        );
       }
 
       // Add to queue store (starts SSE streaming automatically for real-time progress)
@@ -149,9 +193,15 @@ export function TranscribeModal({
 
   const fileSize = audioFile ? (audioFile.size / 1024 / 1024).toFixed(2) : '0';
 
+  const toggleGroupSelected = (groupId: string) => {
+    setSelectedGroupIds((prev) =>
+      prev.includes(groupId) ? prev.filter((id) => id !== groupId) : [...prev, groupId],
+    );
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4 p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold text-gray-900 dark:text-white">Transcribe Audio</h2>
           <button
@@ -173,13 +223,46 @@ export function TranscribeModal({
             <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">File</p>
             <div className="p-3 bg-gray-100 dark:bg-gray-700 rounded-lg">
               <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                {initialTitle || fileName}
+                {fileName}
               </p>
-              {initialTitle && (
-                <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{fileName}</p>
-              )}
               <p className="text-xs text-gray-500 dark:text-gray-400">{fileSize} MB</p>
             </div>
+          </div>
+
+          {/* Editable transcription title */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-2">
+              Title <span className="text-xs font-normal text-gray-400">(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              disabled={isSubmitting}
+              placeholder="Give this transcription a name…"
+              className="w-full px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+            />
+          </div>
+
+          {/* Collection picker */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-1.5">
+              <FolderOpen className="w-4 h-4 text-gray-400" />
+              Collection <span className="text-xs font-normal text-gray-400">(optional)</span>
+            </label>
+            <select
+              value={collectionId}
+              onChange={(e) => setCollectionId(e.target.value)}
+              disabled={isSubmitting}
+              className="w-full px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+            >
+              <option value="">— No collection —</option>
+              {collections.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div>
@@ -283,6 +366,74 @@ export function TranscribeModal({
                 onChange={setSelectedTemplate}
                 disabled={isSubmitting}
               />
+            </div>
+          )}
+
+          {/* Share with groups (collapsible) */}
+          {groups.length > 0 && (
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+              <button
+                type="button"
+                onClick={() => setShowGroupShare((v) => !v)}
+                disabled={isSubmitting}
+                className="w-full flex items-center justify-between text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white disabled:opacity-50"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Users className="w-4 h-4 text-gray-400" />
+                  Share with groups
+                  {selectedGroupIds.length > 0 && (
+                    <span className="ml-1 text-xs font-normal text-blue-600 dark:text-blue-400">
+                      ({selectedGroupIds.length} selected)
+                    </span>
+                  )}
+                </span>
+                <span className="text-xs text-gray-400">{showGroupShare ? 'Hide' : 'Show'}</span>
+              </button>
+
+              {showGroupShare && (
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500 dark:text-gray-400">Permission</span>
+                    <select
+                      value={groupSharePermission}
+                      onChange={(e) =>
+                        setGroupSharePermission(e.target.value as 'read' | 'write')
+                      }
+                      disabled={isSubmitting}
+                      className="text-xs border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 disabled:opacity-50"
+                    >
+                      <option value="read">Can view</option>
+                      <option value="write">Can edit</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
+                    {groups.map((g) => {
+                      const checked = selectedGroupIds.includes(g.id);
+                      return (
+                        <label
+                          key={g.id}
+                          className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleGroupSelected(g.id)}
+                            disabled={isSubmitting}
+                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                          />
+                          <Users className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                          <span className="text-sm text-gray-700 dark:text-gray-300 truncate">
+                            {g.name}
+                          </span>
+                          <span className="ml-auto text-xs text-gray-400 flex-shrink-0">
+                            {g.member_count} member{g.member_count !== 1 ? 's' : ''}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
