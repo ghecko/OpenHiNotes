@@ -84,7 +84,7 @@ export function TranscribeModal({
     setShowGroupShare(false);
     // Load collections and groups for pickers
     collectionsApi.list().then(setCollections).catch(() => {});
-    groupsApi.list(true).then(setGroups).catch(() => {});
+    groupsApi.list().then(setGroups).catch(() => {});
   }, [isOpen, initialTitle, initialCollectionId]);
 
   const detectedType: RecordingType = useMemo(
