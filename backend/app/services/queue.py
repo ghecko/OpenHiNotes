@@ -38,8 +38,37 @@ class TranscriptionQueue:
         if self._running:
             return
         self._running = True
+        await self._recover_orphaned_jobs()
         self._worker_task = asyncio.create_task(self._worker_loop())
         logger.info("Transcription queue worker started")
+
+    async def _recover_orphaned_jobs(self):
+        """Reset any processing jobs left over from a previous process.
+
+        On a clean restart there are no live workers, so any job still marked
+        processing was orphaned mid-run. Reset it to queued so the worker
+        picks it up again.
+        """
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Transcription).where(
+                    Transcription.status == TranscriptionStatus.processing
+                )
+            )
+            orphans = result.scalars().all()
+            if not orphans:
+                return
+            for t in orphans:
+                t.status = TranscriptionStatus.queued
+                t.started_at = None
+                t.progress = 0
+                t.progress_stage = None
+            await db.commit()
+            logger.info(
+                "Recovered %d orphaned processing job(s) → queued: %s",
+                len(orphans),
+                [str(t.id) for t in orphans],
+            )
 
     async def stop(self):
         """Stop the background worker."""
