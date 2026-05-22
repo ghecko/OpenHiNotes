@@ -849,7 +849,7 @@ export function Recordings() {
                           </button>
                           <button
                             onClick={() => handleTranscribeRecording(recording.id, recording.fileName, recording.size, false, recording.fileVersion)}
-                            disabled={isLoading || isDownloading}
+                            disabled={isDownloading}
                             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded text-gray-600 dark:text-gray-400 disabled:opacity-50"
                             title="Transcribe"
                           >
@@ -857,7 +857,7 @@ export function Recordings() {
                           </button>
                           <button
                             onClick={() => handleTranscribeRecording(recording.id, recording.fileName, recording.size, true, recording.fileVersion)}
-                            disabled={isLoading || isDownloading}
+                            disabled={isDownloading}
                             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded text-gray-600 dark:text-gray-400 disabled:opacity-50"
                             title="Transcribe & Summarize"
                           >

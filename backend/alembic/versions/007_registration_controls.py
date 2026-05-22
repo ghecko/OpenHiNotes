@@ -1,7 +1,7 @@
 """Add registration controls: user status, registration_source, and registration settings
 
 Revision ID: 007_registration_controls
-Revises: 006_access_control
+Revises: 006b_app_settings
 Create Date: 2026-04-02
 """
 from alembic import op
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 # revision identifiers
 revision = "007_registration_controls"
-down_revision = "006_access_control"
+down_revision = "006b_app_settings"
 branch_labels = None
 depends_on = None
 
