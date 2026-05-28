@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'user';
+export type UserRole = 'admin' | 'template_manager' | 'user';
 export type UserStatus = 'active' | 'pending' | 'rejected';
 export type RegistrationSource = 'self_registered' | 'admin_created' | 'oidc';
 
@@ -143,6 +143,7 @@ export interface SharedWithMeItem {
 }
 
 export type TemplateTargetType = 'record' | 'whisper' | 'both';
+export type TemplateVisibility = 'private' | 'pending_review' | 'public';
 
 export interface SummaryTemplate {
   id: string;
@@ -151,9 +152,30 @@ export interface SummaryTemplate {
   prompt_template: string;
   category: string | null;
   target_type: TemplateTargetType;
+  created_by: string;
+  visibility: TemplateVisibility;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_feedback: string | null;
   is_active: boolean;
   is_default: boolean;
   created_at: string;
+  updated_at: string;
+}
+
+export interface AppNotification {
+  id: string;
+  type: string;
+  title: string;
+  body: string | null;
+  link: string | null;
+  is_read: boolean;
+  created_at: string;
+}
+
+export interface NotificationCount {
+  total: number;
+  unread: number;
 }
 
 export interface Summary {

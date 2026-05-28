@@ -1,12 +1,12 @@
 import { apiClient } from './client';
-import { SummaryTemplate } from '@/types';
+import { SummaryTemplate, TemplateTargetType, TemplateVisibility } from '@/types';
 
 interface CreateTemplateData {
   name: string;
   description: string;
   prompt_template: string;
   category?: string;
-  target_type?: string;
+  target_type?: TemplateTargetType;
 }
 
 interface UpdateTemplateData {
@@ -14,17 +14,30 @@ interface UpdateTemplateData {
   description?: string;
   prompt_template?: string;
   category?: string;
-  target_type?: string;
+  target_type?: TemplateTargetType;
   is_active?: boolean;
 }
 
+interface ListTemplatesOptions {
+  includeInactive?: boolean;
+  targetType?: 'record' | 'whisper';
+  visibility?: TemplateVisibility;
+  mine?: boolean;
+}
+
 export const templatesApi = {
-  async getTemplates(includeInactive = false, targetType?: 'record' | 'whisper'): Promise<SummaryTemplate[]> {
+  async getTemplates(options: ListTemplatesOptions = {}): Promise<SummaryTemplate[]> {
     const params = new URLSearchParams();
-    if (includeInactive) params.set('include_inactive', 'true');
-    if (targetType) params.set('target_type', targetType);
+    if (options.includeInactive) params.set('include_inactive', 'true');
+    if (options.targetType) params.set('target_type', options.targetType);
+    if (options.visibility) params.set('visibility', options.visibility);
+    if (options.mine) params.set('mine', 'true');
     const qs = params.toString();
     return apiClient.get<SummaryTemplate[]>(`/templates${qs ? `?${qs}` : ''}`);
+  },
+
+  async getPendingReview(): Promise<SummaryTemplate[]> {
+    return apiClient.get<SummaryTemplate[]>('/templates/pending-review');
   },
 
   async createTemplate(data: CreateTemplateData): Promise<SummaryTemplate> {
@@ -41,5 +54,17 @@ export const templatesApi = {
 
   async deleteTemplate(id: string): Promise<void> {
     return apiClient.delete<void>(`/templates/${id}`);
+  },
+
+  async submitForReview(id: string): Promise<SummaryTemplate> {
+    return apiClient.post<SummaryTemplate>(`/templates/${id}/submit`, {});
+  },
+
+  async approveTemplate(id: string): Promise<SummaryTemplate> {
+    return apiClient.post<SummaryTemplate>(`/templates/${id}/approve`, {});
+  },
+
+  async rejectTemplate(id: string, feedback?: string): Promise<SummaryTemplate> {
+    return apiClient.post<SummaryTemplate>(`/templates/${id}/reject`, { feedback: feedback ?? null });
   },
 };

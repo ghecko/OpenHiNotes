@@ -33,6 +33,10 @@ class SummaryTemplateResponse(BaseModel):
     category: Optional[str] = None
     target_type: str = "both"
     created_by: uuid.UUID
+    visibility: str = "public"  # "private" | "pending_review" | "public"
+    reviewed_by: Optional[uuid.UUID] = None
+    reviewed_at: Optional[datetime] = None
+    review_feedback: Optional[str] = None
     is_active: bool
     is_default: bool = False
     created_at: datetime
@@ -40,3 +44,8 @@ class SummaryTemplateResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class TemplateRejectRequest(BaseModel):
+    """Admin rejection with optional feedback shown to the template creator."""
+    feedback: Optional[str] = None

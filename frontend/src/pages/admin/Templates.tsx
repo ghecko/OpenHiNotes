@@ -61,7 +61,7 @@ export function Templates({ embedded }: { embedded?: boolean }) {
   const loadTemplates = async () => {
     setIsLoading(true);
     try {
-      const t = await templatesApi.getTemplates(true); // include inactive for admin
+      const t = await templatesApi.getTemplates({ includeInactive: true }); // include inactive for admin
       setTemplates(t);
     } catch (error) {
       console.error('Failed to load templates:', error);

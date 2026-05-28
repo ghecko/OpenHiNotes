@@ -4,9 +4,16 @@ import { useAuthStore } from '@/store/useAuthStore';
 interface ProtectedRouteProps {
   children: React.ReactNode;
   adminOnly?: boolean;
+  // Allow scoped roles (template_manager) that share the admin panel path
+  // with strictly-admin features. The panel itself hides tabs based on role.
+  allowTemplateManager?: boolean;
 }
 
-export function ProtectedRoute({ children, adminOnly = false }: ProtectedRouteProps) {
+export function ProtectedRoute({
+  children,
+  adminOnly = false,
+  allowTemplateManager = false,
+}: ProtectedRouteProps) {
   const { isAuthenticated, user, isLoading, forcePasswordReset } = useAuthStore();
   const location = useLocation();
 
@@ -27,8 +34,13 @@ export function ProtectedRoute({ children, adminOnly = false }: ProtectedRoutePr
     return <Navigate to="/change-password" replace />;
   }
 
-  if (adminOnly && user?.role !== 'admin') {
-    return <Navigate to="/dashboard" replace />;
+  if (adminOnly) {
+    const role = user?.role;
+    const allowed =
+      role === 'admin' || (allowTemplateManager && role === 'template_manager');
+    if (!allowed) {
+      return <Navigate to="/dashboard" replace />;
+    }
   }
 
   return <>{children}</>;

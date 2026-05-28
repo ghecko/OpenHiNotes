@@ -21,6 +21,7 @@ import { CollectionDetail } from '@/pages/CollectionDetail';
 import { Chat } from '@/pages/Chat';
 import { Settings } from '@/pages/Settings';
 import { MyGroups } from '@/pages/MyGroups';
+import { MyTemplates } from '@/pages/MyTemplates';
 import { AdminPanel } from '@/pages/admin/AdminPanel';
 
 // Components
@@ -141,7 +142,7 @@ function App() {
       <Route
         path="/admin"
         element={
-          <ProtectedRoute adminOnly>
+          <ProtectedRoute adminOnly allowTemplateManager>
             <AdminPanel />
           </ProtectedRoute>
         }
@@ -155,6 +156,14 @@ function App() {
         element={
           <ProtectedRoute>
             <MyGroups />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/templates"
+        element={
+          <ProtectedRoute>
+            <MyTemplates />
           </ProtectedRoute>
         }
       />
