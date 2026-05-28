@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.transcription import Transcription, TranscriptionStatus
+from app.models.transcription_pin import transcription_pins
 from app.models.user import User, UserRole
 from app.models.resource_share import ResourceType
 from app.schemas.search import SearchHit, SearchResponse
@@ -90,6 +91,14 @@ async def search_transcriptions(
     total = (await db.execute(total_q)).scalar() or 0
 
     # --- page of hits --------------------------------------------------
+    # Per-user pin lookup: a transcription is "pinned" for ordering /
+    # response purposes only if THIS user has pinned it.
+    user_pin_ids = (
+        select(transcription_pins.c.transcription_id)
+        .where(transcription_pins.c.user_id == current_user.id)
+    )
+    is_pinned_expr = Transcription.id.in_(user_pin_ids)
+
     rows_q = (
         select(
             Transcription.id,
@@ -97,7 +106,7 @@ async def search_transcriptions(
             Transcription.original_filename,
             Transcription.recording_type,
             Transcription.status,
-            Transcription.is_pinned,
+            is_pinned_expr.label("is_pinned"),
             Transcription.created_at,
             rank_expr,
             headline_expr,
@@ -106,7 +115,7 @@ async def search_transcriptions(
         # Pinned first, then rank, then newest — gives consistent ordering
         # when multiple hits tie on rank.
         .order_by(
-            Transcription.is_pinned.desc(),
+            is_pinned_expr.desc(),
             rank_expr.desc(),
             Transcription.created_at.desc(),
         )

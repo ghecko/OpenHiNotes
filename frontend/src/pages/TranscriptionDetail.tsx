@@ -566,6 +566,69 @@ export function TranscriptionDetail() {
     setVolume(v);
   }, []);
 
+  // Phase 6.4 — keyboard shortcuts on the transcription detail page.
+  // The detail page has its own custom audio element, so we wire the
+  // shortcuts directly into its play/seek/speed handlers. Inactive when
+  // there's no audio or the user is typing into an input/textarea.
+  const PLAYBACK_SPEEDS = [1, 1.25, 1.5, 2, 0.75] as const;
+  const [playbackRate, setPlaybackRate] = useState<number>(1);
+
+  const cyclePlaybackSpeed = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const idx = PLAYBACK_SPEEDS.indexOf(playbackRate as typeof PLAYBACK_SPEEDS[number]);
+    const next = PLAYBACK_SPEEDS[(idx + 1) % PLAYBACK_SPEEDS.length];
+    audio.playbackRate = next;
+    setPlaybackRate(next);
+  }, [playbackRate]);
+
+  useEffect(() => {
+    const isEditable = (el: EventTarget | null) => {
+      if (!(el instanceof HTMLElement)) return false;
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+      if (el.isContentEditable) return true;
+      return false;
+    };
+    const handler = (e: KeyboardEvent) => {
+      if (!audioRef.current) return;
+      if (isEditable(e.target)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const audio = audioRef.current;
+      switch (e.key) {
+        case ' ':
+        case 'Spacebar':
+          e.preventDefault();
+          togglePlayback();
+          break;
+        case 'ArrowLeft': {
+          e.preventDefault();
+          const next = Math.max(0, audio.currentTime - 5);
+          audio.currentTime = next;
+          setPlaybackTime(next);
+          break;
+        }
+        case 'ArrowRight': {
+          e.preventDefault();
+          const max = audio.duration || 0;
+          const next = Math.min(max, audio.currentTime + 5);
+          audio.currentTime = next;
+          setPlaybackTime(next);
+          break;
+        }
+        case 's':
+        case 'S':
+          e.preventDefault();
+          cyclePlaybackSpeed();
+          break;
+        default:
+          break;
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [togglePlayback, cyclePlaybackSpeed]);
+
   const fmtTime = (s: number) => {
     if (!s || !isFinite(s)) return '0:00';
     return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -745,8 +808,8 @@ export function TranscriptionDetail() {
               </span>
             )}
 
-            {/* Pin toggle (anyone with write access) */}
-            {(isOwner || permissionLevel === 'write') && (
+            {/* Pin toggle (anyone who can view) */}
+            {permissionLevel && (
               <button
                 onClick={async () => {
                   try {
@@ -927,7 +990,7 @@ export function TranscriptionDetail() {
                     {fmtTime(playbackTime)} / {fmtTime(audioDuration)}
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <Volume2 className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
                   <input
                     type="range"
@@ -938,6 +1001,16 @@ export function TranscriptionDetail() {
                     onChange={handleVolumeChange}
                     className="w-24 h-1.5 bg-gray-200 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-primary-600"
                   />
+                  <button
+                    onClick={cyclePlaybackSpeed}
+                    title="Playback speed (press S)"
+                    className="text-[11px] font-mono px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                  >
+                    {playbackRate.toFixed(2).replace(/0$/, '')}×
+                  </button>
+                  <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-1 hidden sm:inline">
+                    <kbd>Space</kbd> play · <kbd>←/→</kbd> 5s · <kbd>S</kbd> speed
+                  </span>
                   {isPlaying && (
                     <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-medium text-primary-600 dark:text-primary-400">
                       <Disc3 className="w-3 h-3 animate-spin" />

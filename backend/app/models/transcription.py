@@ -61,10 +61,6 @@ class Transcription(Base):
     auto_summarize_template_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("summary_templates.id", ondelete="SET NULL"), nullable=True
     )
-    # Phase 6.2 - Pinned items float to the top of lists.
-    is_pinned: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False, server_default="false"
-    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False

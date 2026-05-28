@@ -4,11 +4,12 @@ import { Layout } from '@/components/Layout';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { searchApi, SearchHit } from '@/api/search';
 import { useAppStore } from '@/store/useAppStore';
-import { Transcription } from '@/types';
+import { Transcription, RecordingType } from '@/types';
 import { format } from 'date-fns';
 import {
   Trash2, CheckCircle, AlertCircle, Loader, Search, RefreshCw, FileText,
   Inbox, Clock, Unplug, ArrowUpDown, Pin, PinOff, X, CheckSquare, Square,
+  Mic, MessageSquare,
 } from 'lucide-react';
 
 export function Transcriptions() {
@@ -20,6 +21,7 @@ export function Transcriptions() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
   const [ownershipFilter, setOwnershipFilter] = useState<'all' | 'mine' | 'shared'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | RecordingType>('all');
 
   // Phase 6.1 — server-side full-text search.
   const [serverHits, setServerHits] = useState<SearchHit[] | null>(null);
@@ -37,12 +39,15 @@ export function Transcriptions() {
   useEffect(() => {
     loadTranscriptions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortOrder, ownershipFilter]);
+  }, [sortOrder, ownershipFilter, typeFilter]);
 
   const loadTranscriptions = async () => {
     setIsLoading(true);
     try {
-      const response = await transcriptionsApi.getTranscriptions(0, 100, sortOrder, ownershipFilter);
+      const response = await transcriptionsApi.getTranscriptions(
+        0, 100, sortOrder, ownershipFilter,
+        typeFilter === 'all' ? undefined : typeFilter,
+      );
       setTranscriptions(response.items);
     } catch (error) {
       console.error('Failed to load transcriptions:', error);
@@ -66,7 +71,10 @@ export function Transcriptions() {
       const controller = new AbortController();
       searchAbortRef.current = controller;
       try {
-        const res = await searchApi.searchTranscriptions(q, { limit: 50 });
+        const res = await searchApi.searchTranscriptions(q, {
+          limit: 50,
+          recordingType: typeFilter === 'all' ? undefined : typeFilter,
+        });
         if (!controller.signal.aborted) setServerHits(res.items);
       } catch (err) {
         if (!controller.signal.aborted) {
@@ -81,7 +89,7 @@ export function Transcriptions() {
       clearTimeout(handle);
       searchAbortRef.current?.abort?.();
     };
-  }, [searchTerm]);
+  }, [searchTerm, typeFilter]);
 
   const visibleTranscriptions: Transcription[] = useMemo(() => {
     let list = transcriptions;
@@ -238,6 +246,29 @@ export function Transcriptions() {
             ))}
           </div>
 
+          {/* Phase 6 follow-up — record / whisper filter */}
+          <div className="inline-flex rounded-xl border border-gray-200/60 dark:border-gray-700/40 overflow-hidden">
+            {([
+              { key: 'all',     label: 'All',      icon: null },
+              { key: 'record',  label: 'Records',  icon: <Mic className="w-3.5 h-3.5" /> },
+              { key: 'whisper', label: 'Whispers', icon: <MessageSquare className="w-3.5 h-3.5" /> },
+            ] as const).map((f) => (
+              <button
+                key={f.key}
+                onClick={() => setTypeFilter(f.key)}
+                className={`inline-flex items-center gap-1.5 px-3 py-2.5 text-sm font-medium transition-colors ${
+                  typeFilter === f.key
+                    ? 'bg-primary-500 text-white'
+                    : 'bg-white/80 dark:bg-gray-800/80 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                }`}
+                title={f.key === 'all' ? 'Show both records and whispers' : `Show only ${f.label.toLowerCase()}`}
+              >
+                {f.icon}
+                {f.label}
+              </button>
+            ))}
+          </div>
+
           <button
             onClick={() => setSortOrder(sortOrder === 'newest' ? 'oldest' : 'newest')}
             className="inline-flex items-center gap-2 px-4 py-2.5 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm text-gray-700 dark:text-gray-300 border border-gray-200/60 dark:border-gray-700/40 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200"
@@ -357,6 +388,21 @@ export function Transcriptions() {
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
                                 {t.is_pinned && (<Pin className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />)}
+                                {t.recording_type === 'whisper' ? (
+                                  <span
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 flex-shrink-0"
+                                    title="Whisper note"
+                                  >
+                                    <MessageSquare className="w-3 h-3" /> Whisper
+                                  </span>
+                                ) : (
+                                  <span
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300 flex-shrink-0"
+                                    title="Recorded conversation"
+                                  >
+                                    <Mic className="w-3 h-3" /> Record
+                                  </span>
+                                )}
                                 <span className="font-medium text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors duration-150 truncate">
                                   {t.title || t.original_filename}
                                 </span>

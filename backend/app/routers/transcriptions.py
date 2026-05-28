@@ -45,6 +45,7 @@ from app.models.resource_share import (
     PermissionLevel,
 )
 from app.models.user_group import UserGroup, user_group_members
+from app.models.transcription_pin import transcription_pins
 from app.models.user import User, UserRole
 from app.models.transcription import Transcription, TranscriptionStatus
 from app.models.summary import Summary
@@ -64,12 +65,20 @@ async def _enrich_with_permissions(
     user: User,
     db: AsyncSession,
 ) -> dict:
-    """Add permission_level to a transcription response."""
+    """Add ``permission_level`` and per-user ``is_pinned`` to a response."""
     level = await PermissionService.get_permission_level(
         db, user, ResourceType.transcription, transcription.id
     )
     data = TranscriptionResponse.model_validate(transcription).model_dump()
     data["permission_level"] = level
+    # Per-user pin lookup. Lightweight: PK lookup on the join table.
+    pin_res = await db.execute(
+        select(transcription_pins.c.user_id).where(
+            transcription_pins.c.user_id == user.id,
+            transcription_pins.c.transcription_id == transcription.id,
+        )
+    )
+    data["is_pinned"] = pin_res.scalars().first() is not None
     return data
 
 
@@ -320,15 +329,25 @@ async def list_transcriptions(
     """List transcriptions. Supports filter: all (mine + shared), mine, shared.
     Optional recording_type filter: record, whisper.
 
-    Pinned items always float to the top, regardless of the chosen sort
-    order (Phase 6.2).
+    Pinned items (per-user) always float to the top, regardless of the
+    chosen sort order. Phase 6.2 → per-user pins in Phase 6 follow-up.
     """
+    # LEFT JOIN to the per-user pin table so we can both order by pin and
+    # return ``is_pinned`` cheaply in a single round-trip. ``pin_marker``
+    # is non-null exactly when the current user has pinned the row.
+    pin_marker = transcription_pins.c.transcription_id.label("pin_marker")
+    pin_order = (
+        select(transcription_pins.c.transcription_id)
+        .where(transcription_pins.c.user_id == current_user.id)
+    )
     secondary = (
         Transcription.created_at.desc()
         if sort == "newest"
         else Transcription.created_at.asc()
     )
-    order = (Transcription.is_pinned.desc(), secondary)
+    # Sort by "is this row's id in the user's pinned set", then by date.
+    pinned_first = Transcription.id.in_(pin_order).desc()
+    order = (pinned_first, secondary)
 
     if current_user.role == UserRole.admin:
         # Admins see everything
@@ -395,11 +414,32 @@ async def list_transcriptions(
     result = await db.execute(query)
     transcriptions = result.scalars().all()
 
+    # Resolve per-user pins in one round-trip and stamp ``is_pinned`` on
+    # each response object before Pydantic serialization.
+    if transcriptions:
+        pinned_ids_res = await db.execute(
+            select(transcription_pins.c.transcription_id).where(
+                transcription_pins.c.user_id == current_user.id,
+                transcription_pins.c.transcription_id.in_(
+                    [t.id for t in transcriptions]
+                ),
+            )
+        )
+        pinned_ids = {row[0] for row in pinned_ids_res.all()}
+    else:
+        pinned_ids = set()
+
+    items = []
+    for t in transcriptions:
+        data = TranscriptionResponse.model_validate(t).model_dump()
+        data["is_pinned"] = t.id in pinned_ids
+        items.append(data)
+
     return {
-        "items": transcriptions,
+        "items": items,
         "total": total or 0,
         "skip": skip,
-        "limit": limit
+        "limit": limit,
     }
 
 
@@ -1076,7 +1116,11 @@ async def set_pinned(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Pin or unpin a transcription. Requires write access."""
+    """Pin or unpin a transcription for the current user.
+
+    Per-user — does NOT affect other users who can see the transcription.
+    Read access is enough.
+    """
     transcription = await TranscriptionService.get_transcription(db, transcription_id)
     if not transcription:
         raise HTTPException(
@@ -1084,17 +1128,32 @@ async def set_pinned(
         )
 
     has_access = await PermissionService.check_access(
-        db, current_user, ResourceType.transcription, transcription_id, "write"
+        db, current_user, ResourceType.transcription, transcription_id, "read"
     )
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to update this transcription",
+            detail="Not authorized to view this transcription",
         )
 
-    transcription.is_pinned = pinned
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from sqlalchemy import delete as sa_delete
+
+    if pinned:
+        # Upsert: ignore if the user already pinned it.
+        stmt = pg_insert(transcription_pins).values(
+            user_id=current_user.id,
+            transcription_id=transcription_id,
+        ).on_conflict_do_nothing()
+        await db.execute(stmt)
+    else:
+        await db.execute(
+            sa_delete(transcription_pins).where(
+                transcription_pins.c.user_id == current_user.id,
+                transcription_pins.c.transcription_id == transcription_id,
+            )
+        )
     await db.commit()
-    await db.refresh(transcription)
     return await _enrich_with_permissions(transcription, current_user, db)
 
 
@@ -1153,19 +1212,34 @@ async def batch_pin(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Pin / unpin multiple transcriptions."""
+    """Pin / unpin multiple transcriptions for the current user only."""
     if not payload.ids:
         return BatchResultResponse(affected=0, message="No ids provided")
 
-    allowed, skipped = await _filter_ids_by_permission(db, current_user, payload.ids, "write")
-    if allowed:
-        from sqlalchemy import update as sa_update
+    allowed, skipped = await _filter_ids_by_permission(
+        db, current_user, payload.ids, "read"
+    )
+    if not allowed:
+        return BatchResultResponse(affected=0, skipped=skipped)
+
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from sqlalchemy import delete as sa_delete
+
+    if payload.pinned:
+        # Bulk upsert
+        rows = [
+            {"user_id": current_user.id, "transcription_id": tid} for tid in allowed
+        ]
+        stmt = pg_insert(transcription_pins).values(rows).on_conflict_do_nothing()
+        await db.execute(stmt)
+    else:
         await db.execute(
-            sa_update(Transcription)
-            .where(Transcription.id.in_(allowed))
-            .values(is_pinned=payload.pinned)
+            sa_delete(transcription_pins).where(
+                transcription_pins.c.user_id == current_user.id,
+                transcription_pins.c.transcription_id.in_(allowed),
+            )
         )
-        await db.commit()
+    await db.commit()
     return BatchResultResponse(affected=len(allowed), skipped=skipped)
 
 
