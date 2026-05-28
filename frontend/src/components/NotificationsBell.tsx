@@ -6,6 +6,32 @@ import { AppNotification } from '@/types';
 
 const POLL_MS = 30_000;
 
+// Phase 6.5 — kinds of notifications we want to surface as a desktop
+// (browser) notification. Anything else stays bell-only.
+const DESKTOP_TYPES = new Set([
+  'transcription_completed',
+  'transcription_failed',
+]);
+
+function fireBrowserNotification(n: AppNotification, onClick: () => void) {
+  if (typeof window === 'undefined' || !('Notification' in window)) return;
+  if (Notification.permission !== 'granted') return;
+  try {
+    const notif = new Notification(n.title, {
+      body: n.body || undefined,
+      tag: n.id,
+      icon: '/favicon.ico',
+    });
+    notif.onclick = () => {
+      window.focus();
+      onClick();
+      notif.close();
+    };
+  } catch {
+    // Silently ignore — desktop notifications are best-effort.
+  }
+}
+
 export function NotificationsBell() {
   const navigate = useNavigate();
   const [items, setItems] = useState<AppNotification[]>([]);
@@ -14,10 +40,40 @@ export function NotificationsBell() {
   const [isLoading, setIsLoading] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
+  // IDs we've already fired desktop notifications for. Persisted across
+  // polls so we don't double-toast the same event.
+  const firedRef = useRef<Set<string>>(new Set());
+  const hasSeededRef = useRef(false);
+
+  const maybeFireDesktopNotifications = async () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    if (Notification.permission !== 'granted') return;
+    try {
+      const unreadList = await notificationsApi.list({ unreadOnly: true, limit: 10 });
+      if (!hasSeededRef.current) {
+        unreadList.forEach((n) => firedRef.current.add(n.id));
+        hasSeededRef.current = true;
+        return;
+      }
+      for (const n of unreadList) {
+        if (firedRef.current.has(n.id)) continue;
+        firedRef.current.add(n.id);
+        if (DESKTOP_TYPES.has(n.type)) {
+          fireBrowserNotification(n, () => {
+            if (n.link) navigate(n.link);
+          });
+        }
+      }
+    } catch {
+      // Best-effort — never let this break the polling loop.
+    }
+  };
+
   const refreshCount = async () => {
     try {
       const c = await notificationsApi.count();
       setUnread(c.unread);
+      await maybeFireDesktopNotifications();
     } catch {
       // Silent — notifications are non-critical.
     }

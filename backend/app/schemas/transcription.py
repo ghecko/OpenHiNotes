@@ -80,6 +80,7 @@ class TranscriptionResponse(BaseModel):
     audio_available: bool = False
     auto_summarize: bool = False
     auto_summarize_template_id: Optional[uuid.UUID] = None
+    is_pinned: bool = False
     created_at: datetime
     updated_at: datetime
     # Access control fields (populated by routers, not from DB)
@@ -107,5 +108,4 @@ class PaginatedTranscriptionResponse(BaseModel):
     """Schema for a paginated list of transcriptions."""
     items: List[TranscriptionResponse]
     total: int
-    skip: int
-    limit: int
+  

@@ -71,5 +71,5 @@ class User(Base):
         JSON, nullable=False, default=dict, server_default='{}'
     )
 
-    def __repr__(self) -> str:
-        return f"<User(id={self.id}, email={self.email}, role={self.role})>"
+    # Phase 6.5 — notification preferences. ``notify_on_completion``
+    # controls in-app + browser-push

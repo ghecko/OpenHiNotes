@@ -211,6 +211,48 @@ export const transcriptionsApi = {
     return apiClient.delete<void>(`/transcriptions/${id}`);
   },
 
+  // Phase 6.2 — pinning
+  async setPinned(id: string, pinned: boolean): Promise<Transcription> {
+    return apiClient.patch<Transcription>(`/transcriptions/${id}/pin?pinned=${pinned}`);
+  },
+
+  // Phase 6.3 — batch operations
+  async batchDelete(ids: string[]): Promise<{ affected: number; skipped: number }> {
+    return apiClient.post<{ affected: number; skipped: number }>(
+      '/transcriptions/batch/delete',
+      { ids },
+    );
+  },
+
+  async batchPin(ids: string[], pinned: boolean): Promise<{ affected: number; skipped: number }> {
+    return apiClient.post<{ affected: number; skipped: number }>(
+      '/transcriptions/batch/pin',
+      { ids, pinned },
+    );
+  },
+
+  async batchSetCollection(
+    ids: string[],
+    collectionId: string | null,
+  ): Promise<{ affected: number; skipped: number }> {
+    return apiClient.post<{ affected: number; skipped: number }>(
+      '/transcriptions/batch/collection',
+      { ids, collection_id: collectionId },
+    );
+  },
+
+  async batchShare(
+    ids: string[],
+    groupId: string,
+    permission: 'read' | 'write' = 'read',
+  ): Promise<{ affected: number; skipped: number }> {
+    return apiClient.post<{ affected: number; skipped: number }>(
+      '/transcriptions/batch/share',
+      { ids, group_id: groupId, permission },
+    );
+  },
+
+
   async checkByFilenames(filenames: string[]): Promise<Record<string, { id: string; status: string; title: string | null; keep_audio: boolean; audio_available: boolean }>> {
     if (filenames.length === 0) return {};
     return apiClient.get<Record<string, { id: string; status: string; title: string | null; keep_audio: boolean; audio_available: boolean }>>(

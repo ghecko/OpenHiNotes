@@ -13,7 +13,7 @@ import { useDeviceConnection } from '@/hooks/useDeviceConnection';
 import { deviceService } from '@/services/deviceService';
 import { Transcription, Summary, SummaryTemplate, Collection } from '@/types';
 import { format } from 'date-fns';
-import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, Play, Pause, Volume2, Disc3, Share2, Lock, Eye, ChevronDown } from 'lucide-react';
+import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, Play, Pause, Volume2, Disc3, Share2, Lock, Eye, ChevronDown, Pin } from 'lucide-react';
 import { ShareModal } from '@/components/ShareModal';
 import { InteractiveMarkdown } from '@/components/InteractiveMarkdown';
 import { TemplateSelector } from '@/components/TemplateSelector';
@@ -743,6 +743,32 @@ export function TranscriptionDetail() {
                   <><Pencil className="w-3 h-3" /> Can edit</>
                 )}
               </span>
+            )}
+
+            {/* Pin toggle (anyone with write access) */}
+            {(isOwner || permissionLevel === 'write') && (
+              <button
+                onClick={async () => {
+                  try {
+                    const updated = await transcriptionsApi.setPinned(
+                      transcription.id,
+                      !transcription.is_pinned,
+                    );
+                    setTranscription(updated);
+                  } catch (err) {
+                    console.error('Failed to toggle pin:', err);
+                  }
+                }}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                  transcription.is_pinned
+                    ? 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-100 dark:hover:bg-amber-900/30'
+                    : 'text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600'
+                }`}
+                title={transcription.is_pinned ? 'Unpin' : 'Pin to top of lists'}
+              >
+                <Pin className="w-3.5 h-3.5" />
+                {transcription.is_pinned ? 'Pinned' : 'Pin'}
+              </button>
             )}
 
             {/* Share button (owner only) */}

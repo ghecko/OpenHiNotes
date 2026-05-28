@@ -31,6 +31,20 @@ from app.schemas.transcription import (
     SegmentTextUpdate,
     TranscriptFindReplace,
 )
+from app.schemas.search import (
+    BatchIdsRequest,
+    BatchPinRequest,
+    BatchCollectionRequest,
+    BatchShareRequest,
+    BatchResultResponse,
+)
+from app.models.collection import Collection
+from app.models.resource_share import (
+    ResourceShare,
+    GranteeType,
+    PermissionLevel,
+)
+from app.models.user_group import UserGroup, user_group_members
 from app.models.user import User, UserRole
 from app.models.transcription import Transcription, TranscriptionStatus
 from app.models.summary import Summary
@@ -304,12 +318,21 @@ async def list_transcriptions(
     db: AsyncSession = Depends(get_db),
 ):
     """List transcriptions. Supports filter: all (mine + shared), mine, shared.
-    Optional recording_type filter: record, whisper."""
-    order = Transcription.created_at.desc() if sort == "newest" else Transcription.created_at.asc()
+    Optional recording_type filter: record, whisper.
+
+    Pinned items always float to the top, regardless of the chosen sort
+    order (Phase 6.2).
+    """
+    secondary = (
+        Transcription.created_at.desc()
+        if sort == "newest"
+        else Transcription.created_at.asc()
+    )
+    order = (Transcription.is_pinned.desc(), secondary)
 
     if current_user.role == UserRole.admin:
         # Admins see everything
-        query = select(Transcription).order_by(order).offset(skip).limit(limit)
+        query = select(Transcription).order_by(*order).offset(skip).limit(limit)
         count_query = select(func.count()).select_from(Transcription)
     else:
         # Get accessible IDs
@@ -321,7 +344,7 @@ async def list_transcriptions(
             query = (
                 select(Transcription)
                 .where(Transcription.user_id == current_user.id)
-                .order_by(order)
+                .order_by(*order)
                 .offset(skip)
                 .limit(limit)
             )
@@ -338,7 +361,7 @@ async def list_transcriptions(
             query = (
                 select(Transcription)
                 .where(Transcription.id.in_(shared_ids))
-                .order_by(order)
+                .order_by(*order)
                 .offset(skip)
                 .limit(limit)
             )
@@ -351,7 +374,7 @@ async def list_transcriptions(
             query = (
                 select(Transcription)
                 .where(Transcription.id.in_(accessible_ids))
-                .order_by(order)
+                .order_by(*order)
                 .offset(skip)
                 .limit(limit)
             )
@@ -1038,3 +1061,237 @@ async def delete_transcription(
         )
 
     await TranscriptionService.delete_transcription(db, transcription_id)
+
+
+
+# ============================================================
+# Phase 6.2 — Pin / unpin
+# ============================================================
+
+
+@router.patch("/{transcription_id}/pin", response_model=TranscriptionResponse)
+async def set_pinned(
+    transcription_id: uuid.UUID,
+    pinned: bool = Query(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pin or unpin a transcription. Requires write access."""
+    transcription = await TranscriptionService.get_transcription(db, transcription_id)
+    if not transcription:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Transcription not found"
+        )
+
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.transcription, transcription_id, "write"
+    )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to update this transcription",
+        )
+
+    transcription.is_pinned = pinned
+    await db.commit()
+    await db.refresh(transcription)
+    return await _enrich_with_permissions(transcription, current_user, db)
+
+
+# ============================================================
+# Phase 6.3 — Batch operations
+# ============================================================
+
+
+async def _filter_ids_by_permission(
+    db: AsyncSession,
+    user: User,
+    ids: list,
+    required: str = "write",
+):
+    """Return (allowed_ids, skipped_count) for the given operation level."""
+    allowed = []
+    for tid in ids:
+        if await PermissionService.check_access(
+            db, user, ResourceType.transcription, tid, required
+        ):
+            allowed.append(tid)
+    return allowed, len(ids) - len(allowed)
+
+
+@router.post("/batch/delete", response_model=BatchResultResponse)
+async def batch_delete(
+    payload: BatchIdsRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete multiple transcriptions in one call."""
+    if not payload.ids:
+        return BatchResultResponse(affected=0, message="No ids provided")
+
+    deleted = 0
+    skipped = 0
+    for tid in payload.ids:
+        level = await PermissionService.get_permission_level(
+            db, current_user, ResourceType.transcription, tid
+        )
+        if level == "owner":
+            try:
+                await TranscriptionService.delete_transcription(db, tid)
+                deleted += 1
+            except Exception:
+                skipped += 1
+        else:
+            skipped += 1
+
+    return BatchResultResponse(affected=deleted, skipped=skipped)
+
+
+@router.post("/batch/pin", response_model=BatchResultResponse)
+async def batch_pin(
+    payload: BatchPinRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pin / unpin multiple transcriptions."""
+    if not payload.ids:
+        return BatchResultResponse(affected=0, message="No ids provided")
+
+    allowed, skipped = await _filter_ids_by_permission(db, current_user, payload.ids, "write")
+    if allowed:
+        from sqlalchemy import update as sa_update
+        await db.execute(
+            sa_update(Transcription)
+            .where(Transcription.id.in_(allowed))
+            .values(is_pinned=payload.pinned)
+        )
+        await db.commit()
+    return BatchResultResponse(affected=len(allowed), skipped=skipped)
+
+
+@router.post("/batch/collection", response_model=BatchResultResponse)
+async def batch_set_collection(
+    payload: BatchCollectionRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Move multiple transcriptions into a collection (or out of any)."""
+    if not payload.ids:
+        return BatchResultResponse(affected=0, message="No ids provided")
+
+    if payload.collection_id is not None:
+        coll_result = await db.execute(
+            select(Collection).where(Collection.id == payload.collection_id)
+        )
+        target_collection = coll_result.scalars().first()
+        if not target_collection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found"
+            )
+        can_use_collection = await PermissionService.check_access(
+            db, current_user, ResourceType.collection, payload.collection_id, "write"
+        )
+        if not can_use_collection:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to add to this collection",
+            )
+
+    allowed, skipped = await _filter_ids_by_permission(db, current_user, payload.ids, "write")
+    if allowed:
+        from sqlalchemy import update as sa_update
+        await db.execute(
+            sa_update(Transcription)
+            .where(Transcription.id.in_(allowed))
+            .values(collection_id=payload.collection_id)
+        )
+        await db.commit()
+    return BatchResultResponse(affected=len(allowed), skipped=skipped)
+
+
+@router.post("/batch/share", response_model=BatchResultResponse)
+async def batch_share(
+    payload: BatchShareRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Share multiple owned transcriptions with a group."""
+    if not payload.ids:
+        return BatchResultResponse(affected=0, message="No ids provided")
+
+    if payload.permission not in ("read", "write"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="permission must be 'read' or 'write'",
+        )
+
+    group_result = await db.execute(
+        select(UserGroup).where(UserGroup.id == payload.group_id)
+    )
+    group = group_result.scalars().first()
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Group not found"
+        )
+
+    is_admin = current_user.role == UserRole.admin
+    is_owner = group.owner_id == current_user.id
+    if not (is_admin or is_owner):
+        m_result = await db.execute(
+            select(user_group_members.c.user_id).where(
+                user_group_members.c.group_id == payload.group_id,
+                user_group_members.c.user_id == current_user.id,
+            )
+        )
+        is_member = m_result.scalars().first() is not None
+        if group.sharing_policy == "creator_only" and not is_owner:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This group only allows its owner to share with it",
+            )
+        if not is_member:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not a member of this group",
+            )
+
+    shared = 0
+    skipped = 0
+    perm = (
+        PermissionLevel.write if payload.permission == "write" else PermissionLevel.read
+    )
+    for tid in payload.ids:
+        level = await PermissionService.get_permission_level(
+            db, current_user, ResourceType.transcription, tid
+        )
+        if level != "owner":
+            skipped += 1
+            continue
+
+        existing = await db.execute(
+            select(ResourceShare).where(
+                ResourceShare.resource_type == ResourceType.transcription,
+                ResourceShare.resource_id == tid,
+                ResourceShare.grantee_type == GranteeType.group,
+                ResourceShare.grantee_id == payload.group_id,
+            )
+        )
+        row = existing.scalars().first()
+        if row:
+            row.permission = perm
+            row.granted_by = current_user.id
+        else:
+            db.add(
+                ResourceShare(
+                    resource_type=ResourceType.transcription,
+                    resource_id=tid,
+                    grantee_type=GranteeType.group,
+                    grantee_id=payload.group_id,
+                    permission=perm,
+                    granted_by=current_user.id,
+                )
+            )
+        shared += 1
+
+    await db.commit()
+    return BatchResultResponse(affected=shared, skipped=skipped)
