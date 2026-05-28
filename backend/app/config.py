@@ -85,4 +85,15 @@ class Settings(BaseSettings):
         if val == "true":
             return True
         # Treat as a CA bundle file path
-        return setting_value.st
+        return setting_value.strip()
+
+    @property
+    def llm_ssl_verify(self) -> Union[bool, str, ssl.SSLContext]:
+        return self.get_ssl_verify(self.llm_verify_ssl)
+
+    @property
+    def voxhub_ssl_verify(self) -> Union[bool, str, ssl.SSLContext]:
+        return self.get_ssl_verify(self.voxhub_verify_ssl)
+
+
+settings = Settings()

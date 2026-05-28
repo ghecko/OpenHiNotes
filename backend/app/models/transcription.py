@@ -61,7 +61,7 @@ class Transcription(Base):
     auto_summarize_template_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("summary_templates.id", ondelete="SET NULL"), nullable=True
     )
-    # Phase 6.2 — Pinned items float to the top of lists.
+    # Phase 6.2 - Pinned items float to the top of lists.
     is_pinned: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
@@ -71,4 +71,7 @@ class Transcription(Base):
     )
 
     # Relationships
-    user
+    user: Mapped["User"] = relationship(foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return f"<Transcription(id={self.id}, user_id={self.user_id}, status={self.status})>"

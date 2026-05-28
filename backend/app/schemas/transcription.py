@@ -108,4 +108,5 @@ class PaginatedTranscriptionResponse(BaseModel):
     """Schema for a paginated list of transcriptions."""
     items: List[TranscriptionResponse]
     total: int
-  
+    skip: int
+    limit: int
