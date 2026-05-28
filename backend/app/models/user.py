@@ -66,9 +66,20 @@ class User(Base):
         DateTime, nullable=True, default=None
     )
 
-    # Client-side recording aliases: filename → display name
+    # Client-side recording aliases: filename -> display name
     recording_aliases: Mapped[dict] = mapped_column(
         JSON, nullable=False, default=dict, server_default='{}'
+    )
+
+    # Phase 6.5 - notification preferences. ``notify_on_completion``
+    # controls in-app + browser-push notifications when one of the user's
+    # transcriptions completes. ``notify_email_on_completion`` adds an
+    # SMTP email (only sent when SMTP is configured).
+    notify_on_completion: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+    notify_email_on_completion: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
     )
 
     def __repr__(self) -> str:

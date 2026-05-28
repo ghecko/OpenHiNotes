@@ -15,6 +15,9 @@ from app.services.transcription import TranscriptionService
 from app.services.llm import LLMService
 from app.utils.date_extract import extract_meeting_date
 from app.config import settings
+from app.services.notifications import notify_transcription_completed
+from app.services.email import EmailService, EmailSettingsService
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +161,65 @@ class TranscriptionQueue:
                     q.put_nowait(data)
                 except asyncio.QueueFull:
                     pass  # Drop if subscriber is too slow
+
+    async def _send_completion_notification(
+        self,
+        *,
+        transcription_id: uuid.UUID,
+        user_id: uuid.UUID,
+        display_name: str,
+        failed: bool = False,
+        error: Optional[str] = None,
+    ) -> None:
+        """Phase 6.5 — fire an in-app (and optional email) notification
+        when a transcription finishes processing.
+
+        Best-effort: any failure here is logged but never propagated, so
+        the queue worker stays robust.
+        """
+        try:
+            async with AsyncSessionLocal() as db:
+                # Load the owner so we can honour their preferences.
+                user_result = await db.execute(
+                    select(User).where(User.id == user_id)
+                )
+                user = user_result.scalars().first()
+                if not user:
+                    return
+
+                if user.notify_on_completion:
+                    await notify_transcription_completed(
+                        db,
+                        user_id=user_id,
+                        transcription_id=transcription_id,
+                        display_name=display_name,
+                        failed=failed,
+                        error=error,
+                        commit=True,
+                    )
+
+                if user.notify_email_on_completion and user.email:
+                    smtp_ready = await EmailSettingsService.is_configured(db)
+                    if smtp_ready:
+                        base_url = (
+                            getattr(settings, "app_base_url", "") or ""
+                        ).rstrip("/")
+                        link = f"{base_url}/transcriptions/{transcription_id}"
+                        await EmailService.send_transcription_complete_email(
+                            db,
+                            to_email=user.email,
+                            display_name=user.display_name or user.email,
+                            transcription_name=display_name,
+                            transcription_url=link,
+                            failed=failed,
+                            error=error,
+                        )
+        except Exception as e:  # pragma: no cover — best-effort path
+            logger.warning(
+                "Completion notification failed for transcription %s: %s",
+                transcription_id, e,
+            )
+
 
     async def cancel(self, transcription_id: uuid.UUID, user_id: uuid.UUID) -> bool:
         """Cancel a queued or processing transcription. Returns True if cancelled."""
@@ -404,6 +466,14 @@ class TranscriptionQueue:
                     "auto_summarize": will_summarize,
                 })
 
+                # Phase 6.5 — in-app + optional email notification
+                await self._send_completion_notification(
+                    transcription_id=transcription_id,
+                    user_id=user_id,
+                    display_name=orig_filename or stored_filename,
+                    failed=False,
+                )
+
                 # Auto-summarize if requested and transcription produced text
                 if will_summarize:
                     try:
@@ -455,6 +525,16 @@ class TranscriptionQueue:
                     "status": "failed",
                     "error": str(e),
                 })
+
+                # Phase 6.5 — also notify the user when a job fails so
+                # they don't have to keep polling the queue page.
+                await self._send_completion_notification(
+                    transcription_id=transcription_id,
+                    user_id=user_id,
+                    display_name=stored_filename,
+                    failed=True,
+                    error=str(e),
+                )
 
 
 # Singleton instance

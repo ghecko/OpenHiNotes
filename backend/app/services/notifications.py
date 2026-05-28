@@ -1,7 +1,7 @@
 """Tiny helper for creating in-app notifications.
 
 Kept intentionally small — templated notifications for Sprint 6 plus a
-generic `create` for future callers. No email integration here; that can
+generic ``create`` for future callers. No email integration here; that can
 be layered in later by composing this with the existing email service.
 """
 
@@ -83,5 +83,43 @@ async def notify_template_rejected(
         body=body,
         # User lands on their templates; frontend can highlight the rejected one.
         link=f"/templates?focus={template_id}",
+        commit=commit,
+    )
+
+
+async def notify_transcription_completed(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    transcription_id: uuid.UUID,
+    display_name: str,
+    failed: bool = False,
+    error: Optional[str] = None,
+    commit: bool = True,
+) -> Notification:
+    """Phase 6.5 — drop an in-app notification when a transcription
+    finishes processing (success or failure).
+
+    Note: caller is responsible for checking ``user.notify_on_completion``
+    before calling this — keeps preference handling in one place.
+    """
+    if failed:
+        title = "Transcription failed"
+        body = f"“{display_name}” could not be transcribed."
+        if error:
+            body += f" Error: {error}"
+        ntype = "transcription_failed"
+    else:
+        title = "Transcription ready"
+        body = f"“{display_name}” is ready to view."
+        ntype = "transcription_completed"
+
+    return await create_notification(
+        db,
+        user_id=user_id,
+        type=ntype,
+        title=title,
+        body=body,
+        link=f"/transcriptions/{transcription_id}",
         commit=commit,
     )

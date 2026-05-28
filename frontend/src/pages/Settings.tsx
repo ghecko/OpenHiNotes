@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { Layout } from '@/components/Layout';
 import { useAuthStore } from '@/store/useAuthStore';
 import { authApi } from '@/api/auth';
-import { Save, Loader, Fingerprint, Lock, CheckCircle, AlertCircle } from 'lucide-react';
+import { Save, Loader, Fingerprint, Lock, CheckCircle, AlertCircle, Bell } from 'lucide-react';
 import { VoiceProfileManager } from '@/components/VoiceProfileManager';
 import { settingsApi } from '@/api/settings';
+import { notificationsApi, NotificationPreferences } from '@/api/notifications';
 
 function ChangePasswordCard() {
   const [isOpen, setIsOpen] = useState(false);
@@ -159,6 +160,148 @@ function ChangePasswordCard() {
   );
 }
 
+
+/**
+ * Phase 6.5 — transcription completion preferences (in-app + email +
+ * desktop browser notifications).
+ */
+function NotificationsCard() {
+  const [prefs, setPrefs] = useState<NotificationPreferences>({
+    notify_on_completion: true,
+    notify_email_on_completion: false,
+  });
+  const [permission, setPermission] = useState<NotificationPermission>(
+    typeof window !== 'undefined' && 'Notification' in window
+      ? Notification.permission
+      : 'denied',
+  );
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = await notificationsApi.getPreferences();
+        if (!cancelled) setPrefs(p);
+      } catch (err) {
+        console.error('Failed to load notification preferences:', err);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const save = async (next: NotificationPreferences) => {
+    setIsSaving(true);
+    try {
+      const saved = await notificationsApi.updatePreferences(next);
+      setPrefs(saved);
+      setSavedAt(Date.now());
+    } catch (err) {
+      console.error('Failed to save notification preferences:', err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const requestPermission = async () => {
+    if (!('Notification' in window)) return;
+    const result = await Notification.requestPermission();
+    setPermission(result);
+  };
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
+      <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+        <Bell className="w-5 h-5" />
+        Notifications
+      </h2>
+      {isLoading ? (
+        <div className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
+          <Loader className="w-4 h-4 animate-spin" /> Loading…
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={prefs.notify_on_completion}
+              onChange={(e) =>
+                save({ ...prefs, notify_on_completion: e.target.checked })
+              }
+              className="mt-1 w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+            />
+            <div>
+              <div className="text-sm font-medium text-gray-900 dark:text-white">
+                Notify me when a transcription completes
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Shows up in the bell menu. Required for desktop notifications.
+              </div>
+            </div>
+          </label>
+
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={prefs.notify_email_on_completion}
+              onChange={(e) =>
+                save({ ...prefs, notify_email_on_completion: e.target.checked })
+              }
+              className="mt-1 w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+            />
+            <div>
+              <div className="text-sm font-medium text-gray-900 dark:text-white">
+                Also email me when a transcription completes
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Only sent if your admin has configured SMTP for the server.
+              </div>
+            </div>
+          </label>
+
+          <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-medium text-gray-900 dark:text-white">
+                  Desktop notifications
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Browser permission status: <span className="font-mono">{permission}</span>
+                </div>
+              </div>
+              {permission !== 'granted' && (
+                <button
+                  onClick={requestPermission}
+                  className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                >
+                  Enable
+                </button>
+              )}
+            </div>
+          </div>
+
+          {isSaving && (
+            <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+              <Loader className="w-3 h-3 animate-spin" /> Saving…
+            </div>
+          )}
+          {savedAt && !isSaving && (
+            <div className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1.5">
+              <CheckCircle className="w-3 h-3" /> Saved
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Settings() {
   const { user } = useAuthStore();
   const [displayName, setDisplayName] = useState(user?.display_name || '');
@@ -274,6 +417,8 @@ export function Settings() {
         </div>
 
         <ChangePasswordCard />
+
+        <NotificationsCard />
 
         {/* Voice Fingerprinting */}
         {voiceFingerprintingEnabled && (

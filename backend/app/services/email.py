@@ -173,6 +173,63 @@ class EmailService:
         return await EmailService.send_email(db, to_email, subject, html_body, text_body)
 
     @staticmethod
+    async def send_transcription_complete_email(
+        db: AsyncSession,
+        to_email: str,
+        display_name: str,
+        transcription_name: str,
+        transcription_url: str,
+        failed: bool = False,
+        error: Optional[str] = None,
+    ) -> bool:
+        """Phase 6.5 — notify a user that their transcription finished."""
+        if failed:
+            subject = f"Transcription failed — {transcription_name}"
+            heading = "Transcription failed"
+            body_html = (
+                f"<p>“<strong>{transcription_name}</strong>” could not be "
+                f"transcribed.</p>"
+            )
+            if error:
+                body_html += f"<p style='color:#6b7280;font-size:13px;'>{error}</p>"
+            cta = "View details"
+        else:
+            subject = f"Transcription ready — {transcription_name}"
+            heading = "Your transcription is ready"
+            body_html = (
+                f"<p>“<strong>{transcription_name}</strong>” has finished "
+                f"processing and is ready to review.</p>"
+            )
+            cta = "Open transcription"
+
+        html_body = f"""
+        <html>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background: linear-gradient(135deg, #6366f1, #4f46e5); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+                <h1 style="color: white; margin: 0; font-size: 24px;">OpenHiNotes</h1>
+            </div>
+            <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px;">
+                <p style="color: #374151; font-size: 16px;">Hi {display_name or to_email},</p>
+                <h2 style="color: #111827; font-size: 18px; margin: 0 0 12px;">{heading}</h2>
+                {body_html}
+                <div style="text-align: center; margin: 30px 0;">
+                    <a href="{transcription_url}" style="background: #4f46e5; color: white; text-decoration: none; padding: 12px 32px; border-radius: 8px; font-weight: 600; font-size: 14px; display: inline-block;">
+                        {cta}
+                    </a>
+                </div>
+                <p style="color: #9ca3af; font-size: 12px;">You can turn these emails off in Settings → Notifications.</p>
+            </div>
+        </body>
+        </html>
+        """
+        text_body = (
+            f"Hi {display_name or to_email},\n\n{heading}\n\n"
+            f"“{transcription_name}”\n\nOpen: {transcription_url}\n\n"
+            "You can turn these emails off in Settings → Notifications."
+        )
+        return await EmailService.send_email(db, to_email, subject, html_body, text_body)
+
+    @staticmethod
     async def send_account_created_email(
         db: AsyncSession,
         to_email: str,

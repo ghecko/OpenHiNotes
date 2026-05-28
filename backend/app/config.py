@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     # Speaker matching threshold (cosine distance, 0.0 = identical, 1.0 = unrelated)
     speaker_match_threshold: float = 0.5
 
+    # Public base URL for the frontend (used in notification emails). When
+    # empty, completion emails still send but with a relative link — set
+    # this in production to e.g. https://openhinotes.example.com so the
+    # "Open transcription" CTA in emails goes to the right place.
+    app_base_url: str = ""
+
     class Config:
         env_file = ".env"
         case_sensitive = False

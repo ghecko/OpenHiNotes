@@ -352,3 +352,39 @@ async def update_recording_aliases(
     await db.refresh(user)
     logger.info(f"PUT recording-aliases: after commit {user.recording_aliases}")
     return user.recording_aliases or {}
+
+
+
+# Notification preferences (Phase 6.5)
+
+from app.schemas.search import NotificationPreferences  # noqa: E402
+
+
+@router.get("/me/preferences/notifications", response_model=NotificationPreferences)
+async def get_notification_preferences(
+    current_user: User = Depends(get_current_user),
+):
+    """Return the current user's transcription-complete notification preferences."""
+    return NotificationPreferences(
+        notify_on_completion=current_user.notify_on_completion,
+        notify_email_on_completion=current_user.notify_email_on_completion,
+    )
+
+
+@router.put("/me/preferences/notifications", response_model=NotificationPreferences)
+async def update_notification_preferences(
+    prefs: NotificationPreferences,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the current user's transcription-complete notification preferences."""
+    result = await db.execute(select(User).where(User.id == current_user.id))
+    user = result.scalars().first()
+    user.notify_on_completion = bool(prefs.notify_on_completion)
+    user.notify_email_on_completion = bool(prefs.notify_email_on_completion)
+    await db.commit()
+    await db.refresh(user)
+    return NotificationPreferences(
+        notify_on_completion=user.notify_on_completion,
+        notify_email_on_completion=user.notify_email_on_completion,
+    )
