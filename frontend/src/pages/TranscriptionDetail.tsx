@@ -1386,4 +1386,41 @@ export function TranscriptionDetail() {
                       >
                         {isGeneratingSummary && <Loader className="w-4 h-4 animate-spin" />}
                         <Plus className="w-4 h-4" />
-              
+                        Generate Summary
+                      </button>
+                      <button
+                        onClick={() => setShowCustomPrompt(true)}
+                        className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-900 dark:text-white rounded-lg font-medium transition-colors"
+                      >
+                        Custom Prompt
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Chat</h3>
+              <ChatPanel
+                transcriptionId={transcription.id}
+                transcriptionNames={{ [transcription.id]: transcription.title || transcription.original_filename }}
+              />
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Share modal */}
+      {transcription && (
+        <ShareModal
+          isOpen={showShareModal}
+          onClose={() => setShowShareModal(false)}
+          resourceType="transcription"
+          resourceId={transcription.id}
+          resourceName={transcription.title || transcription.original_filename}
+        />
+      )}
+    </Layout>
+  );
+}
