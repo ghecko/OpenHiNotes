@@ -392,4 +392,77 @@ export const transcriptionsApi = {
 
     return () => abortController.abort();
   },
+
+  // Phase 6 follow-up — one-shot transcription (no persistence).
+  async oneshotTranscribe(
+    file: File | Blob,
+    options: { language?: string; diarize?: boolean; fileName?: string } = {},
+  ): Promise<{
+    original_filename: string;
+    language: string | null;
+    duration: number | null;
+    text: string;
+    segments: Array<{ start: number; end: number; text: string; speaker?: string }>;
+    speakers: Record<string, string>;
+  }> {
+    const form = new FormData();
+    form.append('file', file, options.fileName || (file instanceof File ? file.name : 'audio.webm'));
+    if (options.language) form.append('language', options.language);
+    if (options.diarize !== undefined) form.append('diarize', String(options.diarize));
+    const token = localStorage.getItem('auth_token');
+    const headers: HeadersInit = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch('/api/transcriptions/oneshot', {
+      method: 'POST',
+      headers,
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || body.message || `HTTP ${res.status}`);
+    }
+    return res.json();
+  },
+
+  // Phase 6 follow-up — combine multiple recordings into a single transcription.
+  // `files` is an ORDERED list: position 0 plays first, etc.
+  async queueCombined(
+    files: Array<{ blob: Blob; fileName: string }>,
+    options: {
+      title?: string;
+      language?: string;
+      keepAudio?: boolean;
+      autoSummarize?: boolean;
+      templateId?: string;
+      recordingType?: 'record' | 'whisper';
+    } = {},
+  ): Promise<Transcription> {
+    if (files.length < 2) {
+      throw new Error('At least two files are required for a combined transcription');
+    }
+    const form = new FormData();
+    for (const { blob, fileName } of files) {
+      form.append('files', blob, fileName);
+    }
+    if (options.title) form.append('title', options.title);
+    if (options.language) form.append('language', options.language);
+    if (options.keepAudio !== undefined) form.append('keep_audio', String(options.keepAudio));
+    if (options.autoSummarize !== undefined) form.append('auto_summarize', String(options.autoSummarize));
+    if (options.templateId) form.append('template_id', options.templateId);
+    if (options.recordingType) form.append('recording_type', options.recordingType);
+
+    const token = localStorage.getItem('auth_token');
+    const headers: HeadersInit = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch('/api/transcriptions/queue-combined', {
+      method: 'POST',
+      headers,
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || body.message || `HTTP ${res.status}`);
+    }
+    return res.json();
+  },
 };

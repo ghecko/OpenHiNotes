@@ -9,7 +9,7 @@ import { deviceService } from '@/services/deviceService';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { collectionsApi } from '@/api/collections';
 import { recordingAliasesApi } from '@/api/recordingAliases';
-import { Play, Download, Trash2, Zap, FileText, AlertCircle, Pencil, X, CheckCircle, FolderOpen, TriangleAlert, Server, ServerOff, Mic, MessageSquare } from 'lucide-react';
+import { Play, Download, Trash2, Zap, FileText, AlertCircle, Pencil, X, CheckCircle, FolderOpen, TriangleAlert, Server, ServerOff, Mic, MessageSquare, Loader } from 'lucide-react';
 import type { RecordingType } from '@/types';
 
 /** Detect recording type from HiDock filename convention.
@@ -222,6 +222,13 @@ export function Recordings() {
   // Server-only recordings (audio available but not on device)
   const [serverOnlyRecordings, setServerOnlyRecordings] = useState<Transcription[]>([]);
 
+  // Phase 6 follow-up — multi-select combine state. ``combineOrder``
+  // is an ORDERED list of recording IDs; index 0 plays first.
+  const [combineMode, setCombineMode] = useState(false);
+  const [combineOrder, setCombineOrder] = useState<string[]>([]);
+  const [isCombining, setIsCombining] = useState(false);
+  const [combineError, setCombineError] = useState<string | null>(null);
+
   // Delete modals
   const [deleteModalFile, setDeleteModalFile] = useState<string | null>(null);
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
@@ -352,6 +359,91 @@ export function Recordings() {
       setSelectedAudio(blob);
       setSelectedFileName(fileName);
       setTranscribeModal(true);
+    }
+  };
+
+  // Phase 6 follow-up — pull the recording from the device and hand
+  // it to the user's browser as a Save dialog. Re-uses the same
+  // download path so the blob is cached for any later Play/Transcribe.
+  const handleSaveRecordingToDisk = async (
+    recordingId: string, fileName: string, fileSize: number, fileVersion?: number,
+  ) => {
+    try {
+      const blob = await getOrDownloadBlob(recordingId, fileName, fileSize, fileVersion);
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    } catch (err) {
+      alert(`Could not save recording: ${err instanceof Error ? err.message : err}`);
+    }
+  };
+
+  // Phase 6 follow-up — combine multi-select helpers.
+  const toggleCombineSelect = (recordingId: string) => {
+    setCombineOrder((prev) =>
+      prev.includes(recordingId) ? prev.filter((x) => x !== recordingId) : [...prev, recordingId],
+    );
+  };
+
+  const exitCombineMode = () => {
+    setCombineMode(false);
+    setCombineOrder([]);
+    setCombineError(null);
+  };
+
+  const moveCombineItem = (recordingId: string, direction: -1 | 1) => {
+    setCombineOrder((prev) => {
+      const i = prev.indexOf(recordingId);
+      if (i < 0) return prev;
+      const j = i + direction;
+      if (j < 0 || j >= prev.length) return prev;
+      const copy = prev.slice();
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+      return copy;
+    });
+  };
+
+  const handleCombineTranscribe = async () => {
+    if (combineOrder.length < 2) return;
+    setCombineError(null);
+    setIsCombining(true);
+    try {
+      // 1. Resolve the recordings in the chosen order to download them.
+      const ordered = combineOrder
+        .map((id) => recordings.find((r) => r.id === id))
+        .filter((r): r is NonNullable<typeof r> => Boolean(r));
+      if (ordered.length !== combineOrder.length) {
+        throw new Error('One of the selected recordings is no longer on the device.');
+      }
+
+      // 2. Pull each blob from the device (re-uses cache if already downloaded).
+      const parts: Array<{ blob: Blob; fileName: string }> = [];
+      for (const rec of ordered) {
+        const blob = await getOrDownloadBlob(rec.id, rec.fileName, rec.size, rec.fileVersion);
+        if (!blob) throw new Error(`Failed to download "${rec.fileName}" from device.`);
+        parts.push({ blob, fileName: rec.fileName });
+      }
+
+      // 3. Send to backend. Title built from the first file + count of the rest.
+      const title = `Combined: ${ordered[0].fileName} + ${ordered.length - 1} more`;
+      const recordingType: RecordingType = detectRecordingType(ordered[0].fileName);
+      await transcriptionsApi.queueCombined(parts, {
+        title,
+        language: 'auto',
+        keepAudio: false,
+        recordingType,
+      });
+      exitCombineMode();
+    } catch (err) {
+      setCombineError(err instanceof Error ? err.message : 'Combine failed');
+    } finally {
+      setIsCombining(false);
     }
   };
 
@@ -578,23 +670,115 @@ export function Recordings() {
       )}
 
       {/* Recording type filter tabs */}
-      <div className="mb-4 flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit">
-        {([['all', 'All'], ['record', 'Records'], ['whisper', 'Whispers']] as const).map(([value, label]) => (
-          <button
-            key={value}
-            onClick={() => setTypeFilter(value)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              typeFilter === value
-                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-            }`}
-          >
-            {value === 'record' && <Mic className="w-3.5 h-3.5" />}
-            {value === 'whisper' && <MessageSquare className="w-3.5 h-3.5" />}
-            {label}
-          </button>
-        ))}
+      <div className="mb-4 flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit">
+          {([['all', 'All'], ['record', 'Records'], ['whisper', 'Whispers']] as const).map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setTypeFilter(value)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                typeFilter === value
+                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+              }`}
+            >
+              {value === 'record' && <Mic className="w-3.5 h-3.5" />}
+              {value === 'whisper' && <MessageSquare className="w-3.5 h-3.5" />}
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Phase 6 follow-up — combine multi-select toggle */}
+        <button
+          onClick={() => (combineMode ? exitCombineMode() : setCombineMode(true))}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
+            combineMode
+              ? 'bg-primary-500 text-white border-primary-500'
+              : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'
+          }`}
+          title="Pick multiple recordings to transcribe as one"
+        >
+          <Zap className="w-3.5 h-3.5" />
+          {combineMode ? 'Cancel combine' : 'Combine...'}
+        </button>
       </div>
+
+      {/* Phase 6 follow-up — combine order panel */}
+      {combineMode && (
+        <div className="mb-4 bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg px-4 py-3">
+          <div className="flex items-start gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-primary-700 dark:text-primary-300">
+                Combine {combineOrder.length} recording{combineOrder.length === 1 ? '' : 's'} into one transcription
+              </p>
+              <p className="text-xs text-primary-600/80 dark:text-primary-300/70 mt-0.5">
+                Click rows below to add. Reorder with the arrows — playback order is top to bottom.
+              </p>
+              {combineError && (
+                <div className="mt-2 text-xs text-red-700 dark:text-red-300 flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" /> {combineError}
+                </div>
+              )}
+              {combineOrder.length > 0 && (
+                <ol className="mt-3 space-y-1">
+                  {combineOrder.map((id, idx) => {
+                    const rec = recordings.find((r) => r.id === id);
+                    if (!rec) return null;
+                    return (
+                      <li key={id} className="flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200 bg-white dark:bg-gray-800 rounded px-2 py-1">
+                        <span className="text-xs text-gray-400 font-mono w-5 text-right">{idx + 1}.</span>
+                        <span className="flex-1 truncate">{rec.fileName}</span>
+                        <button
+                          onClick={() => moveCombineItem(id, -1)}
+                          disabled={idx === 0 || isCombining}
+                          className="px-1 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 disabled:opacity-30"
+                          title="Move up"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          onClick={() => moveCombineItem(id, 1)}
+                          disabled={idx === combineOrder.length - 1 || isCombining}
+                          className="px-1 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 disabled:opacity-30"
+                          title="Move down"
+                        >
+                          ↓
+                        </button>
+                        <button
+                          onClick={() => toggleCombineSelect(id)}
+                          disabled={isCombining}
+                          className="px-1 text-gray-400 hover:text-red-600 disabled:opacity-30"
+                          title="Remove"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+            </div>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={handleCombineTranscribe}
+                disabled={combineOrder.length < 2 || isCombining}
+                className="inline-flex items-center justify-center gap-2 px-3 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm rounded-md font-medium disabled:opacity-50 transition-colors"
+              >
+                {isCombining ? <Loader className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                {isCombining ? 'Working...' : 'Transcribe as one'}
+              </button>
+              <button
+                onClick={exitCombineMode}
+                disabled={isCombining}
+                className="px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-800 rounded-md disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Batch action bar */}
       {hasSelection && (
@@ -715,16 +899,30 @@ export function Recordings() {
                     <tr
                       key={recording.id}
                       className={`hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${
-                        selectedRecordings.includes(recording.id) ? 'bg-blue-50/50 dark:bg-blue-900/10' : ''
+                        combineMode && combineOrder.includes(recording.id)
+                          ? 'bg-primary-50/50 dark:bg-primary-900/10'
+                          : selectedRecordings.includes(recording.id)
+                            ? 'bg-blue-50/50 dark:bg-blue-900/10'
+                            : ''
                       }`}
                     >
                       <td className="px-6 py-4">
-                        <input
-                          type="checkbox"
-                          checked={selectedRecordings.includes(recording.id)}
-                          onChange={() => toggleRecordingSelection(recording.id)}
-                          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
-                        />
+                        {combineMode ? (
+                          // Phase 6 follow-up — combine selection checkbox
+                          <input
+                            type="checkbox"
+                            checked={combineOrder.includes(recording.id)}
+                            onChange={() => toggleCombineSelect(recording.id)}
+                            className="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-2 focus:ring-primary-500"
+                          />
+                        ) : (
+                          <input
+                            type="checkbox"
+                            checked={selectedRecordings.includes(recording.id)}
+                            onChange={() => toggleRecordingSelection(recording.id)}
+                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
+                          />
+                        )}
                       </td>
                       <td className="px-6 py-4 text-sm">
                         {editingAlias === recording.fileName ? (
@@ -862,6 +1060,14 @@ export function Recordings() {
                             title="Transcribe & Summarize"
                           >
                             <Zap className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleSaveRecordingToDisk(recording.id, recording.fileName, recording.size, recording.fileVersion)}
+                            disabled={isLoading || isDownloading}
+                            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded text-gray-600 dark:text-gray-400 disabled:opacity-50"
+                            title="Save to disk"
+                          >
+                            <Download className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => handleDeleteRecording(recording.fileName)}

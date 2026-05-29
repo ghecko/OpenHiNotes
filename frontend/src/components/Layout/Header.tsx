@@ -1,11 +1,12 @@
 import { useNavigate } from 'react-router-dom';
-import { LogOut, Moon, Sun, Settings, Menu } from 'lucide-react';
+import { LogOut, Moon, Sun, Settings, Menu, Zap } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useAppStore } from '@/store/useAppStore';
 import { useLayoutStore } from '@/store/useLayoutStore';
 import { QueueIndicator } from '@/components/QueuePanel';
 import { NotificationsBell } from '@/components/NotificationsBell';
+import { OneShotTranscribeModal } from '@/components/OneShotTranscribeModal';
 
 interface HeaderProps {
   title?: string;
@@ -18,6 +19,7 @@ export function Header({ title }: HeaderProps) {
   const { toggleMobileMenu } = useLayoutStore();
   const deviceConnected = device?.connected ?? false;
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showOneShot, setShowOneShot] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const handleLogout = () => {
@@ -71,6 +73,15 @@ export function Header({ title }: HeaderProps) {
 
         {/* Queue indicator */}
         <QueueIndicator />
+
+        {/* Phase 6 follow-up — one-shot transcription */}
+        <button
+          onClick={() => setShowOneShot(true)}
+          title="One-shot transcription (no save)"
+          className="p-2 sm:p-2.5 hover:bg-gray-100 dark:hover:bg-gray-700/60 rounded-xl transition-all duration-200 text-gray-600 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400"
+        >
+          <Zap className="w-5 h-5" />
+        </button>
 
         {/* Notifications bell */}
         <NotificationsBell />
@@ -146,6 +157,11 @@ export function Header({ title }: HeaderProps) {
           )}
         </div>
       </div>
+
+      {/* Phase 6 follow-up — one-shot transcription modal */}
+      {showOneShot && (
+        <OneShotTranscribeModal onClose={() => setShowOneShot(false)} />
+      )}
     </div>
   );
 }
