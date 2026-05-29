@@ -55,6 +55,7 @@ from app.dependencies import get_current_user
 from app.services.transcription import TranscriptionService
 from app.services.llm import LLMService
 from app.services.permissions import PermissionService
+from app.services.audio_concat import concat_audio_files, AudioConcatError
 from app.utils.date_extract import extract_meeting_date
 
 router = APIRouter(prefix="/transcriptions", tags=["transcriptions"])
@@ -1330,42 +1331,211 @@ async def batch_share(
             )
 
     shared = 0
-    skipped = 0
-    perm = (
-        PermissionLevel.write if payload.permission == "write" else PermissionLevel.read
-    )
-    for tid in payload.ids:
-        level = await PermissionService.get_permission_level(
-            db, current_user, ResourceType.transcription, tid
-        )
-        if level != "owner":
-            skipped += 1
-            continue
+    skippe
 
-        existing = await db.execute(
-            select(ResourceShare).where(
-                ResourceShare.resource_type == ResourceType.transcription,
-                ResourceShare.resource_id == tid,
-                ResourceShare.grantee_type == GranteeType.group,
-                ResourceShare.grantee_id == payload.group_id,
-            )
+
+# ============================================================
+# Phase 6 follow-up — combine multiple recordings into one transcription
+# ============================================================
+
+
+@router.post("/queue-combined", response_model=TranscriptionResponse, status_code=status.HTTP_202_ACCEPTED)
+async def queue_combined_transcription(
+    files: list[UploadFile] = File(..., description="Audio files in playback order"),
+    title: str = Form(None),
+    language: str = Form(None),
+    keep_audio: bool = Form(False),
+    auto_summarize: bool = Form(False),
+    template_id: uuid.UUID = Form(None),
+    recording_type: str = Form(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Concatenate the uploaded audio files in the order they were posted
+    and queue the result as a single transcription.
+
+    The order in ``files`` IS the playback order. Frontend should
+    re-order before submitting if the user wants a different sequence.
+    Whisper-vs-record detection runs against the first file's name.
+    """
+    if not files or len(files) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least two files are required for a combined transcription",
         )
-        row = existing.scalars().first()
-        if row:
-            row.permission = perm
-            row.granted_by = current_user.id
-        else:
-            db.add(
-                ResourceShare(
-                    resource_type=ResourceType.transcription,
-                    resource_id=tid,
-                    grantee_type=GranteeType.group,
-                    grantee_id=payload.group_id,
-                    permission=perm,
-                    granted_by=current_user.id,
+
+    # Admin keep_audio gate (same logic as /queue)
+    if keep_audio:
+        from app.models.app_settings import AppSetting
+        ka_result = await db.execute(
+            select(AppSetting).where(AppSetting.key == "keep_audio_enabled")
+        )
+        ka_setting = ka_result.scalars().first()
+        if ka_setting and ka_setting.value.lower() != "true":
+            keep_audio = False
+
+    if language and language.lower() == "auto":
+        language = None
+
+    # Persist each part to disk. We need them on disk for ffmpeg anyway.
+    part_paths: list[str] = []
+    part_names: list[str] = []
+    try:
+        for f in files:
+            if not f.filename:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="One of the uploads has no filename",
                 )
+            stored, original = await TranscriptionService.save_uploaded_file(
+                f, current_user.id
             )
-        shared += 1
+            part_paths.append(
+                f"{settings.uploads_directory}/{current_user.id}/{stored}"
+            )
+            part_names.append(original)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to save uploads: {e}",
+        )
 
+    # Build a fresh container for the concatenated output.
+    combined_id = uuid.uuid4()
+    combined_filename = f"{combined_id}.wav"
+    combined_path = (
+        f"{settings.uploads_directory}/{current_user.id}/{combined_filename}"
+    )
+
+    try:
+        await concat_audio_files(part_paths, combined_path)
+    except AudioConcatError as e:
+        # Clean up the parts AND any half-baked output before bailing.
+        for p in part_paths:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Audio concatenation failed: {e}",
+        )
+
+    # Drop the source parts now that we have the combined output. We
+    # always discard the parts — the user only wants the merged result.
+    for p in part_paths:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+    # Recording type: explicit override > derive from first part's name.
+    from app.services.transcription import detect_recording_type
+    from app.models.transcription import RecordingType as RT
+    if recording_type in ("record", "whisper"):
+        rec_type = RT(recording_type)
+    else:
+        rec_type = detect_recording_type(part_names[0]) if part_names else RT.record
+
+    display_title = title or (
+        f"Combined: {part_names[0]} + {len(part_names) - 1} more"
+        if part_names else "Combined recording"
+    )
+
+    transcription = Transcription(
+        user_id=current_user.id,
+        filename=combined_filename,
+        original_filename=combined_filename,
+        title=display_title,
+        recording_type=rec_type,
+        language=language,
+        status=TranscriptionStatus.pending,
+        keep_audio=keep_audio,
+        audio_available=True,
+        auto_summarize=auto_summarize,
+        auto_summarize_template_id=template_id,
+    )
+    db.add(transcription)
     await db.commit()
-    return BatchResultResponse(affected=shared, skipped=skipped)
+    await db.refresh(transcription)
+
+    from app.services.queue import transcription_queue
+    await transcription_queue.enqueue(transcription.id)
+    await db.refresh(transcription)
+
+    return TranscriptionResponse.model_validate(transcription)
+
+
+# ============================================================
+# Phase 6 follow-up — one-shot transcription (no persistence)
+# ============================================================
+
+
+@router.post("/oneshot", status_code=status.HTTP_200_OK)
+async def oneshot_transcribe(
+    file: UploadFile = File(...),
+    language: str = Form(None),
+    diarize: bool = Form(True),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Transcribe a single uploaded audio file and return the text right
+    away. **Nothing is persisted** — no Transcription row, no summary,
+    no audio file kept after the response is built.
+
+    Useful for quick STT requests where the user just wants the text.
+    """
+    if not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No file provided",
+        )
+    if language and language.lower() == "auto":
+        language = None
+
+    try:
+        stored_filename, original_filename = await TranscriptionService.save_uploaded_file(
+            file, current_user.id
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to save upload: {e}",
+        )
+
+    file_path = (
+        f"{settings.uploads_directory}/{current_user.id}/{stored_filename}"
+    )
+
+    try:
+        voxhub_response = await TranscriptionService.transcribe_with_voxhub(
+            file_path,
+            language=language,
+            diarize=bool(diarize),
+            db=db,
+        )
+        parsed = TranscriptionService.parse_voxhub_response(voxhub_response)
+        return {
+            "original_filename": original_filename,
+            "language": parsed.get("language") or language,
+            "duration": parsed.get("duration"),
+            "text": parsed.get("text") or "",
+            "segments": parsed.get("segments") or [],
+            "speakers": parsed.get("speakers") or {},
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Transcription failed: {e}",
+        )
+    finally:
+        # Always clean up — one-shot means no audio is retained.
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+

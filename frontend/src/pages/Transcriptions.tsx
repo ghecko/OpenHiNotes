@@ -9,7 +9,7 @@ import { format } from 'date-fns';
 import {
   Trash2, CheckCircle, AlertCircle, Loader, Search, RefreshCw, FileText,
   Inbox, Clock, Unplug, ArrowUpDown, Pin, PinOff, X, CheckSquare, Square,
-  Mic, MessageSquare,
+  Mic, MessageSquare, Download,
 } from 'lucide-react';
 
 export function Transcriptions() {
@@ -123,6 +123,23 @@ export function Transcriptions() {
       }
     }
   };
+
+  // Phase 6 follow-up — let users download the audio of a FAILED
+  // transcription within its 1 h retention window.
+  const handleDownloadFailedAudio = useCallback(async (t: Transcription) => {
+    try {
+      const url = await transcriptionsApi.getAudioBlobUrl(t.id);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = t.original_filename || `audio-${t.id}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    } catch (err) {
+      alert(`Could not download audio: ${err instanceof Error ? err.message : err}`);
+    }
+  }, []);
 
   const togglePin = useCallback(async (t: Transcription) => {
     try {
@@ -431,6 +448,15 @@ export function Transcriptions() {
                         </td>
                         <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                           <div className="inline-flex items-center gap-1">
+                            {t.status === 'failed' && t.audio_available && (
+                              <button
+                                onClick={() => handleDownloadFailedAudio(t)}
+                                title="Download audio for debugging (1 h window)"
+                                className="p-2 hover:bg-amber-100 dark:hover:bg-amber-900/30 rounded-lg text-amber-600 dark:text-amber-400 transition-all duration-200"
+                              >
+                                <Download className="w-4 h-4" />
+                              </button>
+                            )}
                             <button
                               onClick={() => togglePin(t)}
                               title={t.is_pinned ? 'Unpin' : 'Pin to top'}

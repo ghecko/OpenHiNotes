@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +32,7 @@ class TranscriptionQueue:
     def __init__(self):
         self._processing_lock = asyncio.Lock()
         self._worker_task: Optional[asyncio.Task] = None
+        self._cleanup_task: Optional[asyncio.Task] = None
         self._running = False
         # Event subscribers: transcription_id -> list of asyncio.Queue
         self._subscribers: Dict[uuid.UUID, List[asyncio.Queue]] = {}
@@ -42,15 +43,20 @@ class TranscriptionQueue:
             return
         self._running = True
         self._worker_task = asyncio.create_task(self._worker_loop())
+        # Phase 6 follow-up — sweep expired failed-audio files.
+        self._cleanup_task = asyncio.create_task(self._failed_audio_cleanup_loop())
         logger.info("Transcription queue worker started")
 
     async def stop(self):
         """Stop the background worker."""
         self._running = False
-        if self._worker_task:
-            self._worker_task.cancel()
+        for task_attr in ("_worker_task", "_cleanup_task"):
+            task = getattr(self, task_attr, None)
+            if task is None:
+                continue
+            task.cancel()
             try:
-                await self._worker_task
+                await task
             except asyncio.CancelledError:
                 pass
         logger.info("Transcription queue worker stopped")
@@ -518,6 +524,13 @@ class TranscriptionQueue:
                         transcription.error_message = str(e)
                         transcription.completed_at = datetime.utcnow()
                         transcription.queue_position = None
+                        # Phase 6 follow-up — preserve audio for 1 h so the
+                        # user can download it to debug. Cleanup loop will
+                        # remove it once the TTL expires.
+                        transcription.audio_available = True
+                        transcription.failed_audio_expires_at = (
+                            datetime.utcnow() + timedelta(hours=1)
+                        )
                         await db.commit()
 
                 await self._notify(transcription_id, {
@@ -535,6 +548,53 @@ class TranscriptionQueue:
                     failed=True,
                     error=str(e),
                 )
+
+
+
+    async def _failed_audio_cleanup_loop(self):
+        """Sweep expired failed-audio files every 5 minutes."""
+        while self._running:
+            try:
+                async with AsyncSessionLocal() as db:
+                    now = datetime.utcnow()
+                    res = await db.execute(
+                        select(Transcription).where(
+                            Transcription.status == TranscriptionStatus.failed,
+                            Transcription.failed_audio_expires_at.is_not(None),
+                            Transcription.failed_audio_expires_at <= now,
+                            Transcription.audio_available == True,  # noqa: E712
+                        )
+                    )
+                    expired = res.scalars().all()
+                    for t in expired:
+                        file_path = (
+                            Path(settings.uploads_directory)
+                            / str(t.user_id)
+                            / t.filename
+                        )
+                        if file_path.exists():
+                            try:
+                                os.remove(str(file_path))
+                                logger.info(
+                                    "Deleted expired failed audio: %s", file_path
+                                )
+                            except OSError as e:
+                                logger.warning(
+                                    "Could not delete expired failed audio %s: %s",
+                                    file_path, e,
+                                )
+                        t.audio_available = False
+                        t.failed_audio_expires_at = None
+                    if expired:
+                        await db.commit()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning("Failed-audio cleanup loop error: %s", e)
+            try:
+                await asyncio.sleep(300)
+            except asyncio.CancelledError:
+                break
 
 
 # Singleton instance

@@ -122,6 +122,20 @@ export function TranscriptionDetail() {
   const isWhisper = transcription?.recording_type === 'whisper';
   const isOwner = permissionLevel === 'owner';
 
+  // Phase 6 follow-up — delete from the detail page.
+  const handleDeleteTranscription = useCallback(async () => {
+    if (!transcription) return;
+    const name = transcription.title || transcription.original_filename;
+    if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    try {
+      await transcriptionsApi.deleteTranscription(transcription.id);
+      navigate('/transcriptions');
+    } catch (err) {
+      console.error('Failed to delete transcription:', err);
+      alert(`Could not delete: ${err instanceof Error ? err.message : 'unknown error'}`);
+    }
+  }, [transcription, navigate]);
+
   // Audio playback
   const recordings = useAppStore((s) => s.recordings);
   const { downloadRecording, device } = useDeviceConnection();
@@ -843,6 +857,44 @@ export function TranscriptionDetail() {
               >
                 <Share2 className="w-3.5 h-3.5" />
                 Share
+              </button>
+            )}
+
+            {/* Delete (owner only) - Phase 6 follow-up */}
+            {isOwner && (
+              <button
+                onClick={handleDeleteTranscription}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-colors"
+                title="Delete this transcription"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete
+              </button>
+            )}
+
+            {/* Phase 6 follow-up — download audio of a FAILED transcription
+                (1 h retention window) so the user can debug and re-upload. */}
+            {transcription.status === 'failed' && transcription.audio_available && (
+              <button
+                onClick={async () => {
+                  try {
+                    const url = await transcriptionsApi.getAudioBlobUrl(transcription.id);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = transcription.original_filename || `audio-${transcription.id}`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+                  } catch (err) {
+                    alert(`Could not download audio: ${err instanceof Error ? err.message : err}`);
+                  }
+                }}
+                title="Download audio for debugging (1 h window)"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-100 dark:hover:bg-amber-900/30 rounded-lg transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download audio
               </button>
             )}
 

@@ -84,6 +84,7 @@ export interface Transcription {
   auto_summarize: boolean;
   auto_summarize_template_id: string | null;
   is_pinned: boolean;
+  failed_audio_expires_at: string | null;
   created_at: string;
   updated_at: string;
   permission_level?: PermissionLevel | null;

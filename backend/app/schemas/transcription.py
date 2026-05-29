@@ -81,11 +81,11 @@ class TranscriptionResponse(BaseModel):
     auto_summarize: bool = False
     auto_summarize_template_id: Optional[uuid.UUID] = None
     is_pinned: bool = False
+    failed_audio_expires_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
-    # Access control fields (populated by routers, not from DB)
-    permission_level: Optional[str] = None  # "owner" | "write" | "read"
-    shared_by: Optional[str] = None  # display name of who shared it
+    permission_level: Optional[str] = None
+    shared_by: Optional[str] = None
 
     class Config:
         from_attributes = True
