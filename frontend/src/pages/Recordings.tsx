@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Layout } from '@/components/Layout';
 import { useDeviceConnection } from '@/hooks/useDeviceConnection';
 import { useAppStore } from '@/store/useAppStore';
+import { useQueueStore } from '@/store/useQueueStore';
 import { TranscribeModal } from '@/components/TranscribeModal';
 import { AudioPlayer } from '@/components/AudioPlayer';
 import { Collection, Transcription } from '@/types';
@@ -228,6 +229,9 @@ export function Recordings() {
   const [combineOrder, setCombineOrder] = useState<string[]>([]);
   const [isCombining, setIsCombining] = useState(false);
   const [combineError, setCombineError] = useState<string | null>(null);
+  // Whether to retain the merged audio server-side so the combined
+  // transcription stays playable (it never exists on the device).
+  const [combineKeepAudio, setCombineKeepAudio] = useState(true);
 
   // Delete modals
   const [deleteModalFile, setDeleteModalFile] = useState<string | null>(null);
@@ -395,6 +399,7 @@ export function Recordings() {
     setCombineMode(false);
     setCombineOrder([]);
     setCombineError(null);
+    setCombineKeepAudio(true);
   };
 
   const moveCombineItem = (recordingId: string, direction: -1 | 1) => {
@@ -433,12 +438,15 @@ export function Recordings() {
       // 3. Send to backend. Title built from the first file + count of the rest.
       const title = `Combined: ${ordered[0].fileName} + ${ordered.length - 1} more`;
       const recordingType: RecordingType = detectRecordingType(ordered[0].fileName);
-      await transcriptionsApi.queueCombined(parts, {
+      const transcription = await transcriptionsApi.queueCombined(parts, {
         title,
         language: 'auto',
-        keepAudio: false,
+        keepAudio: combineKeepAudio,
         recordingType,
       });
+      // Register in the client queue so it shows up in the queue panel
+      // and starts streaming live progress (mirrors TranscribeModal).
+      useQueueStore.getState().addQueueItem(transcription);
       exitCombineMode();
     } catch (err) {
       setCombineError(err instanceof Error ? err.message : 'Combine failed');
@@ -760,6 +768,19 @@ export function Recordings() {
               )}
             </div>
             <div className="flex flex-col gap-2">
+              <label
+                className="flex items-start gap-2 text-xs text-gray-600 dark:text-gray-300 cursor-pointer max-w-[16rem]"
+                title="The merged file never exists on the device. Keep it on the server so the combined transcription stays playable."
+              >
+                <input
+                  type="checkbox"
+                  checked={combineKeepAudio}
+                  onChange={(e) => setCombineKeepAudio(e.target.checked)}
+                  disabled={isCombining}
+                  className="mt-0.5 rounded border-gray-300 dark:border-gray-600"
+                />
+                <span>Keep combined audio (needed to play it back later)</span>
+              </label>
               <button
                 onClick={handleCombineTranscribe}
                 disabled={combineOrder.length < 2 || isCombining}
@@ -1224,37 +1245,37 @@ export function Recordings() {
         }}
         audioFile={selectedAudio}
         fileName={selectedFileName}
-        initialTitle={recordingAliases[selectedFileName] || undefined}
-        initialCollectionId={recordingCollections[selectedFileName] || undefined}
-        onComplete={() => {
-          refreshRecordings();
-        }}
-      />
-
-      {/* Single delete modal */}
-      {deleteModalFile && (
-        <DeleteRecordingModal
-          recordingName={recordingAliases[deleteModalFile] || deleteModalFile}
-          hasTranscript={!!transcriptMap[deleteModalFile]}
-          hasServerAudio={!!(transcriptMap[deleteModalFile]?.keep_audio && transcriptMap[deleteModalFile]?.audio_available)}
-          onConfirm={(deleteTranscript, deleteServerAudio) => confirmDeleteRecording(deleteModalFile, deleteTranscript, deleteServerAudio)}
-          onCancel={() => setDeleteModalFile(null)}
-        />
-      )}
-
-      {/* Batch delete modal */}
-      {showBatchDeleteModal && (
-        <BatchDeleteModal
-          count={selectedRecordings.length}
-          withTranscriptsCount={
-            recordings
-              .filter((r) => selectedRecordings.includes(r.id))
-              .filter((r) => transcriptMap[r.fileName]).length
-          }
-          onConfirm={confirmBatchDelete}
-          onCancel={() => setShowBatchDeleteModal(false)}
-        />
-      )}
-    </Layout>
-  );
-}
+        initialTitle={recordingAliases[selectedFileName] || undefined}
+        initialCollectionId={recordingCollections[selectedFileName] || undefined}
+        onComplete={() => {
+          refreshRecordings();
+        }}
+      />
+
+      {/* Single delete modal */}
+      {deleteModalFile && (
+        <DeleteRecordingModal
+          recordingName={recordingAliases[deleteModalFile] || deleteModalFile}
+          hasTranscript={!!transcriptMap[deleteModalFile]}
+          hasServerAudio={!!(transcriptMap[deleteModalFile]?.keep_audio && transcriptMap[deleteModalFile]?.audio_available)}
+          onConfirm={(deleteTranscript, deleteServerAudio) => confirmDeleteRecording(deleteModalFile, deleteTranscript, deleteServerAudio)}
+          onCancel={() => setDeleteModalFile(null)}
+        />
+      )}
+
+      {/* Batch delete modal */}
+      {showBatchDeleteModal && (
+        <BatchDeleteModal
+          count={selectedRecordings.length}
+          withTranscriptsCount={
+            recordings
+              .filter((r) => selectedRecordings.includes(r.id))
+              .filter((r) => transcriptMap[r.fileName]).length
+          }
+          onConfirm={confirmBatchDelete}
+          onCancel={() => setShowBatchDeleteModal(false)}
+        />
+      )}
+    </Layout>
+  );
+}

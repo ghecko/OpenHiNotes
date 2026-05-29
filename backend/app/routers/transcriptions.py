@@ -1456,6 +1456,7 @@ async def queue_combined_transcription(
         audio_available=True,
         auto_summarize=auto_summarize,
         auto_summarize_template_id=template_id,
+        combined_sources=part_names or None,
     )
     db.add(transcription)
     await db.commit()

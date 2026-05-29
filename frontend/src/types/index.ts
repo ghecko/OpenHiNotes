@@ -85,6 +85,9 @@ export interface Transcription {
   auto_summarize_template_id: string | null;
   is_pinned: boolean;
   failed_audio_expires_at: string | null;
+  /** For combined transcriptions: ordered list of source recording
+   *  filenames that were merged. null on normal single-source rows. */
+  combined_sources: string[] | null;
   created_at: string;
   updated_at: string;
   permission_level?: PermissionLevel | null;

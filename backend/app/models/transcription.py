@@ -67,6 +67,10 @@ class Transcription(Base):
     failed_audio_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True
     )
+    # Phase 6 follow-up — for combined transcriptions, the ordered list of
+    # source recording filenames that were merged into this one. NULL on
+    # normal (single-source) transcriptions.
+    combined_sources: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False

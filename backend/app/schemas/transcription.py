@@ -82,6 +82,7 @@ class TranscriptionResponse(BaseModel):
     auto_summarize_template_id: Optional[uuid.UUID] = None
     is_pinned: bool = False
     failed_audio_expires_at: Optional[datetime] = None
+    combined_sources: Optional[List[str]] = None
     created_at: datetime
     updated_at: datetime
     permission_level: Optional[str] = None

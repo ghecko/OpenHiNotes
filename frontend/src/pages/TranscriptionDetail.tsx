@@ -394,6 +394,11 @@ export function TranscriptionDetail() {
     ? recordings.find((r) => r.fileName === transcription.original_filename)
     : undefined;
 
+  // Combined transcriptions are merged from several recordings and have no
+  // single counterpart on the device — audio, if any, lives only on the server.
+  const combinedSources = transcription?.combined_sources ?? [];
+  const isCombined = combinedSources.length > 0;
+
   // Seed audioDuration from server-side transcription metadata as soon as
   // transcription is loaded. This is the load-bearing fallback for audio
   // duration display — it doesn't depend on the <audio> element existing,
@@ -436,6 +441,13 @@ export function TranscriptionDetail() {
       setDeviceLookupState('idle');
       return;
     }
+    // Combined transcriptions have no counterpart on the device — the
+    // merged file only ever lived on the server. Don't probe the device
+    // (it would always resolve to 'not_found' and look like an orphan).
+    if (transcription.combined_sources && transcription.combined_sources.length > 0) {
+      setDeviceLookupState('idle');
+      return;
+    }
     if (!device?.connected) {
       setDeviceLookupState('idle');
       return;
@@ -472,6 +484,7 @@ export function TranscriptionDetail() {
     transcription?.original_filename,
     transcription?.audio_available,
     transcription?.keep_audio,
+    transcription?.combined_sources,
     device?.connected,
   ]);
 
@@ -1085,13 +1098,15 @@ export function TranscriptionDetail() {
                   }`}>
                     {transcription.audio_available
                       ? 'Audio stored on server'
-                      : !device?.connected
-                        ? 'Audio not available — connect device to reload'
-                        : deviceLookupState === 'checking'
-                          ? 'Checking device for source recording…'
-                          : deviceLookupState === 'not_found'
-                            ? 'Source recording not found on device'
-                            : 'Source recording available on device — click to load'}
+                      : isCombined
+                        ? 'Combined audio was not kept — re-combine with “Keep combined audio” enabled to play it back'
+                        : !device?.connected
+                          ? 'Audio not available — connect device to reload'
+                          : deviceLookupState === 'checking'
+                            ? 'Checking device for source recording…'
+                            : deviceLookupState === 'not_found'
+                              ? 'Source recording not found on device'
+                              : 'Source recording available on device — click to load'}
                   </span>
                   {transcription.audio_available ? (
                     <button
@@ -1102,7 +1117,7 @@ export function TranscriptionDetail() {
                       {isLoadingAudio ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
                       {isLoadingAudio ? `Loading… ${loadAudioProgress}%` : 'Load Audio'}
                     </button>
-                  ) : (
+                  ) : isCombined ? null : (
                     <button
                       onClick={handleLoadAudio}
                       disabled={
@@ -1143,6 +1158,27 @@ export function TranscriptionDetail() {
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {isCombined && (
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Disc3 className="w-4 h-4 text-primary-600 dark:text-primary-400" />
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+                Combined from {combinedSources.length} recordings
+              </h3>
+            </div>
+            <ol className="list-decimal list-inside space-y-0.5 text-sm text-gray-600 dark:text-gray-400">
+              {combinedSources.map((name, idx) => (
+                <li key={`${name}-${idx}`} className="truncate" title={name}>
+                  {name}
+                </li>
+              ))}
+            </ol>
+            <p className="mt-2 text-[11px] text-gray-400 dark:text-gray-500">
+              Sources are listed in playback order. The original files were merged into one transcription.
+            </p>
           </div>
         )}
 
@@ -1386,4 +1422,41 @@ export function TranscriptionDetail() {
                       >
                         {isGeneratingSummary && <Loader className="w-4 h-4 animate-spin" />}
                         <Plus className="w-4 h-4" />
-              
+                        Generate Summary
+                      </button>
+                      <button
+                        onClick={() => setShowCustomPrompt(true)}
+                        className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-900 dark:text-white rounded-lg font-medium transition-colors"
+                      >
+                        Custom Prompt
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Chat</h3>
+              <ChatPanel
+                transcriptionId={transcription.id}
+                transcriptionNames={{ [transcription.id]: transcription.title || transcription.original_filename }}
+              />
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Share modal */}
+      {transcription && (
+        <ShareModal
+          isOpen={showShareModal}
+          onClose={() => setShowShareModal(false)}
+          resourceType="transcription"
+          resourceId={transcription.id}
+          resourceName={transcription.title || transcription.original_filename}
+        />
+      )}
+    </Layout>
+  );
+}
