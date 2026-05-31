@@ -81,7 +81,7 @@ export function OneShotTranscribeModal({ onClose }: OneShotTranscribeModalProps)
           </button>
         </div>
 
-        <div className="p-5 space-y-4 overflow-y-auto">
+        <div className="p-5 space-y-4 overflow-y-auto flex-1 min-h-0">
           <p className="text-xs text-gray-500 dark:text-gray-400 -mt-1">
             Run a quick speech-to-text without saving anything. Nothing is
             written to your library, no audio is kept on the server after
