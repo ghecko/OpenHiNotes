@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { X, Loader, Upload as UploadIcon, Copy, Check, AlertCircle, Zap } from 'lucide-react';
 
@@ -65,7 +66,7 @@ export function OneShotTranscribeModal({ onClose }: OneShotTranscribeModalProps)
     }
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
         className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col mx-4"
@@ -197,6 +198,7 @@ export function OneShotTranscribeModal({ onClose }: OneShotTranscribeModalProps)
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
