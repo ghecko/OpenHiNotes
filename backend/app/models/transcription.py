@@ -61,6 +61,16 @@ class Transcription(Base):
     auto_summarize_template_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("summary_templates.id", ondelete="SET NULL"), nullable=True
     )
+    # Phase 6 follow-up — failed audio is preserved for a short window
+    # so the user can download it to debug. NULL on non-failed rows or
+    # when audio is intentionally not retained.
+    failed_audio_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    # Phase 6 follow-up — for combined transcriptions, the ordered list of
+    # source recording filenames that were merged into this one. NULL on
+    # normal (single-source) transcriptions.
+    combined_sources: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
