@@ -128,14 +128,39 @@ export function OneShotTranscribeModal({ onClose }: OneShotTranscribeModalProps)
 
   const copyText = async () => {
     if (!result) return;
+    const segs = result.segments ?? [];
+    let value = result.text;
+    if (segs.some((seg) => seg.speaker)) {
+      const groups: Array<{ speaker: string; text: string }> = [];
+      for (const seg of segs) {
+        const spk = seg.speaker || 'Speaker';
+        const last = groups[groups.length - 1];
+        if (last && last.speaker === spk) last.text += ' ' + (seg.text ?? '').trim();
+        else groups.push({ speaker: spk, text: (seg.text ?? '').trim() });
+      }
+      value = groups.map((g) => `${g.speaker}: ${g.text}`).join('\n');
+    }
     try {
-      await navigator.clipboard.writeText(result.text);
+      await navigator.clipboard.writeText(value);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
       // clipboard may be blocked — best effort
     }
   };
+
+  // Group consecutive same-speaker segments so diarized output is visible
+  // (the flat result.text is identical whether or not diarization ran).
+  const resultSegments = result?.segments ?? [];
+  const speakerGroups: Array<{ speaker: string; text: string }> = [];
+  if (resultSegments.some((seg) => seg.speaker)) {
+    for (const seg of resultSegments) {
+      const spk = seg.speaker || 'Speaker';
+      const last = speakerGroups[speakerGroups.length - 1];
+      if (last && last.speaker === spk) last.text += ' ' + (seg.text ?? '').trim();
+      else speakerGroups.push({ speaker: spk, text: (seg.text ?? '').trim() });
+    }
+  }
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
@@ -291,9 +316,20 @@ export function OneShotTranscribeModal({ onClose }: OneShotTranscribeModalProps)
                   {copied ? 'Copied' : 'Copy'}
                 </button>
               </div>
-              <pre className="p-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
-                {result.text || '(no text)'}
-              </pre>
+              {speakerGroups.length > 0 ? (
+                <div className="p-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-sm max-h-72 overflow-y-auto space-y-2">
+                  {speakerGroups.map((g, i) => (
+                    <p key={i} className="whitespace-pre-wrap break-words">
+                      <span className="font-semibold text-primary-600 dark:text-primary-400">{g.speaker}: </span>
+                      <span className="text-gray-800 dark:text-gray-200">{g.text}</span>
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <pre className="p-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words max-h-72 overflow-y-auto">
+                  {result.text || '(no text)'}
+                </pre>
+              )}
             </div>
           )}
         </div>
