@@ -741,11 +741,14 @@ ${summary.content}
   }, [transcription]);
 
   const handleExportSummaryPDF = useCallback((summary: Summary) => {
+    const isDark = document.documentElement.classList.contains('dark');
     const title = transcription?.title || transcription?.original_filename || 'Summary';
     const htmlContent = `
-      <h1>Summary - ${title}</h1>
-      <div class="meta">${format(new Date(summary.created_at), 'MMM d, yyyy HH:mm')} &bull; ${summary.model_used}</div>
-      <div>${formatMarkdown(summary.content)}</div>
+      <div class="container">
+        <h1>Summary - ${title}</h1>
+        <div class="meta">${format(new Date(summary.created_at), 'MMM d, yyyy HH:mm')} &bull; ${summary.model_used}</div>
+        <div class="markdown-content">${formatMarkdown(summary.content)}</div>
+      </div>
     `;
     
     const printWindow = window.open('', '_blank');
@@ -753,23 +756,93 @@ ${summary.content}
       alert('Please allow popups to export as PDF');
       return;
     }
-    
+
+    const bgColor = isDark ? '#0f172a' : '#ffffff';
+    const textColor = isDark ? '#1f2937' : '#1f2937'; // Note: pure black on white prints better for light mode
+    const metaColor = isDark ? '#94a3b8' : '#6b7280';
+    const borderColor = isDark ? '#334155' : '#e5e7eb';
+    const quoteBg = isDark ? '#1e293b' : '#f9fafb';
+    const quoteBorder = isDark ? '#3b82f6' : '#d1d5db';
+    const tableHeadBg = isDark ? '#1e293b' : '#f9fafb';
+    const tableHeadText = isDark ? '#ffffff' : '#111827';
+
     printWindow.document.write(`
       <html>
         <head>
           <title>Summary - ${title}</title>
           <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
           <style>
-            body { font-family: 'Inter', sans-serif; color: #1f2937; line-height: 1.6; padding: 40px; max-width: 800px; margin: 0 auto; }
-            h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; color: #111827; }
-            .meta { font-size: 12px; color: #6b7280; margin-bottom: 24px; border-bottom: 1px solid #e5e7eb; padding-bottom: 12px; }
-            ul { list-style-type: disc; padding-left: 20px; margin: 8px 0; }
-            ol { list-style-type: decimal; padding-left: 20px; margin: 8px 0; }
-            li { margin-bottom: 4px; }
-            blockquote { border-left: 4px solid #d1d5db; padding-left: 16px; font-style: italic; color: #4b5563; margin: 16px 0; }
-            table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
-            th, td { border: 1px solid #e5e7eb; padding: 8px 12px; text-align: left; }
-            th { background-color: #f9fafb; font-weight: 600; }
+            @page {
+              size: auto;
+              margin: 0mm;
+            }
+            body {
+              font-family: 'Inter', system-ui, -apple-system, sans-serif;
+              background-color: ${bgColor};
+              color: ${isDark ? textColor : '#111827'};
+              line-height: 1.6;
+              padding: 20mm;
+              font-size: 14px;
+            }
+            .container {
+              max-width: 800px;
+              margin: 0 auto;
+            }
+            h1 {
+              font-size: 26px;
+              font-weight: 700;
+              margin-top: 0;
+              margin-bottom: 8px;
+              color: ${isDark ? '#ffffff' : '#111827'};
+            }
+            h2 { font-size: 20px; font-weight: 700; margin-top: 24px; margin-bottom: 12px; }
+            h3 { font-size: 16px; font-weight: 600; margin-top: 20px; margin-bottom: 8px; }
+            h4 { font-size: 14px; font-weight: 600; margin-top: 16px; margin-bottom: 6px; }
+            .meta {
+              font-size: 12px;
+              color: ${metaColor};
+              margin-bottom: 24px;
+              border-bottom: 1px solid ${borderColor};
+              padding-bottom: 12px;
+            }
+            p { margin-bottom: 16px; }
+            ul { list-style-type: disc; padding-left: 24px; margin: 12px 0; }
+            ol { list-style-type: decimal; padding-left: 24px; margin: 12px 0; }
+            li { margin-bottom: 6px; }
+            .checkbox-item { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; page-break-inside: avoid; }
+            .checkbox-toggle { margin-top: 4px; width: 14px; height: 14px; border: 1px solid ${borderColor}; border-radius: 3px; }
+            blockquote {
+              border-left: 4px solid ${quoteBorder};
+              background-color: ${quoteBg};
+              padding: 12px 16px;
+              font-style: italic;
+              margin: 16px 0;
+              border-radius: 0 8px 8px 0;
+              page-break-inside: avoid;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin: 20px 0;
+              font-size: 13px;
+              page-break-inside: auto;
+            }
+            tr {
+              page-break-inside: avoid;
+              page-break-after: auto;
+            }
+            th, td {
+              border: 1px solid ${borderColor};
+              padding: 10px 12px;
+            }
+            th {
+              background-color: ${tableHeadBg};
+              color: ${tableHeadText};
+              font-weight: 600;
+            }
+            a { color: ${isDark ? '#60a5fa' : '#2563eb'}; text-decoration: underline; }
+            pre { background-color: ${isDark ? '#1e293b' : '#f3f4f6'}; padding: 12px; border-radius: 6px; overflow-x: auto; font-family: monospace; font-size: 12px; margin: 12px 0; }
+            code { background-color: ${isDark ? '#1e293b' : '#f3f4f6'}; padding: 2px 4px; border-radius: 4px; font-family: monospace; font-size: 12px; }
           </style>
         </head>
         <body>
