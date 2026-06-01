@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, AlertCircle, Save, FolderOpen, Trash2, X, Plus, MessageSquare, ChevronRight, ChevronDown } from 'lucide-react';
+import { Send, AlertCircle, Save, FolderOpen, Trash2, X, Plus, MessageSquare, ChevronRight, ChevronDown, Download } from 'lucide-react';
 import { ChatMessage } from '@/types';
 import { chatApi, SSE_ERROR_PREFIX } from '@/api/chat';
 import {
@@ -121,6 +121,18 @@ export function ChatPanel({
   const [saveTitle, setSaveTitle] = useState('');
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [showExportDropdown, setShowExportDropdown] = useState(false);
+  const chatExportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (chatExportRef.current && !chatExportRef.current.contains(e.target as Node)) {
+        setShowExportDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
 
   useEffect(() => {
     loadSavedConversations();
@@ -225,6 +237,84 @@ export function ChatPanel({
       );
     }
     setShowSaveDialog(true);
+  };
+
+  const handleExportChatMarkdown = () => {
+    if (messages.length === 0) return;
+    const title = saveTitle || 'Chat conversation';
+    const markdownText = `# Chat Conversation - ${title}
+Exported on: ${new Date().toLocaleString()}
+
+${messages.map(m => `### ${m.role === 'user' ? 'User' : 'Assistant'}
+${m.content}
+`).join('\n')}
+`;
+    const blob = new Blob([markdownText], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title.replace(/\s+/g, '_')}_Chat.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportChatPDF = () => {
+    if (messages.length === 0) return;
+    const title = saveTitle || 'Chat conversation';
+    
+    const htmlContent = `
+      <h1>Chat Conversation - ${title}</h1>
+      <div class="meta">Exported on ${new Date().toLocaleString()}</div>
+      ${messages.map(m => `
+        <div class="message ${m.role}">
+          <div class="sender ${m.role}">${m.role === 'user' ? 'User' : 'Assistant'}</div>
+          <div>${m.role === 'assistant' ? formatMarkdown(m.content) : m.content.replace(/\n/g, '<br/>')}</div>
+        </div>
+      `).join('')}
+    `;
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('Please allow popups to export as PDF');
+      return;
+    }
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>${title}</title>
+          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+          <style>
+            body { font-family: 'Inter', sans-serif; color: #1f2937; line-height: 1.6; padding: 40px; max-width: 800px; margin: 0 auto; }
+            h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; color: #111827; }
+            .meta { font-size: 12px; color: #6b7280; margin-bottom: 24px; border-bottom: 1px solid #e5e7eb; padding-bottom: 12px; }
+            ul { list-style-type: disc; padding-left: 20px; margin: 8px 0; }
+            ol { list-style-type: decimal; padding-left: 20px; margin: 8px 0; }
+            li { margin-bottom: 4px; }
+            blockquote { border-left: 4px solid #d1d5db; padding-left: 16px; font-style: italic; color: #4b5563; margin: 16px 0; }
+            table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+            th, td { border: 1px solid #e5e7eb; padding: 8px 12px; text-align: left; }
+            th { background-color: #f9fafb; font-weight: 600; }
+            .message { margin-bottom: 20px; padding: 12px 16px; border-radius: 8px; }
+            .message.user { background-color: #eff6ff; border-left: 4px solid #3b82f6; }
+            .message.assistant { background-color: #f9fafb; border-left: 4px solid #10b981; }
+            .sender { font-weight: 600; font-size: 12px; margin-bottom: 4px; }
+            .sender.user { color: #1d4ed8; }
+            .sender.assistant { color: #047857; }
+          </style>
+        </head>
+        <body>
+          ${htmlContent}
+          <script>
+            window.onload = function() {
+              window.print();
+              window.close();
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   const toggleFolder = (key: string) => {
@@ -461,14 +551,41 @@ export function ChatPanel({
             )}
           </button>
           {hasMessages && (
-            <button
-              onClick={openSaveDialog}
-              disabled={isSaving}
-              className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors disabled:opacity-50"
-              title="Save conversation"
-            >
-              <Save className="w-4 h-4" />
-            </button>
+            <>
+              <button
+                onClick={openSaveDialog}
+                disabled={isSaving}
+                className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors disabled:opacity-50"
+                title="Save conversation"
+              >
+                <Save className="w-4 h-4" />
+              </button>
+              <div className="relative" ref={chatExportRef}>
+                <button
+                  onClick={() => setShowExportDropdown((v) => !v)}
+                  className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
+                  title="Export conversation"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
+                {showExportDropdown && (
+                  <div className="absolute right-0 mt-1 w-36 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20 overflow-hidden">
+                    <button
+                      onClick={() => { setShowExportDropdown(false); handleExportChatMarkdown(); }}
+                      className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                    >
+                      Markdown (.md)
+                    </button>
+                    <button
+                      onClick={() => { setShowExportDropdown(false); handleExportChatPDF(); }}
+                      className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                    >
+                      PDF Document (.pdf)
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>

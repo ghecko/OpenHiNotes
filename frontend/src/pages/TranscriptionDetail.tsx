@@ -17,18 +17,36 @@ import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, P
 import { ShareModal } from '@/components/ShareModal';
 import { InteractiveMarkdown } from '@/components/InteractiveMarkdown';
 import { TemplateSelector } from '@/components/TemplateSelector';
+import { formatMarkdown } from '@/utils/formatMarkdown';
 
 function SummaryModal({
   summary,
   onClose,
   onDelete,
   onContentChange,
+  onExportMarkdown,
+  onExportPDF,
 }: {
   summary: Summary;
   onClose: () => void;
   onDelete: (id: string) => void;
   onContentChange?: (newContent: string) => void;
+  onExportMarkdown: (summary: Summary) => void;
+  onExportPDF: (summary: Summary) => void;
 }) {
+  const [showExport, setShowExport] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setShowExport(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
@@ -44,6 +62,33 @@ function SummaryModal({
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <div className="relative" ref={exportRef}>
+              <button
+                onClick={() => setShowExport((v) => !v)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {showExport && (
+                <div className="absolute right-0 mt-1 w-36 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20 overflow-hidden">
+                  <button
+                    onClick={() => { setShowExport(false); onExportMarkdown(summary); }}
+                    className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  >
+                    Markdown (.md)
+                  </button>
+                  <button
+                    onClick={() => { setShowExport(false); onExportPDF(summary); }}
+                    className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  >
+                    PDF Document (.pdf)
+                  </button>
+                </div>
+              )}
+            </div>
+
             <button
               onClick={() => onDelete(summary.id)}
               className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
@@ -105,11 +150,16 @@ export function TranscriptionDetail() {
   // Export dropdown
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const [activeExportSummaryId, setActiveExportSummaryId] = useState<string | null>(null);
+  const inlineExportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
         setShowExportMenu(false);
+      }
+      if (inlineExportRef.current && !inlineExportRef.current.contains(e.target as Node)) {
+        setActiveExportSummaryId(null);
       }
     };
     document.addEventListener('mousedown', handler);
@@ -671,6 +721,70 @@ export function TranscriptionDetail() {
       console.error('Failed to delete summary:', error);
     }
   };
+
+  const handleExportSummaryMarkdown = useCallback((summary: Summary) => {
+    const title = transcription?.title || transcription?.original_filename || 'Summary';
+    const cleanTitle = title.replace(/\.[^/.]+$/, '');
+    const markdownText = `# Summary - ${title}
+Date: ${format(new Date(summary.created_at), 'MMM d, yyyy HH:mm')}
+Model: ${summary.model_used}
+
+${summary.content}
+`;
+    const blob = new Blob([markdownText], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${cleanTitle}_Summary.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [transcription]);
+
+  const handleExportSummaryPDF = useCallback((summary: Summary) => {
+    const title = transcription?.title || transcription?.original_filename || 'Summary';
+    const htmlContent = `
+      <h1>Summary - ${title}</h1>
+      <div class="meta">${format(new Date(summary.created_at), 'MMM d, yyyy HH:mm')} &bull; ${summary.model_used}</div>
+      <div>${formatMarkdown(summary.content)}</div>
+    `;
+    
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('Please allow popups to export as PDF');
+      return;
+    }
+    
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Summary - ${title}</title>
+          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+          <style>
+            body { font-family: 'Inter', sans-serif; color: #1f2937; line-height: 1.6; padding: 40px; max-width: 800px; margin: 0 auto; }
+            h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; color: #111827; }
+            .meta { font-size: 12px; color: #6b7280; margin-bottom: 24px; border-bottom: 1px solid #e5e7eb; padding-bottom: 12px; }
+            ul { list-style-type: disc; padding-left: 20px; margin: 8px 0; }
+            ol { list-style-type: decimal; padding-left: 20px; margin: 8px 0; }
+            li { margin-bottom: 4px; }
+            blockquote { border-left: 4px solid #d1d5db; padding-left: 16px; font-style: italic; color: #4b5563; margin: 16px 0; }
+            table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+            th, td { border: 1px solid #e5e7eb; padding: 8px 12px; text-align: left; }
+            th { background-color: #f9fafb; font-weight: 600; }
+          </style>
+        </head>
+        <body>
+          ${htmlContent}
+          <script>
+            window.onload = function() {
+              window.print();
+              window.close();
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  }, [transcription]);
 
   /** Persist checkbox toggle in summary markdown. */
   const handleSummaryContentChange = useCallback(async (summaryId: string, newContent: string) => {
@@ -1307,13 +1421,42 @@ export function TranscriptionDetail() {
                         {format(new Date(summaries[0].created_at), 'MMM d, yyyy HH:mm')} &bull;{' '}
                         {summaries[0].model_used}
                       </p>
-                      <button
-                        onClick={() => handleDeleteSummary(summaries[0].id)}
-                        className="p-1 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
-                        title="Delete summary"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <div className="relative" ref={activeExportSummaryId === summaries[0].id ? inlineExportRef : null}>
+                          <button
+                            onClick={() => setActiveExportSummaryId(activeExportSummaryId === summaries[0].id ? null : summaries[0].id)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+                          >
+                            <Download className="w-3 h-3" />
+                            Export
+                            <ChevronDown className="w-2.5 h-2.5" />
+                          </button>
+                          {activeExportSummaryId === summaries[0].id && (
+                            <div className="absolute right-0 mt-1 w-36 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20 overflow-hidden">
+                              <button
+                                onClick={() => { setActiveExportSummaryId(null); handleExportSummaryMarkdown(summaries[0]); }}
+                                className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                              >
+                                Markdown (.md)
+                              </button>
+                              <button
+                                onClick={() => { setActiveExportSummaryId(null); handleExportSummaryPDF(summaries[0]); }}
+                                className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                              >
+                                PDF Document (.pdf)
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={() => handleDeleteSummary(summaries[0].id)}
+                          className="p-1 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
+                          title="Delete summary"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                     <InteractiveMarkdown
                       content={summaries[0].content}
@@ -1365,6 +1508,8 @@ export function TranscriptionDetail() {
                   onClose={() => setOpenSummaryId(null)}
                   onDelete={handleDeleteSummary}
                   onContentChange={(c) => handleSummaryContentChange(openSummary.id, c)}
+                  onExportMarkdown={handleExportSummaryMarkdown}
+                  onExportPDF={handleExportSummaryPDF}
                 />
               )}
 
