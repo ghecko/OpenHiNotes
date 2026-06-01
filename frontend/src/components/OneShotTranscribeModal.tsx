@@ -33,8 +33,10 @@ function buildSpeakerView(
     const m = /^SPEAKER_(\d+)$/.exec(code);
     return m ? `Speaker ${parseInt(m[1], 10) + 1}` : code;
   };
-  const named = distinct.some((c) => speakersMap[c] && speakersMap[c] !== c);
-  const showSpeakers = named || distinct.length >= 2;
+  // Diarization off is already stripped server-side (no speakers at all), so
+  // any speaker present means diarization ran — show it (matched name if we
+  // have one, otherwise "Speaker N"), even for a single speaker.
+  const showSpeakers = distinct.length >= 1;
   const groups: Array<{ speaker: string; text: string }> = [];
   if (showSpeakers) {
     for (const seg of segments) {
