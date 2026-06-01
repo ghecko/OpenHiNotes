@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, AlertCircle, Save, FolderOpen, Trash2, X, Plus, MessageSquare, ChevronRight, ChevronDown } from 'lucide-react';
+import { Send, AlertCircle, Save, FolderOpen, Trash2, X, Plus, MessageSquare, ChevronRight, ChevronDown, Download } from 'lucide-react';
 import { ChatMessage } from '@/types';
 import { chatApi, SSE_ERROR_PREFIX } from '@/api/chat';
 import {
@@ -121,6 +121,18 @@ export function ChatPanel({
   const [saveTitle, setSaveTitle] = useState('');
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [showExportDropdown, setShowExportDropdown] = useState(false);
+  const chatExportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (chatExportRef.current && !chatExportRef.current.contains(e.target as Node)) {
+        setShowExportDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
 
   useEffect(() => {
     loadSavedConversations();
@@ -225,6 +237,194 @@ export function ChatPanel({
       );
     }
     setShowSaveDialog(true);
+  };
+
+  const handleExportChatMarkdown = () => {
+    if (messages.length === 0) return;
+    const title = saveTitle || 'Chat conversation';
+    const markdownText = `# Chat Conversation - ${title}
+Exported on: ${new Date().toLocaleString()}
+
+${messages.map(m => `### ${m.role === 'user' ? 'User' : 'Assistant'}
+${m.content}
+`).join('\n')}
+`;
+    const blob = new Blob([markdownText], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title.replace(/\s+/g, '_')}_Chat.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportChatPDF = () => {
+    if (messages.length === 0) return;
+    const isDark = document.documentElement.classList.contains('dark');
+    const title = saveTitle || 'Chat conversation';
+    
+    const htmlContent = `
+      <div class="container">
+        <h1>Chat Conversation - ${title}</h1>
+        <div class="meta">Exported on ${new Date().toLocaleString()}</div>
+        ${messages.map(m => `
+          <div class="message ${m.role}">
+            <div class="sender ${m.role}">${m.role === 'user' ? 'User' : 'Assistant'}</div>
+            <div class="markdown-content">${m.role === 'assistant' ? formatMarkdown(m.content) : m.content.replace(/\n/g, '<br/>')}</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('Please allow popups to export as PDF');
+      return;
+    }
+
+    const bgColor = isDark ? '#0f172a' : '#ffffff';
+    const textColor = isDark ? '#f1f5f9' : '#1f2937';
+    const metaColor = isDark ? '#94a3b8' : '#6b7280';
+    const borderColor = isDark ? '#334155' : '#e5e7eb';
+    const quoteBg = isDark ? '#1e293b' : '#f9fafb';
+    const quoteBorder = isDark ? '#3b82f6' : '#d1d5db';
+    const tableHeadBg = isDark ? '#1e293b' : '#f9fafb';
+    const tableHeadText = isDark ? '#ffffff' : '#111827';
+    
+    // User bubble colors
+    const userBg = isDark ? '#1e3a8a' : '#eff6ff';
+    const userBorder = isDark ? '#3b82f6' : '#2563eb';
+    const userText = isDark ? '#93c5fd' : '#1d4ed8';
+
+    // Assistant bubble colors
+    const assistantBg = isDark ? '#1e293b' : '#f9fafb';
+    const assistantBorder = isDark ? '#10b981' : '#059669';
+    const assistantText = isDark ? '#34d399' : '#047857';
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>${title}</title>
+          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+          <style>
+            @page {
+              size: auto;
+              margin: 0mm;
+            }
+            body {
+              font-family: 'Inter', system-ui, -apple-system, sans-serif;
+              background-color: ${bgColor};
+              color: ${isDark ? textColor : '#111827'};
+              line-height: 1.6;
+              padding: 20mm;
+              font-size: 14px;
+            }
+            .container {
+              max-width: 800px;
+              margin: 0 auto;
+            }
+            h1 {
+              font-size: 26px;
+              font-weight: 700;
+              margin-top: 0;
+              margin-bottom: 8px;
+              color: ${isDark ? '#ffffff' : '#111827'};
+            }
+            .meta {
+              font-size: 12px;
+              color: ${metaColor};
+              margin-bottom: 24px;
+              border-bottom: 1px solid ${borderColor};
+              padding-bottom: 12px;
+            }
+            p { margin-bottom: 16px; }
+            ul { list-style-type: disc; padding-left: 24px; margin: 12px 0; }
+            ol { list-style-type: decimal; padding-left: 24px; margin: 12px 0; }
+            li { margin-bottom: 6px; }
+            .checkbox-item { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; page-break-inside: avoid; }
+            .checkbox-toggle { margin-top: 4px; width: 14px; height: 14px; border: 1px solid ${borderColor}; border-radius: 3px; }
+            blockquote {
+              border-left: 4px solid ${quoteBorder};
+              background-color: ${quoteBg};
+              padding: 12px 16px;
+              font-style: italic;
+              margin: 16px 0;
+              border-radius: 0 8px 8px 0;
+              page-break-inside: avoid;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin: 20px 0;
+              font-size: 13px;
+              page-break-inside: auto;
+            }
+            tr {
+              page-break-inside: avoid;
+              page-break-after: auto;
+            }
+            th, td {
+              border: 1px solid ${borderColor};
+              padding: 10px 12px;
+            }
+            th {
+              background-color: ${tableHeadBg};
+              color: ${tableHeadText};
+              font-weight: 600;
+            }
+            
+            /* Messages Bubbles */
+            .message {
+              margin-bottom: 24px;
+              padding: 18px 20px;
+              max-width: 80%;
+              box-sizing: border-box;
+            }
+            .message.user {
+              background-color: ${userBg};
+              border-right: 5px solid ${userBorder};
+              margin-left: auto;
+              margin-right: 0;
+              border-radius: 12px 12px 0 12px;
+              color: ${isDark ? '#f1f5f9' : '#1e293b'};
+              page-break-inside: avoid;
+            }
+            .message.assistant {
+              background-color: ${assistantBg};
+              border-left: 5px solid ${assistantBorder};
+              margin-left: 0;
+              margin-right: auto;
+              border-radius: 12px 12px 12px 0;
+              color: ${isDark ? '#f1f5f9' : '#1f2937'};
+            }
+            
+            .sender {
+              font-weight: 700;
+              font-size: 11px;
+              margin-bottom: 6px;
+              text-transform: uppercase;
+              letter-spacing: 0.5px;
+            }
+            .sender.user { color: ${userText}; text-align: right; }
+            .sender.assistant { color: ${assistantText}; text-align: left; }
+            
+            a { color: ${isDark ? '#60a5fa' : '#2563eb'}; text-decoration: underline; }
+            pre { background-color: ${isDark ? '#1e293b' : '#f3f4f6'}; padding: 12px; border-radius: 6px; overflow-x: auto; font-family: monospace; font-size: 12px; margin: 12px 0; }
+            code { background-color: ${isDark ? '#1e293b' : '#f3f4f6'}; padding: 2px 4px; border-radius: 4px; font-family: monospace; font-size: 12px; }
+          </style>
+        </head>
+        <body>
+          ${htmlContent}
+          <script>
+            window.onload = function() {
+              window.print();
+              window.close();
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   const toggleFolder = (key: string) => {
@@ -461,14 +661,41 @@ export function ChatPanel({
             )}
           </button>
           {hasMessages && (
-            <button
-              onClick={openSaveDialog}
-              disabled={isSaving}
-              className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors disabled:opacity-50"
-              title="Save conversation"
-            >
-              <Save className="w-4 h-4" />
-            </button>
+            <>
+              <button
+                onClick={openSaveDialog}
+                disabled={isSaving}
+                className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors disabled:opacity-50"
+                title="Save conversation"
+              >
+                <Save className="w-4 h-4" />
+              </button>
+              <div className="relative" ref={chatExportRef}>
+                <button
+                  onClick={() => setShowExportDropdown((v) => !v)}
+                  className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
+                  title="Export conversation"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
+                {showExportDropdown && (
+                  <div className="absolute right-0 mt-1 w-36 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20 overflow-hidden">
+                    <button
+                      onClick={() => { setShowExportDropdown(false); handleExportChatMarkdown(); }}
+                      className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                    >
+                      Markdown (.md)
+                    </button>
+                    <button
+                      onClick={() => { setShowExportDropdown(false); handleExportChatPDF(); }}
+                      className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                    >
+                      PDF Document (.pdf)
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>
