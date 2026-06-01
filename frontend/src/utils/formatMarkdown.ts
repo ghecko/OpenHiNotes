@@ -50,19 +50,140 @@ export function formatMarkdown(text: string): string {
     // Italic: *text* or _text_
     .replace(/(?<!\w)\*(.+?)\*(?!\w)/g, '<em>$1</em>')
     .replace(/(?<!\w)_(.+?)_(?!\w)/g, '<em>$1</em>')
-    // Checkboxes: - [ ] and - [x]  (interactive when wrapped in a handler)
-    .replace(/^[\s]*[-*]\s+\[x\]\s+(.+)$/gim, '<label class="flex items-start gap-2 ml-4 cursor-pointer checkbox-item"><input type="checkbox" checked class="mt-1 rounded border-gray-300 text-primary-600 checkbox-toggle" /><span class="line-through text-gray-500 dark:text-gray-400">$1</span></label>')
-    .replace(/^[\s]*[-*]\s+\[\s?\]\s+(.+)$/gm, '<label class="flex items-start gap-2 ml-4 cursor-pointer checkbox-item"><input type="checkbox" class="mt-1 rounded border-gray-300 checkbox-toggle" /><span>$1</span></label>')
-    // Unordered list items: lines starting with "- " or "* "
-    .replace(/^[\s]*[-*]\s+(.+)$/gm, '<li class="ml-4">$1</li>')
-    // Ordered list items: lines starting with "1. ", "2. ", etc.
-    .replace(/^[\s]*(\d+)\.\s+(.+)$/gm, '<li class="ml-4 list-decimal">$2</li>')
-    // Wrap consecutive <li> in <ul>
-    .replace(/((?:<li[^>]*>.*<\/li>\n?)+)/g, '<ul class="list-disc pl-4 my-1 space-y-0.5">$1</ul>')
-    // Wrap consecutive <label> (checkboxes) in a container div
-    .replace(/((?:<label[^>]*>.*<\/label>\n?)+)/g, '<div class="space-y-1 my-1">$1</div>')
+    // Checkboxes and lists are parsed line by line using a stack-based approach
+    // to support nested lists and mixed list types properly.
+
+  const lines = processed.split('\n');
+  const resultLines: string[] = [];
+  const stack: { type: 'ul' | 'ol' | 'checkbox'; indent: number }[] = [];
+
+  function closeListsToLevel(targetIndent: number) {
+    while (stack.length > 0 && stack[stack.length - 1].indent > targetIndent) {
+      const popped = stack.pop();
+      if (popped) {
+        if (popped.type === 'ul') resultLines.push('</ul>');
+        else if (popped.type === 'ol') resultLines.push('</ol>');
+        else if (popped.type === 'checkbox') resultLines.push('</div>');
+      }
+    }
+  }
+
+  function closeAllLists() {
+    while (stack.length > 0) {
+      const popped = stack.pop();
+      if (popped) {
+        if (popped.type === 'ul') resultLines.push('</ul>');
+        else if (popped.type === 'ol') resultLines.push('</ol>');
+        else if (popped.type === 'checkbox') resultLines.push('</div>');
+      }
+    }
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    const checkboxCheckedMatch = line.match(/^(\s*)[-*]\s+\[x\]\s*(.*)$/i);
+    const checkboxUncheckedMatch = line.match(/^(\s*)[-*]\s+\[\s?\]\s*(.*)$/i);
+    const ulMatch = line.match(/^(\s*)[-*]\s+(.*)$/);
+    const olMatch = line.match(/^(\s*)(\d+)\.\s+(.*)$/);
+
+    if (checkboxCheckedMatch) {
+      const indent = checkboxCheckedMatch[1].length;
+      const content = checkboxCheckedMatch[2] || '';
+      closeListsToLevel(indent);
+
+      let top = stack[stack.length - 1];
+      if (!top || indent > top.indent) {
+        stack.push({ type: 'checkbox', indent });
+        const plClass = indent > 0 ? ' pl-4' : '';
+        resultLines.push(`<div class="space-y-1 my-1${plClass}">`);
+      } else if (top.indent === indent && top.type !== 'checkbox') {
+        stack.pop();
+        if (top.type === 'ul') resultLines.push('</ul>');
+        else if (top.type === 'ol') resultLines.push('</ol>');
+
+        stack.push({ type: 'checkbox', indent });
+        const plClass = indent > 0 ? ' pl-4' : '';
+        resultLines.push(`<div class="space-y-1 my-1${plClass}">`);
+      }
+
+      resultLines.push(`<label class="flex items-start gap-2 ml-4 cursor-pointer checkbox-item"><input type="checkbox" checked class="mt-1 rounded border-gray-300 text-primary-600 checkbox-toggle" /><span class="line-through text-gray-500 dark:text-gray-400">${content}</span></label>`);
+    } else if (checkboxUncheckedMatch) {
+      const indent = checkboxUncheckedMatch[1].length;
+      const content = checkboxUncheckedMatch[2] || '';
+      closeListsToLevel(indent);
+
+      let top = stack[stack.length - 1];
+      if (!top || indent > top.indent) {
+        stack.push({ type: 'checkbox', indent });
+        const plClass = indent > 0 ? ' pl-4' : '';
+        resultLines.push(`<div class="space-y-1 my-1${plClass}">`);
+      } else if (top.indent === indent && top.type !== 'checkbox') {
+        stack.pop();
+        if (top.type === 'ul') resultLines.push('</ul>');
+        else if (top.type === 'ol') resultLines.push('</ol>');
+
+        stack.push({ type: 'checkbox', indent });
+        const plClass = indent > 0 ? ' pl-4' : '';
+        resultLines.push(`<div class="space-y-1 my-1${plClass}">`);
+      }
+
+      resultLines.push(`<label class="flex items-start gap-2 ml-4 cursor-pointer checkbox-item"><input type="checkbox" class="mt-1 rounded border-gray-300 checkbox-toggle" /><span>${content}</span></label>`);
+    } else if (ulMatch) {
+      const indent = ulMatch[1].length;
+      const content = ulMatch[2];
+      closeListsToLevel(indent);
+
+      let top = stack[stack.length - 1];
+      if (!top || indent > top.indent) {
+        stack.push({ type: 'ul', indent });
+        resultLines.push('<ul class="list-disc pl-4 my-1 space-y-0.5">');
+      } else if (top.indent === indent && top.type !== 'ul') {
+        stack.pop();
+        if (top.type === 'ol') resultLines.push('</ol>');
+        else if (top.type === 'checkbox') resultLines.push('</div>');
+
+        stack.push({ type: 'ul', indent });
+        resultLines.push('<ul class="list-disc pl-4 my-1 space-y-0.5">');
+      }
+
+      resultLines.push(`<li class="ml-4">${content}</li>`);
+    } else if (olMatch) {
+      const indent = olMatch[1].length;
+      const content = olMatch[3];
+      closeListsToLevel(indent);
+
+      let top = stack[stack.length - 1];
+      if (!top || indent > top.indent) {
+        stack.push({ type: 'ol', indent });
+        resultLines.push('<ol class="list-decimal pl-4 my-1 space-y-0.5">');
+      } else if (top.indent === indent && top.type !== 'ol') {
+        stack.pop();
+        if (top.type === 'ul') resultLines.push('</ul>');
+        else if (top.type === 'checkbox') resultLines.push('</div>');
+
+        stack.push({ type: 'ol', indent });
+        resultLines.push('<ol class="list-decimal pl-4 my-1 space-y-0.5">');
+      }
+
+      resultLines.push(`<li class="ml-4">${content}</li>`);
+    } else if (line.trim() === '') {
+      // Don't close lists for blank lines, just preserve them
+      resultLines.push(line);
+    } else {
+      closeAllLists();
+      resultLines.push(line);
+    }
+  }
+  closeAllLists();
+  processed = resultLines.join('\n')
     // Line breaks for remaining newlines (but not inside tags)
     .replace(/\n/g, '<br/>');
+
+  // Clean up `<br/>` tags adjacent to block/list HTML tags
+  processed = processed
+    .replace(/(?:<br\/>\s*)+(<\/?(?:ul|ol|li|div|label|h2|h3|h4|hr)[^>]*>)/g, '$1')
+    .replace(/(<\/?(?:ul|ol|li|div|label|h2|h3|h4|hr)[^>]*>)(?:\s*<br\/>)+/g, '$1');
 
   // Restore inline code
   inlineCodes.forEach((code, idx) => {
