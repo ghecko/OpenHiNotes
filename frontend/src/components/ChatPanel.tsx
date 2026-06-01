@@ -378,7 +378,6 @@ ${m.content}
               margin-bottom: 24px;
               padding: 18px 20px;
               max-width: 80%;
-              page-break-inside: avoid;
               box-sizing: border-box;
             }
             .message.user {
@@ -388,6 +387,7 @@ ${m.content}
               margin-right: 0;
               border-radius: 12px 12px 0 12px;
               color: ${isDark ? '#f1f5f9' : '#1e293b'};
+              page-break-inside: avoid;
             }
             .message.assistant {
               background-color: ${assistantBg};
