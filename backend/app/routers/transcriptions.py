@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import re
 import uuid
@@ -57,6 +58,8 @@ from app.services.llm import LLMService
 from app.services.permissions import PermissionService
 from app.services.audio_concat import concat_audio_files, AudioConcatError
 from app.utils.date_extract import extract_meeting_date
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/transcriptions", tags=["transcriptions"])
 
@@ -1518,13 +1521,43 @@ async def oneshot_transcribe(
             db=db,
         )
         parsed = TranscriptionService.parse_voxhub_response(voxhub_response)
+        segments = parsed.get("segments") or []
+        speakers = parsed.get("speakers") or {}
+
+        if diarize:
+            # Match detected speakers against known voice profiles — same as
+            # the normal transcription flow — so segments carry real names.
+            speaker_embeddings = parsed.get("speaker_embeddings")
+            if speaker_embeddings:
+                try:
+                    from app.services.speaker_identification import (
+                        match_speakers,
+                        apply_speaker_matches,
+                    )
+                    matches = await match_speakers(
+                        db, speaker_embeddings, threshold=settings.speaker_match_threshold
+                    )
+                    if matches:
+                        speakers = apply_speaker_matches(speakers, matches)
+                except Exception as e:
+                    logger.warning(
+                        "One-shot speaker identification failed (non-fatal): %s", e
+                    )
+        else:
+            # Diarization off: VoxHub may still tag a lone SPEAKER_00. Strip
+            # speaker info so the client renders plain text.
+            for seg in segments:
+                if isinstance(seg, dict):
+                    seg["speaker"] = None
+            speakers = {}
+
         return {
             "original_filename": original_filename,
             "language": parsed.get("language") or language,
             "duration": parsed.get("duration"),
             "text": parsed.get("text") or "",
-            "segments": parsed.get("segments") or [],
-            "speakers": parsed.get("speakers") or {},
+            "segments": segments,
+            "speakers": speakers,
         }
     except HTTPException:
         raise

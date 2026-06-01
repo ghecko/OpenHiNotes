@@ -12,6 +12,41 @@ interface OneShotResult {
   language: string | null;
   duration: number | null;
   segments: Array<{ start: number; end: number; text: string; speaker?: string }>;
+  speakers: Record<string, string>;
+}
+
+// Build a speaker-grouped view of the transcript. Only worth showing labels
+// when diarization produced something meaningful: a profile-matched name, or
+// at least two distinct speakers. A lone unmatched SPEAKER_00 falls back to
+// plain text. Matched profiles surface the real name; unmatched generic codes
+// become "Speaker N".
+function buildSpeakerView(
+  segments: Array<{ text: string; speaker?: string }>,
+  speakersMap: Record<string, string>,
+): { showSpeakers: boolean; groups: Array<{ speaker: string; text: string }> } {
+  const distinct = Array.from(
+    new Set(segments.map((s) => s.speaker).filter(Boolean)),
+  ) as string[];
+  const resolve = (code: string): string => {
+    const mapped = speakersMap[code];
+    if (mapped && mapped !== code) return mapped;
+    const m = /^SPEAKER_(\d+)$/.exec(code);
+    return m ? `Speaker ${parseInt(m[1], 10) + 1}` : code;
+  };
+  const named = distinct.some((c) => speakersMap[c] && speakersMap[c] !== c);
+  const showSpeakers = named || distinct.length >= 2;
+  const groups: Array<{ speaker: string; text: string }> = [];
+  if (showSpeakers) {
+    for (const seg of segments) {
+      const spk = seg.speaker
+        ? resolve(seg.speaker)
+        : groups[groups.length - 1]?.speaker || 'Speaker 1';
+      const last = groups[groups.length - 1];
+      if (last && last.speaker === spk) last.text += ' ' + (seg.text ?? '').trim();
+      else groups.push({ speaker: spk, text: (seg.text ?? '').trim() });
+    }
+  }
+  return { showSpeakers, groups };
 }
 
 const ACCEPT = '.mp3,.wav,.m4a,.ogg,.flac,.hda,.webm';
@@ -118,6 +153,7 @@ export function OneShotTranscribeModal({ onClose }: OneShotTranscribeModalProps)
         language: res.language,
         duration: res.duration,
         segments: res.segments,
+        speakers: res.speakers,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unknown error');
@@ -128,18 +164,10 @@ export function OneShotTranscribeModal({ onClose }: OneShotTranscribeModalProps)
 
   const copyText = async () => {
     if (!result) return;
-    const segs = result.segments ?? [];
-    let value = result.text;
-    if (segs.some((seg) => seg.speaker)) {
-      const groups: Array<{ speaker: string; text: string }> = [];
-      for (const seg of segs) {
-        const spk = seg.speaker || 'Speaker';
-        const last = groups[groups.length - 1];
-        if (last && last.speaker === spk) last.text += ' ' + (seg.text ?? '').trim();
-        else groups.push({ speaker: spk, text: (seg.text ?? '').trim() });
-      }
-      value = groups.map((g) => `${g.speaker}: ${g.text}`).join('\n');
-    }
+    const { showSpeakers, groups } = buildSpeakerView(result.segments ?? [], result.speakers ?? {});
+    const value = showSpeakers
+      ? groups.map((g) => `${g.speaker}: ${g.text}`).join('\n')
+      : result.text;
     try {
       await navigator.clipboard.writeText(value);
       setCopied(true);
@@ -149,18 +177,10 @@ export function OneShotTranscribeModal({ onClose }: OneShotTranscribeModalProps)
     }
   };
 
-  // Group consecutive same-speaker segments so diarized output is visible
-  // (the flat result.text is identical whether or not diarization ran).
-  const resultSegments = result?.segments ?? [];
-  const speakerGroups: Array<{ speaker: string; text: string }> = [];
-  if (resultSegments.some((seg) => seg.speaker)) {
-    for (const seg of resultSegments) {
-      const spk = seg.speaker || 'Speaker';
-      const last = speakerGroups[speakerGroups.length - 1];
-      if (last && last.speaker === spk) last.text += ' ' + (seg.text ?? '').trim();
-      else speakerGroups.push({ speaker: spk, text: (seg.text ?? '').trim() });
-    }
-  }
+  const { groups: speakerGroups } = buildSpeakerView(
+    result?.segments ?? [],
+    result?.speakers ?? {},
+  );
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
