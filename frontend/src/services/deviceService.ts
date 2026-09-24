@@ -431,13 +431,18 @@ class DeviceService {
 
   async disconnectDevice(): Promise<void> {
     if (this.device) {
+      const device = this.device;
+      this.device = null; // issueRead() must not re-arm during teardown
       try {
-        await this.device.releaseInterface(INTERFACE_NUMBER);
-        await this.device.close();
+        await device.releaseInterface(INTERFACE_NUMBER);
+      } catch {
+        // may reject while a transferIn is pending; close() aborts it anyway
+      }
+      try {
+        await device.close();
       } catch {
         // ignore cleanup errors
       }
-      this.device = null;
       this.receiveBuffer.clear();
       this.pendingReads = [];
       this.blobCache.clear();
@@ -535,20 +540,24 @@ class DeviceService {
     const fileNameBytes = new TextEncoder().encode(fileName);
     let seqId: number;
     let streamCmd: number;
+    let streamBody: Uint8Array;
 
     try {
-      seqId = await this.sendCommand(COMMANDS.TRANSFER_FILE, fileNameBytes);
+      streamBody = fileNameBytes;
+      seqId = await this.sendCommand(COMMANDS.TRANSFER_FILE, streamBody);
       streamCmd = COMMANDS.TRANSFER_FILE;
       console.log('[OpenHiNotes] Using TRANSFER_FILE (cmd 5) protocol');
     } catch {
       // Fall back to GET_FILE_BLOCK (cmd 13) with 4-byte size prefix
-      const body = new Uint8Array(4 + fileNameBytes.length);
-      writeU32BE(body, 0, fileSize);
-      body.set(fileNameBytes, 4);
-      seqId = await this.sendCommand(COMMANDS.GET_FILE_BLOCK, body);
+      streamBody = new Uint8Array(4 + fileNameBytes.length);
+      writeU32BE(streamBody, 0, fileSize);
+      streamBody.set(fileNameBytes, 4);
+      seqId = await this.sendCommand(COMMANDS.GET_FILE_BLOCK, streamBody);
       streamCmd = COMMANDS.GET_FILE_BLOCK;
       console.log('[OpenHiNotes] Fallback to GET_FILE_BLOCK (cmd 13) protocol');
     }
+    let commandSentAt = Date.now();
+    let commandResent = false;
 
     const chunks: Uint8Array[] = [];
     let received = 0;
@@ -556,6 +565,12 @@ class DeviceService {
     let consecutiveTimeouts = 0;
     const maxConsecutiveTimeouts = 15; // x READ_TIMEOUT_MS of silence before aborting
     const READ_TIMEOUT_MS = 1000;
+    // The device occasionally ignores the first transfer command (observed once
+    // right after connecting: 15 s of silence at 0 bytes, then a manual retry
+    // streamed the whole file). Re-send it ONCE if nothing at all arrived after
+    // this delay. Never re-send once bytes have been received: the device has
+    // no cancel command and overlapping streams would corrupt the file.
+    const RESEND_AFTER_SILENCE_MS = 3000;
     let lastProgressLog = -1; // Track last logged progress percentage
     let lastProgressAt = 0;
 
@@ -569,6 +584,15 @@ class DeviceService {
       if (got < 0) {
         // Timeout or USB error: no data for READ_TIMEOUT_MS
         consecutiveTimeouts++;
+        if (received === 0 && !commandResent && Date.now() - commandSentAt >= RESEND_AFTER_SILENCE_MS) {
+          console.warn('[OpenHiNotes] Download: no data %dms after cmd %d, re-sending once (%d reads pending)',
+            Date.now() - commandSentAt, streamCmd, this.pendingReads.length);
+          commandResent = true;
+          seqId = await this.sendCommand(streamCmd, streamBody);
+          commandSentAt = Date.now();
+          consecutiveTimeouts = 0;
+          continue;
+        }
         if (consecutiveTimeouts % 5 === 0) {
           console.warn('[OpenHiNotes] Download: %ds without data at %d/%d bytes',
             consecutiveTimeouts, received, fileSize);
@@ -721,7 +745,7 @@ class DeviceService {
     const device = this.device;
     if (!device) return Promise.resolve(null);
     return device.transferIn(ENDPOINT_IN, USB_READ_SIZE).then(
-      (result) => {
+      (result: USBInTransferResult) => {
         if (result.status === 'ok' && result.data && result.data.byteLength > 0) {
           // Copy out: the underlying buffer may be reused by WebUSB
           return new Uint8Array(

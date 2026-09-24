@@ -244,6 +244,7 @@ class TranscriptionService:
         status = "unknown"
         last_progress = -1.0
         last_stage = None
+        last_updated_at = None
         seconds_since_change = 0
 
         async with httpx.AsyncClient(timeout=30.0, verify=settings.voxhub_ssl_verify) as client:
@@ -259,6 +260,10 @@ class TranscriptionService:
                 status = status_data.get("status", "unknown")
                 progress = status_data.get("progress", 0)
                 stage = status_data.get("stage", None)
+                # Liveness signal: VoxHub bumps updated_at on every status write,
+                # including heartbeats during phases with no visible progress
+                # (Silero over a long file, pyannote). Older VoxHub: None.
+                updated_at = status_data.get("updated_at")
                 # wordalign pipeline exposes chunk-level sub-progress; surface
                 # it in the stage label so the UI can show "transcribing 7/12".
                 chunks_done = status_data.get("chunks_done")
@@ -270,10 +275,12 @@ class TranscriptionService:
                 await _call_progress(on_progress, status, progress, stage)
 
                 # Reset stale timer on any change
-                if progress != last_progress or stage != last_stage or status != "processing":
+                if (progress != last_progress or stage != last_stage or status != "processing"
+                        or updated_at != last_updated_at):
                     seconds_since_change = 0
                     last_progress = progress
                     last_stage = stage
+                    last_updated_at = updated_at
 
                 if status == "completed":
                     break
