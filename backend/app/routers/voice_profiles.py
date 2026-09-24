@@ -282,3 +282,35 @@ async def admin_rotate_encryption_key(
         "Admin %s triggered key rotation: %s", current_user.email, result
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Retained per-transcription embeddings (admin)
+# ---------------------------------------------------------------------------
+
+@router.get("/admin/transcription-embeddings", status_code=status.HTTP_200_OK)
+async def admin_count_transcription_embeddings(
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """How many per-transcription speaker embeddings are currently retained."""
+    return {
+        "count": await si.count_stored_embeddings(db),
+        "retention_enabled": await si.is_retention_enabled(db),
+    }
+
+
+@router.delete("/admin/transcription-embeddings", status_code=status.HTTP_200_OK)
+async def admin_purge_transcription_embeddings(
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete every retained per-transcription speaker embedding (GDPR purge).
+
+    Voice profiles are untouched. Typically called right after disabling the
+    retention flag.
+    """
+    import logging
+    deleted = await si.purge_stored_embeddings(db)
+    logging.getLogger(__name__).info("Admin %s purged %d retained speaker embeddings", current_user.id, deleted)
+    return {"deleted": deleted}

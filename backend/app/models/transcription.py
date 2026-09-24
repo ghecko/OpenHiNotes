@@ -71,6 +71,16 @@ class Transcription(Base):
     # source recording filenames that were merged into this one. NULL on
     # normal (single-source) transcriptions.
     combined_sources: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Speaker-count hint given by the user at upload, forwarded to VoxHub /
+    # pyannote as num_speakers. NULL = let diarization decide.
+    num_speakers: Mapped[int | None] = mapped_column(nullable=True)
+    # Voice-fingerprint identification results, keyed by diarization label:
+    #   {"SPEAKER_00": {"profile_id": "...", "user_id": "...",
+    #                   "display_name": "Alice", "distance": 0.31,
+    #                   "confidence": 0.69, "status": "auto"|"confirmed"|"rejected"}}
+    # Lets the UI show "auto-identified" badges the user can confirm or reject
+    # instead of silently overwriting the speaker name.
+    speaker_matches: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False

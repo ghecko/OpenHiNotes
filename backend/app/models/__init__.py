@@ -10,9 +10,10 @@ from app.models.resource_share import ResourceShare
 from app.models.oidc_provider import OIDCProvider
 from app.models.user_identity import UserIdentity
 from app.models.notification import Notification
+from app.models.transcription_speaker_embedding import TranscriptionSpeakerEmbedding
 
 __all__ = [
     "User", "Collection", "Transcription", "SummaryTemplate", "Summary",
     "AppSetting", "ChatConversation", "UserGroup", "user_group_members", "ResourceShare",
-    "OIDCProvider", "UserIdentity", "Notification",
+    "OIDCProvider", "UserIdentity", "Notification", "TranscriptionSpeakerEmbedding",
 ]

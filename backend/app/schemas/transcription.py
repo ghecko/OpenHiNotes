@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 import uuid
 from datetime import datetime
 
@@ -9,6 +9,54 @@ class TranscriptionCreate(BaseModel):
     language: Optional[str] = None
     auto_summarize: bool = False
     template_id: Optional[uuid.UUID] = None
+    num_speakers: Optional[int] = None
+
+
+class SpeakerMerge(BaseModel):
+    """Merge every segment of `source` into speaker `target` (fixes pyannote
+    over-segmentation of one person into two labels)."""
+    source: str
+    target: str
+
+
+class SpeakerMatchDecision(BaseModel):
+    """User verdict on an automatic voice-fingerprint identification."""
+    action: Literal["confirm", "reject"]
+    # On confirm: also enrol this recording's voice as a new profile sample
+    # for the matched user (requires the audio to still be available).
+    enroll: bool = False
+
+
+class SpeakerEnrollRequest(BaseModel):
+    """Save one diarized speaker of a transcription as a voice profile."""
+    # Target user. Omitted = the current user. Another user requires admin.
+    user_id: Optional[uuid.UUID] = None
+    label: Optional[str] = None
+
+
+class SpeakerEnrollResponse(BaseModel):
+    profile_id: uuid.UUID
+    user_id: uuid.UUID
+    label: str
+    source: Literal["stored", "audio"]
+
+
+class VoiceSourcesResponse(BaseModel):
+    """What can be used to enrol each speaker of a transcription."""
+    fingerprinting_enabled: bool
+    retention_enabled: bool
+    audio_available: bool
+    # label -> "stored" | "audio" | null
+    sources: Dict[str, Optional[Literal["stored", "audio"]]]
+
+
+class SpeakerMatchInfo(BaseModel):
+    profile_id: Optional[uuid.UUID] = None
+    user_id: Optional[uuid.UUID] = None
+    display_name: Optional[str] = None
+    distance: Optional[float] = None
+    confidence: Optional[float] = None
+    status: Literal["auto", "confirmed", "rejected", "unmatched"] = "auto"
 
 
 class SpeakersUpdate(BaseModel):
@@ -32,6 +80,13 @@ class SegmentSpeakerReassign(BaseModel):
     new_speaker: str
 
 
+class SegmentSplit(BaseModel):
+    """Split a segment before word `word_index` (requires word timestamps)."""
+    segment_index: int
+    word_index: int
+    new_speaker: Optional[str] = None
+
+
 class SegmentTextUpdate(BaseModel):
     """Schema for updating the text of a specific segment."""
     segment_index: int
@@ -45,12 +100,22 @@ class TranscriptFindReplace(BaseModel):
     case_sensitive: bool = False
 
 
+class WordResponse(BaseModel):
+    """One aligned word (wordalign pipeline)."""
+    word: str
+    start: float
+    end: float
+    score: Optional[float] = None
+
+
 class SegmentResponse(BaseModel):
     """Schema for a transcription segment."""
     start: float
     end: float
     text: str
     speaker: Optional[str] = None
+    confidence: Optional[float] = None
+    words: Optional[List[WordResponse]] = None
 
 
 class TranscriptionResponse(BaseModel):
@@ -83,6 +148,8 @@ class TranscriptionResponse(BaseModel):
     is_pinned: bool = False
     failed_audio_expires_at: Optional[datetime] = None
     combined_sources: Optional[List[str]] = None
+    num_speakers: Optional[int] = None
+    speaker_matches: Optional[Dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
     permission_level: Optional[str] = None

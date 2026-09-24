@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { TranscriptionViewer } from '@/components/TranscriptionViewer';
 import { SpeakerEditor } from '@/components/SpeakerEditor';
+import { SpeakerTimeline } from '@/components/SpeakerTimeline';
+import { buildSpeakerColorMap, FALLBACK_COLOR } from '@/utils/speakerColors';
 import { ChatPanel } from '@/components/ChatPanel';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { summariesApi } from '@/api/summaries';
@@ -11,13 +13,15 @@ import { collectionsApi } from '@/api/collections';
 import { useAppStore } from '@/store/useAppStore';
 import { useDeviceConnection } from '@/hooks/useDeviceConnection';
 import { deviceService } from '@/services/deviceService';
-import { Transcription, Summary, SummaryTemplate, Collection } from '@/types';
+import { Transcription, Summary, SummaryTemplate, Collection, VoiceSources } from '@/types';
+import { useAuthStore } from '@/store/useAuthStore';
 import { format } from 'date-fns';
 import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, Play, Pause, Volume2, Disc3, Share2, Lock, Eye, ChevronDown, Pin } from 'lucide-react';
 import { ShareModal } from '@/components/ShareModal';
 import { InteractiveMarkdown } from '@/components/InteractiveMarkdown';
 import { TemplateSelector } from '@/components/TemplateSelector';
 import { formatMarkdown } from '@/utils/formatMarkdown';
+import { parseServerDate } from '@/utils/dates';
 
 function SummaryModal({
   summary,
@@ -58,7 +62,7 @@ function SummaryModal({
           <div>
             <p className="text-sm font-semibold text-gray-900 dark:text-white">Summary</p>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              {format(new Date(summary.created_at), 'MMM d, yyyy HH:mm')} &bull; {summary.model_used}
+              {format(parseServerDate(summary.created_at), 'MMM d, yyyy HH:mm')} &bull; {summary.model_used}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -128,6 +132,10 @@ export function TranscriptionDetail() {
   const [isSavingNotes, setIsSavingNotes] = useState(false);
   const [notes, setNotes] = useState('');
   const [showSpeakerEditor, setShowSpeakerEditor] = useState(false);
+  const [matchError, setMatchError] = useState<string | null>(null);
+  const [voiceSources, setVoiceSources] = useState<VoiceSources | null>(null);
+  const authUser = useAuthStore((s) => s.user);
+  const [timelineHover, setTimelineHover] = useState<string | null>(null);
   const [showCustomPrompt, setShowCustomPrompt] = useState(false);
   const [customPrompt, setCustomPrompt] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
@@ -416,6 +424,65 @@ export function TranscriptionDetail() {
       console.error('Failed to save speakers:', error);
     }
   };
+
+  const handleMergeSpeakers = async (source: string, target: string) => {
+    if (!transcription) return;
+    try {
+      const updated = await transcriptionsApi.mergeSpeakers(transcription.id, source, target);
+      setTranscription(updated);
+    } catch (error) {
+      console.error('Failed to merge speakers:', error);
+    }
+  };
+
+  const handleMatchDecision = async (label: string, action: 'confirm' | 'reject', enroll: boolean) => {
+    if (!transcription) return;
+    setMatchError(null);
+    try {
+      const updated = await transcriptionsApi.decideSpeakerMatch(transcription.id, label, action, enroll);
+      setTranscription(updated);
+    } catch (error: any) {
+      console.error('Failed to record speaker match decision:', error);
+      setMatchError(error?.message || 'Could not save the decision');
+      // The verdict itself may have been saved even if enrolment failed: refresh.
+      try { setTranscription(await transcriptionsApi.getTranscription(transcription.id)); } catch { /* ignore */ }
+    }
+  };
+
+  const loadVoiceSources = useCallback(async (id: string) => {
+    try {
+      setVoiceSources(await transcriptionsApi.getVoiceSources(id));
+    } catch {
+      setVoiceSources(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (transcription?.status === 'completed' && transcription.recording_type !== 'whisper' && showSpeakerEditor) {
+      loadVoiceSources(transcription.id);
+    }
+  }, [transcription?.id, transcription?.status, transcription?.recording_type, showSpeakerEditor, loadVoiceSources]);
+
+  const handleEnrollSpeaker = async (speakerLabel: string, userId: string | null, profileLabel: string) => {
+    if (!transcription) return;
+    await transcriptionsApi.enrollSpeaker(transcription.id, speakerLabel, { userId, label: profileLabel });
+    setTranscription(await transcriptionsApi.getTranscription(transcription.id));
+    await loadVoiceSources(transcription.id);
+  };
+
+  const handleSplitSegment = async (segmentIndex: number, wordIndex: number) => {
+    if (!transcription) return;
+    try {
+      const updated = await transcriptionsApi.splitSegment(transcription.id, segmentIndex, wordIndex);
+      setTranscription(updated);
+    } catch (error) {
+      console.error('Failed to split segment:', error);
+    }
+  };
+
+  const speakerColorMap = buildSpeakerColorMap(transcription?.segments || []);
+  const colorForSpeaker = (spk: string | undefined) =>
+    (spk && speakerColorMap.get(spk)) || FALLBACK_COLOR;
 
   const handleGenerateSummary = async () => {
     if (!transcription) return;
@@ -726,7 +793,7 @@ export function TranscriptionDetail() {
     const title = transcription?.title || transcription?.original_filename || 'Summary';
     const cleanTitle = title.replace(/\.[^/.]+$/, '');
     const markdownText = `# Summary - ${title}
-Date: ${format(new Date(summary.created_at), 'MMM d, yyyy HH:mm')}
+Date: ${format(parseServerDate(summary.created_at), 'MMM d, yyyy HH:mm')}
 Model: ${summary.model_used}
 
 ${summary.content}
@@ -746,7 +813,7 @@ ${summary.content}
     const htmlContent = `
       <div class="container">
         <h1>Summary - ${title}</h1>
-        <div class="meta">${format(new Date(summary.created_at), 'MMM d, yyyy HH:mm')} &bull; ${summary.model_used}</div>
+        <div class="meta">${format(parseServerDate(summary.created_at), 'MMM d, yyyy HH:mm')} &bull; ${summary.model_used}</div>
         <div class="markdown-content">${formatMarkdown(summary.content)}</div>
       </div>
     `;
@@ -1270,6 +1337,18 @@ ${summary.content}
                     </span>
                   )}
                 </div>
+                {!isWhisper && (
+                  <SpeakerTimeline
+                    segments={transcription.segments}
+                    speakers={transcription.speakers}
+                    duration={audioDuration || transcription.audio_duration}
+                    currentTime={playbackTime}
+                    onSeek={handleSeekAudio}
+                    colorFor={colorForSpeaker}
+                    highlightSpeaker={timelineHover}
+                    onHoverSpeaker={setTimelineHover}
+                  />
+                )}
               </div>
             ) : (
               <div className="px-5 py-4 space-y-2">
@@ -1386,6 +1465,10 @@ ${summary.content}
             transcription={transcription}
             currentTime={audioBlob ? playbackTime : undefined}
             onSeek={audioBlob ? handleSeekAudio : undefined}
+            onSpeakerMerge={canEdit ? handleMergeSpeakers : undefined}
+            onSegmentSplit={canEdit ? handleSplitSegment : undefined}
+            onMatchDecision={canEdit ? handleMatchDecision : undefined}
+            canEnroll={!!transcription.audio_available}
             onSpeakerUpdate={canEdit ? async (speakerId, newName) => {
               if (!transcription) return;
               const updatedSpeakers = { ...transcription.speakers, [speakerId]: newName };
@@ -1437,11 +1520,19 @@ ${summary.content}
 
         {transcription.status === 'completed' && (
           <>
+            {matchError && (
+              <p className="text-sm text-red-600 dark:text-red-400">{matchError}</p>
+            )}
             {!isWhisper && (showSpeakerEditor ? (
               <SpeakerEditor
                 speakers={transcription.speakers}
                 segments={transcription.segments}
                 onSave={handleSaveSpeakers}
+                onMerge={canEdit ? handleMergeSpeakers : undefined}
+                speakerMatches={transcription.speaker_matches}
+                voiceSources={voiceSources}
+                onEnroll={handleEnrollSpeaker}
+                canEnrollOthers={authUser?.role === 'admin'}
               />
             ) : (
               <button
@@ -1549,7 +1640,7 @@ ${summary.content}
                     >
                       <div className="flex items-start justify-between mb-2">
                         <p className="text-xs text-gray-500 dark:text-gray-400">
-                          {format(new Date(summary.created_at), 'MMM d, yyyy HH:mm')}
+                          {format(parseServerDate(summary.created_at), 'MMM d, yyyy HH:mm')}
                         </p>
                         <div className="flex items-center gap-1">
                           <button

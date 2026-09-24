@@ -31,6 +31,12 @@ from app.schemas.transcription import (
     SegmentSpeakerReassign,
     SegmentTextUpdate,
     TranscriptFindReplace,
+    SpeakerMerge,
+    SpeakerMatchDecision,
+    SegmentSplit,
+    SpeakerEnrollRequest,
+    SpeakerEnrollResponse,
+    VoiceSourcesResponse,
 )
 from app.schemas.search import (
     BatchIdsRequest,
@@ -500,12 +506,14 @@ async def queue_transcription(
     auto_summarize: bool = Form(False),
     template_id: uuid.UUID = Form(None),
     recording_type: str = Form(None),
+    num_speakers: Optional[int] = Form(None, ge=1, le=50),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload audio file and add transcription to the background queue.
     Returns immediately with the transcription ID and queue position.
-    Optional recording_type overrides auto-detection (for web uploads)."""
+    Optional recording_type overrides auto-detection (for web uploads).
+    Optional num_speakers is forwarded to the diarizer as an exact count."""
     # Enforce admin keep_audio setting
     if keep_audio:
         from app.models.app_settings import AppSetting
@@ -543,6 +551,7 @@ async def queue_transcription(
         original_filename=original_filename,
         recording_type=rec_type,
         language=language,
+        num_speakers=num_speakers if rec_type != RT.whisper else None,
         status=TranscriptionStatus.pending,
         keep_audio=keep_audio,
         audio_available=True,
@@ -966,6 +975,368 @@ async def reassign_segment_speaker(
     return transcription
 
 
+@router.patch("/{transcription_id}/speakers/merge", response_model=TranscriptionResponse)
+async def merge_speakers(
+    transcription_id: uuid.UUID,
+    merge: SpeakerMerge,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Merge speaker `source` into `target`.
+
+    Every segment labelled `source` is relabelled `target`; `source` is
+    removed from the speakers dict and from the identification results. This
+    is the fix for pyannote's most common error (one person split into two
+    labels), which per-segment reassignment makes tedious.
+    """
+    transcription = await TranscriptionService.get_transcription(db, transcription_id)
+    if not transcription:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcription not found")
+
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.transcription, transcription_id, "write"
+    )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to update this transcription",
+        )
+
+    source, target = merge.source.strip(), merge.target.strip()
+    if not source or not target or source == target:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="source and target must differ")
+
+    segments = list(transcription.segments or [])
+    labels = {seg.get("speaker") for seg in segments}
+    if source not in labels:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Speaker {source} not found")
+    if target not in labels:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Speaker {target} not found")
+
+    merged = []
+    for seg in segments:
+        if seg.get("speaker") == source:
+            seg = {**seg, "speaker": target}
+        merged.append(seg)
+
+    # Adjacent segments of the now-same speaker with a short gap read better
+    # as one turn; keep words in order when both carry them.
+    compacted = []
+    for seg in merged:
+        prev = compacted[-1] if compacted else None
+        if (
+            prev is not None
+            and prev.get("speaker") == target
+            and seg.get("speaker") == target
+            and seg.get("start") is not None and prev.get("end") is not None
+            and 0 <= float(seg["start"]) - float(prev["end"]) < 1.0
+        ):
+            joined = {**prev, "end": seg.get("end", prev.get("end")),
+                      "text": f"{prev.get('text', '').rstrip()} {seg.get('text', '').lstrip()}".strip()}
+            if prev.get("words") or seg.get("words"):
+                joined["words"] = list(prev.get("words") or []) + list(seg.get("words") or [])
+            if prev.get("confidence") is not None and seg.get("confidence") is not None:
+                joined["confidence"] = round((prev["confidence"] + seg["confidence"]) / 2, 3)
+            compacted[-1] = joined
+        else:
+            compacted.append(seg)
+
+    speakers = dict(transcription.speakers or {})
+    speakers.pop(source, None)
+    speakers.setdefault(target, target)
+    matches = dict(transcription.speaker_matches or {})
+    matches.pop(source, None)
+
+    transcription.segments = compacted
+    transcription.speakers = speakers
+    transcription.speaker_matches = matches or None
+    transcription.text = " ".join(
+        seg.get("text", "").strip() for seg in compacted if seg.get("text", "").strip()
+    )
+    await db.commit()
+    await db.refresh(transcription)
+    return transcription
+
+
+@router.post("/{transcription_id}/speakers/{speaker_label}/match", response_model=TranscriptionResponse)
+async def decide_speaker_match(
+    transcription_id: uuid.UUID,
+    speaker_label: str,
+    decision: SpeakerMatchDecision,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Confirm or reject an automatic voice-fingerprint identification.
+
+    * ``reject`` restores the generic label as display name and marks the
+      match ``rejected`` (it will not be suggested again for this recording).
+    * ``confirm`` marks it ``confirmed``. With ``enroll=true`` and the audio
+      still available, this speaker's own segments are cut out of the
+      recording and enrolled as an additional voice profile for the matched
+      user, so identification improves with every confirmed meeting.
+    """
+    transcription = await TranscriptionService.get_transcription(db, transcription_id)
+    if not transcription:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcription not found")
+
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.transcription, transcription_id, "write"
+    )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to update this transcription",
+        )
+
+    matches = dict(transcription.speaker_matches or {})
+    match = dict(matches.get(speaker_label) or {})
+    if not match or not match.get("user_id"):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No automatic identification recorded for {speaker_label}",
+        )
+
+    speakers = dict(transcription.speakers or {})
+    if decision.action == "reject":
+        match["status"] = "rejected"
+        if speakers.get(speaker_label) == match.get("display_name"):
+            speakers[speaker_label] = speaker_label
+    else:
+        match["status"] = "confirmed"
+        if match.get("display_name"):
+            speakers[speaker_label] = match["display_name"]
+
+    # Persist the verdict first: a failed enrolment must not undo it.
+    matches[speaker_label] = match
+    transcription.speaker_matches = matches
+    transcription.speakers = speakers
+    await db.commit()
+
+    if decision.action == "confirm" and decision.enroll:
+        from app.services import speaker_identification as si
+        audio_path = f"{settings.uploads_directory}/{transcription.user_id}/{transcription.filename}"
+        try:
+            embedding, source = await si.obtain_speaker_embedding(
+                db, transcription, speaker_label, audio_path
+            )
+            label = f"From: {transcription.title or transcription.original_filename}"[:255]
+            await si.create_voice_profile(
+                db, user_id=uuid.UUID(match["user_id"]), embedding=embedding, label=label
+            )
+            logger.info(
+                "Enrolled %s (%s) from transcription %s for user %s",
+                speaker_label, source, transcription_id, match["user_id"],
+            )
+            matches[speaker_label] = {**match, "enrolled_as": label}
+            transcription.speaker_matches = dict(matches)
+            await db.commit()
+        except LookupError as e:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Identification confirmed, but: {e}")
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Identification confirmed, but enrolling the voice sample failed: {e}",
+            )
+
+    await db.refresh(transcription)
+    return transcription
+
+
+@router.get("/{transcription_id}/speakers/voice-sources", response_model=VoiceSourcesResponse)
+async def get_voice_sources(
+    transcription_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """For each speaker: can it be saved as a voice profile, and from what?
+
+    ``stored`` = a retained embedding exists (works without audio),
+    ``audio`` = the recording is still on the server and can be cut,
+    ``null`` = nothing usable.
+    """
+    transcription = await TranscriptionService.get_transcription(db, transcription_id)
+    if not transcription:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcription not found")
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.transcription, transcription_id, "read"
+    )
+    if not has_access:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    from app.services import speaker_identification as si
+    fingerprinting = await si.is_feature_enabled(db)
+    retention = await si.is_retention_enabled(db)
+    stored = set(await si.list_stored_embedding_labels(db, transcription_id)) if fingerprinting else set()
+    audio_path = f"{settings.uploads_directory}/{transcription.user_id}/{transcription.filename}"
+    audio_ok = bool(transcription.audio_available) and os.path.exists(audio_path)
+
+    labels = {seg.get("speaker") for seg in (transcription.segments or []) if seg.get("speaker")}
+    sources = {}
+    for label in sorted(labels):
+        if not fingerprinting:
+            sources[label] = None
+        elif label in stored:
+            sources[label] = "stored"
+        elif audio_ok:
+            sources[label] = "audio"
+        else:
+            sources[label] = None
+    return VoiceSourcesResponse(
+        fingerprinting_enabled=fingerprinting,
+        retention_enabled=retention,
+        audio_available=audio_ok,
+        sources=sources,
+    )
+
+
+@router.post("/{transcription_id}/speakers/{speaker_label}/enroll", response_model=SpeakerEnrollResponse)
+async def enroll_speaker_from_transcription(
+    transcription_id: uuid.UUID,
+    speaker_label: str,
+    body: SpeakerEnrollRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save one speaker of this transcription as a voice profile.
+
+    Uses the retained embedding when the admin enabled retention, otherwise
+    cuts the speaker's segments out of the audio (if still available) and
+    asks VoxHub for an embedding. Enrolling yourself needs read access to the
+    transcription; enrolling another user needs the admin role.
+    """
+    transcription = await TranscriptionService.get_transcription(db, transcription_id)
+    if not transcription:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcription not found")
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.transcription, transcription_id, "read"
+    )
+    if not has_access:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    from app.services import speaker_identification as si
+    if not await si.is_feature_enabled(db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Voice fingerprinting is disabled by the administrator")
+
+    target_user_id = body.user_id or current_user.id
+    if target_user_id != current_user.id and current_user.role != UserRole.admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only an administrator can enrol a voice for another user",
+        )
+    target = (await db.execute(select(User).where(User.id == target_user_id, User.is_active == True))).scalars().first()  # noqa: E712
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target user not found")
+
+    labels = {seg.get("speaker") for seg in (transcription.segments or [])}
+    if speaker_label not in labels:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Speaker {speaker_label} not found")
+
+    audio_path = f"{settings.uploads_directory}/{transcription.user_id}/{transcription.filename}"
+    try:
+        embedding, source = await si.obtain_speaker_embedding(db, transcription, speaker_label, audio_path)
+    except LookupError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Embedding extraction failed: {e}")
+
+    label = (body.label or f"From: {transcription.title or transcription.original_filename}")[:255]
+    profile = await si.create_voice_profile(db, user_id=target_user_id, embedding=embedding, label=label)
+
+    # Reflect it in the identification metadata so the UI shows a confirmed badge.
+    matches = dict(transcription.speaker_matches or {})
+    matches[speaker_label] = {
+        **(matches.get(speaker_label) or {}),
+        "profile_id": str(profile.id),
+        "user_id": str(target_user_id),
+        "display_name": target.display_name or target.email,
+        "status": "confirmed",
+        "enrolled_as": label,
+    }
+    speakers = dict(transcription.speakers or {})
+    if speakers.get(speaker_label, speaker_label) == speaker_label:
+        speakers[speaker_label] = target.display_name or target.email
+    transcription.speaker_matches = matches
+    transcription.speakers = speakers
+    await db.commit()
+
+    logger.info("Enrolled %s from transcription %s (%s) for user %s", speaker_label, transcription_id, source, target_user_id)
+    return SpeakerEnrollResponse(profile_id=profile.id, user_id=target_user_id, label=label, source=source)
+
+
+@router.patch("/{transcription_id}/segments/split", response_model=TranscriptionResponse)
+async def split_segment(
+    transcription_id: uuid.UUID,
+    split: SegmentSplit,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Split a segment in two before word `word_index` (needs word timestamps).
+
+    The second half takes `new_speaker` when given, otherwise it keeps the
+    original speaker so the user can reassign it afterwards. This is how a
+    diarization error inside one segment ("...d'accord. Alors moi je pense"
+    where the second sentence is someone else) gets fixed precisely.
+    """
+    transcription = await TranscriptionService.get_transcription(db, transcription_id)
+    if not transcription:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcription not found")
+
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.transcription, transcription_id, "write"
+    )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to update this transcription",
+        )
+
+    segments = list(transcription.segments or [])
+    if split.segment_index < 0 or split.segment_index >= len(segments):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="segment_index out of range")
+    seg = segments[split.segment_index]
+    words = list(seg.get("words") or [])
+    if len(words) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This segment has no word timestamps to split on",
+        )
+    if split.word_index <= 0 or split.word_index >= len(words):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="word_index out of range")
+
+    left_words, right_words = words[:split.word_index], words[split.word_index:]
+
+    def _conf(ws):
+        scores = [w.get("score") for w in ws if w.get("score")]
+        return round(sum(scores) / len(scores), 3) if scores else seg.get("confidence")
+
+    left = {
+        **seg,
+        "end": left_words[-1]["end"],
+        "text": " ".join(w["word"] for w in left_words),
+        "words": left_words,
+        "confidence": _conf(left_words),
+    }
+    right = {
+        **seg,
+        "start": right_words[0]["start"],
+        "text": " ".join(w["word"] for w in right_words),
+        "words": right_words,
+        "confidence": _conf(right_words),
+        "speaker": split.new_speaker or seg.get("speaker"),
+    }
+    segments[split.segment_index:split.segment_index + 1] = [left, right]
+
+    speakers = dict(transcription.speakers or {})
+    if split.new_speaker:
+        speakers.setdefault(split.new_speaker, split.new_speaker)
+
+    transcription.segments = segments
+    transcription.speakers = speakers
+    await db.commit()
+    await db.refresh(transcription)
+    return transcription
+
+
 @router.patch("/{transcription_id}/segments/update-text", response_model=TranscriptionResponse)
 async def update_segment_text(
     transcription_id: uuid.UUID,
@@ -998,7 +1369,13 @@ async def update_segment_text(
             detail=f"Segment index {update.segment_index} out of range (0-{len(segments) - 1})",
         )
 
-    segments[update.segment_index] = {**segments[update.segment_index], "text": update.text}
+    seg = segments[update.segment_index]
+    updated = {**seg, "text": update.text}
+    if update.text.strip() != (seg.get("text") or "").strip():
+        # Edited text no longer matches the aligned words; drop them rather
+        # than show stale per-word timestamps.
+        updated.pop("words", None)
+    segments[update.segment_index] = updated
     transcription.segments = segments
 
     # Rebuild the full text from all segments
@@ -1058,7 +1435,9 @@ async def find_and_replace(
             new_text = pattern.sub(payload.replace, text)
 
         if count > 0:
-            segments[i] = {**seg, "text": new_text}
+            # The edited text no longer matches the aligned words: drop them
+            # rather than show stale per-word timestamps.
+            segments[i] = {k: v for k, v in {**seg, "text": new_text}.items() if k != "words"}
             total_replacements += count
 
     if total_replacements == 0:
@@ -1351,6 +1730,7 @@ async def queue_combined_transcription(
     auto_summarize: bool = Form(False),
     template_id: uuid.UUID = Form(None),
     recording_type: str = Form(None),
+    num_speakers: Optional[int] = Form(None, ge=1, le=50),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1454,6 +1834,7 @@ async def queue_combined_transcription(
         title=display_title,
         recording_type=rec_type,
         language=language,
+        num_speakers=num_speakers if rec_type != RT.whisper else None,
         status=TranscriptionStatus.pending,
         keep_audio=keep_audio,
         audio_available=True,

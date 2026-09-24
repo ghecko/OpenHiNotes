@@ -74,15 +74,46 @@ class TranscriptionService:
                 "api_key": await get_effective_setting(db, "voxhub_api_key"),
                 "model": await get_effective_setting(db, "voxhub_model"),
                 "job_mode": (await get_effective_setting(db, "voxhub_job_mode")).lower() == "true",
-                "vad_mode": await get_effective_setting(db, "voxhub_vad_mode"),
+                "vad_mode": (await get_effective_setting(db, "voxhub_vad_mode")).strip(),
+                "pipeline": (await get_effective_setting(db, "voxhub_pipeline")).strip(),
             }
         return {
             "api_url": settings.voxhub_api_url,
             "api_key": settings.voxhub_api_key,
             "model": settings.voxhub_model,
             "job_mode": settings.voxhub_job_mode.lower() == "true",
-            "vad_mode": settings.voxhub_vad_mode,
+            "vad_mode": settings.voxhub_vad_mode.strip(),
+            "pipeline": settings.voxhub_pipeline.strip(),
         }
+
+    @staticmethod
+    def _build_request_data(
+        cfg: Dict[str, Any],
+        language: Optional[str],
+        diarize: bool,
+        num_speakers: Optional[int],
+    ) -> Dict[str, str]:
+        """Form fields shared by the sync and job endpoints.
+
+        ``vad_mode`` / ``pipeline`` are only sent when the admin set them, so
+        VoxHub's own defaults apply otherwise (sending ``vad_mode=silero``
+        with ``diarize=true`` yields a single SPEAKER_00 on the legacy
+        pipeline). ``num_speakers`` is the user's hint from the upload form.
+        """
+        data = {
+            "model": cfg["model"],
+            "diarize": "true" if diarize else "false",
+            "return_speaker_embeddings": "true" if diarize else "false",
+        }
+        if cfg.get("vad_mode"):
+            data["vad_mode"] = cfg["vad_mode"]
+        if cfg.get("pipeline"):
+            data["pipeline"] = cfg["pipeline"]
+        if language:
+            data["language"] = language
+        if num_speakers and diarize:
+            data["num_speakers"] = str(int(num_speakers))
+        return data
 
     @staticmethod
     def _build_auth_headers(api_key: str) -> Dict[str, str]:
@@ -99,6 +130,7 @@ class TranscriptionService:
         db: Optional[AsyncSession] = None,
         on_progress: Optional[Callable[[str, float, Optional[str]], None]] = None,
         on_job_submitted: Optional[Callable[[str], Any]] = None,
+        num_speakers: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Call VoxHub/WhisperX API to transcribe audio file.
 
@@ -109,6 +141,7 @@ class TranscriptionService:
         Args:
             diarize: whether to run speaker diarization (False for whisper memos).
             on_job_submitted: optional callback(job_id) called after job is submitted in job mode.
+            num_speakers: optional exact speaker count hint forwarded to pyannote.
         """
         cfg = await TranscriptionService._resolve_transcription_settings(db)
         headers = TranscriptionService._build_auth_headers(cfg["api_key"])
@@ -116,11 +149,13 @@ class TranscriptionService:
         if cfg["job_mode"]:
             return await TranscriptionService._transcribe_job_mode(
                 file_path, language, cfg, headers,
-                diarize=diarize,
+                diarize=diarize, num_speakers=num_speakers,
                 on_progress=on_progress, on_job_submitted=on_job_submitted,
             )
         else:
-            return await TranscriptionService._transcribe_normal_mode(file_path, language, cfg, headers, diarize=diarize)
+            return await TranscriptionService._transcribe_normal_mode(
+                file_path, language, cfg, headers, diarize=diarize, num_speakers=num_speakers,
+            )
 
     @staticmethod
     async def _transcribe_normal_mode(
@@ -129,22 +164,18 @@ class TranscriptionService:
         cfg: Dict[str, Any],
         headers: Dict[str, str],
         diarize: bool = True,
+        num_speakers: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Synchronous transcription — single POST, wait for response."""
         url = f"{cfg['api_url']}/v1/audio/transcriptions"
 
         with open(file_path, "rb") as f:
             files = {"file": (Path(file_path).name, f, "audio/mpeg")}
-            vad_mode = cfg.get("vad_mode") or "silero"
-            data = {
-                "model": cfg["model"],
-                "response_format": "verbose_json",
-                "diarize": "true" if diarize else "false",
-                "vad_mode": vad_mode,
-                "return_speaker_embeddings": "true" if diarize else "false",
-            }
-            if language:
-                data["language"] = language
+            data = TranscriptionService._build_request_data(cfg, language, diarize, num_speakers)
+            data["response_format"] = "verbose_json"
+            # Word timestamps (wordalign pipeline): karaoke highlight + word-level
+            # speaker splits in the UI. Harmless on the legacy pipeline.
+            data["timestamp_granularities[]"] = "word"
 
             async with httpx.AsyncClient(timeout=300.0, verify=settings.voxhub_ssl_verify) as client:
                 response = await client.post(url, files=files, data=data, headers=headers)
@@ -161,6 +192,7 @@ class TranscriptionService:
         cfg: Dict[str, Any],
         headers: Dict[str, str],
         diarize: bool = True,
+        num_speakers: Optional[int] = None,
         on_progress: Optional[Callable[[str, float, Optional[str]], None]] = None,
         on_job_submitted: Optional[Callable[[str], Any]] = None,
     ) -> Dict[str, Any]:
@@ -168,6 +200,7 @@ class TranscriptionService:
 
         Args:
             diarize: whether to run speaker diarization.
+            num_speakers: optional exact speaker count hint forwarded to pyannote.
             on_progress: optional callback(status, progress_percent) called on each poll.
             on_job_submitted: optional callback(job_id) called after job is submitted.
         """
@@ -181,15 +214,7 @@ class TranscriptionService:
 
         with open(file_path, "rb") as f:
             files = {"file": (Path(file_path).name, f, "audio/mpeg")}
-            vad_mode = cfg.get("vad_mode") or "silero"
-            data = {
-                "model": cfg["model"],
-                "diarize": "true" if diarize else "false",
-                "vad_mode": vad_mode,
-                "return_speaker_embeddings": "true" if diarize else "false",
-            }
-            if language:
-                data["language"] = language
+            data = TranscriptionService._build_request_data(cfg, language, diarize, num_speakers)
 
             async with httpx.AsyncClient(timeout=60.0, verify=settings.voxhub_ssl_verify) as client:
                 response = await client.post(submit_url, files=files, data=data, headers=headers)
@@ -234,6 +259,12 @@ class TranscriptionService:
                 status = status_data.get("status", "unknown")
                 progress = status_data.get("progress", 0)
                 stage = status_data.get("stage", None)
+                # wordalign pipeline exposes chunk-level sub-progress; surface
+                # it in the stage label so the UI can show "transcribing 7/12".
+                chunks_done = status_data.get("chunks_done")
+                chunks_total = status_data.get("chunks_total")
+                if stage == "transcribing" and chunks_done is not None and chunks_total:
+                    stage = f"transcribing {chunks_done}/{chunks_total}"
                 logger.info("VoxHub Job %s: status=%s, progress=%.1f%%, stage=%s", job_id, status, progress, stage)
 
                 await _call_progress(on_progress, status, progress, stage)
@@ -261,7 +292,7 @@ class TranscriptionService:
         async with httpx.AsyncClient(timeout=30.0, verify=settings.voxhub_ssl_verify) as client:
             result_resp = await client.get(
                 result_url,
-                params={"response_format": "verbose_json"},
+                params={"response_format": "verbose_json", "words": "true"},
                 headers=headers,
             )
 
@@ -315,18 +346,34 @@ class TranscriptionService:
         and optionally speaker_embeddings (if VoxHub returned them)."""
         text = response.get("text", "")
 
-        # Parse segments
+        # Parse segments. `confidence` and `words` are VoxHub wordalign
+        # extensions (absent on the legacy pipeline / other servers). Word
+        # speakers are dropped: segments already break on speaker change, so
+        # the segment's speaker is authoritative and merges/reassigns stay
+        # one-field updates.
         segments = []
         raw_segments = response.get("segments", [])
         for seg in raw_segments:
-            segments.append(
-                {
-                    "start": seg.get("start"),
-                    "end": seg.get("end"),
-                    "text": seg.get("text", ""),
-                    "speaker": seg.get("speaker", None),
-                }
-            )
+            item = {
+                "start": seg.get("start"),
+                "end": seg.get("end"),
+                "text": seg.get("text", ""),
+                "speaker": seg.get("speaker", None),
+            }
+            if seg.get("confidence") is not None:
+                item["confidence"] = seg["confidence"]
+            if seg.get("words"):
+                item["words"] = [
+                    {
+                        "word": w.get("word", ""),
+                        "start": w.get("start"),
+                        "end": w.get("end"),
+                        "score": w.get("score"),
+                    }
+                    for w in seg["words"]
+                    if w.get("start") is not None and w.get("end") is not None
+                ]
+            segments.append(item)
 
         # Extract speaker list
         speakers = {}
@@ -344,9 +391,14 @@ class TranscriptionService:
             "segments": segments,
             "speakers": speakers,
             "duration": duration,
+            "language": response.get("language") if response.get("language") not in (None, "unknown") else None,
+            "warnings": response.get("warnings") or [],
         }
         if speaker_embeddings:
             result["speaker_embeddings"] = speaker_embeddings
+            result["speaker_embedding_model"] = response.get("speaker_embedding_model")
+        for w in result["warnings"]:
+            logger.warning("VoxHub warning: %s", w)
 
         return result
 
@@ -359,6 +411,7 @@ class TranscriptionService:
         original_filename: str,
         language: Optional[str] = None,
         on_progress: Optional[Callable[[str, float, Optional[str]], None]] = None,
+        num_speakers: Optional[int] = None,
     ) -> Transcription:
         """Create a transcription record and start transcription process."""
         rec_type = detect_recording_type(original_filename)
@@ -368,6 +421,7 @@ class TranscriptionService:
             original_filename=original_filename,
             recording_type=rec_type,
             language=language,
+            num_speakers=num_speakers,
             status=TranscriptionStatus.processing,
         )
         db.add(transcription)
@@ -378,7 +432,8 @@ class TranscriptionService:
         try:
             should_diarize = rec_type != RecordingType.whisper
             voxhub_response = await TranscriptionService.transcribe_with_voxhub(
-                file_path, language=language, diarize=should_diarize, db=db, on_progress=on_progress
+                file_path, language=language, diarize=should_diarize, db=db,
+                on_progress=on_progress, num_speakers=num_speakers,
             )
             parsed = TranscriptionService.parse_voxhub_response(voxhub_response)
 
@@ -386,22 +441,34 @@ class TranscriptionService:
             transcription.segments = parsed["segments"]
             transcription.speakers = parsed["speakers"]
             transcription.audio_duration = parsed["duration"]
+            if parsed.get("language") and not transcription.language:
+                transcription.language = parsed["language"]
             transcription.status = TranscriptionStatus.completed
 
             # Speaker identification: match VoxHub speaker embeddings against known profiles
             speaker_embeddings = parsed.get("speaker_embeddings")
             if speaker_embeddings:
                 try:
-                    from app.services.speaker_identification import match_speakers, apply_speaker_matches
-                    matches = await match_speakers(
-                        db, speaker_embeddings, threshold=settings.speaker_match_threshold
+                    from app.services.speaker_identification import identify_speakers
+                    speakers, matches_info = await identify_speakers(
+                        db, speaker_embeddings, transcription.speakers,
+                        embedding_model=parsed.get("speaker_embedding_model"),
                     )
-                    if matches:
-                        transcription.speakers = apply_speaker_matches(
-                            transcription.speakers, matches
-                        )
+                    transcription.speakers = speakers
+                    transcription.speaker_matches = matches_info
                 except Exception as e:
                     logger.warning("Speaker identification failed (non-fatal): %s", e)
+                try:
+                    from app.services.speaker_identification import (
+                        is_retention_enabled, store_transcription_embeddings,
+                    )
+                    if await is_retention_enabled(db):
+                        await store_transcription_embeddings(
+                            db, transcription.id, speaker_embeddings,
+                            embedding_model=parsed.get("speaker_embedding_model"),
+                        )
+                except Exception as e:
+                    logger.warning("Speaker embedding retention failed (non-fatal): %s", e)
         except Exception as e:
             transcription.status = TranscriptionStatus.failed
             transcription.error_message = str(e)

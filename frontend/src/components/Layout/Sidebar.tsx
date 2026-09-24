@@ -79,17 +79,23 @@ export function Sidebar() {
       <div className="flex items-center justify-between p-4 border-b border-gray-200/60 dark:border-gray-700/40">
         {!sidebarCollapsed || mobileMenuOpen ? (
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-md shadow-primary-500/20">
-              <span className="text-white font-bold text-sm">OH</span>
-            </div>
-            <h1 className="text-lg font-bold bg-gradient-to-r from-primary-600 to-primary-400 dark:from-primary-400 dark:to-primary-300 bg-clip-text text-transparent truncate">
-              OpenHiNotes
+            <img
+              src="/logo-mark.png"
+              alt=""
+              className="flex-shrink-0 w-9 h-9 object-contain select-none"
+              draggable={false}
+            />
+            <h1 className="text-lg font-bold text-gray-900 dark:text-white truncate">
+              Open<span className="text-emerald-500 dark:text-emerald-400">Hi</span>Notes
             </h1>
           </div>
         ) : (
-          <div className="mx-auto w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-md shadow-primary-500/20">
-            <span className="text-white font-bold text-sm">OH</span>
-          </div>
+          <img
+            src="/logo-mark.png"
+            alt="OpenHiNotes"
+            className="mx-auto w-9 h-9 object-contain select-none"
+            draggable={false}
+          />
         )}
         {/* Close button on mobile, collapse toggle on desktop */}
         <button

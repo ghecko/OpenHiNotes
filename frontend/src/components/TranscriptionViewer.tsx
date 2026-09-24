@@ -1,11 +1,20 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Copy, Check, Pencil, ArrowRightLeft, X, Search, Replace } from 'lucide-react';
-import { Transcription } from '@/types';
+import { Copy, Check, Pencil, ArrowRightLeft, X, Search, Replace, GitMerge, Scissors, UserCheck, AlertTriangle } from 'lucide-react';
+import { Transcription, TranscriptionSegment } from '@/types';
+import { FALLBACK_COLOR, getSpeakerColorByIndex } from '@/utils/speakerColors';
 
 interface TranscriptionViewerProps {
   transcription: Transcription;
   onSpeakerUpdate?: (speakerId: string, newName: string) => void;
   onSegmentReassign?: (segmentIndex: number, newSpeaker: string) => void;
+  /** Merge every segment of `source` into speaker `target` */
+  onSpeakerMerge?: (source: string, target: string) => void;
+  /** Split a segment before word `wordIndex` (wordalign transcripts only) */
+  onSegmentSplit?: (segmentIndex: number, wordIndex: number) => void;
+  /** Confirm / reject an automatic voice-fingerprint identification */
+  onMatchDecision?: (speakerLabel: string, action: 'confirm' | 'reject', enroll: boolean) => void;
+  /** Whether "confirm + enrol voice" is possible (audio still available) */
+  canEnroll?: boolean;
   /** Called when user edits a segment's text to fix a mis-transcription */
   onSegmentTextUpdate?: (segmentIndex: number, newText: string) => void;
   /** Called when user performs find-and-replace across all segments */
@@ -16,50 +25,18 @@ interface TranscriptionViewerProps {
   onSeek?: (time: number) => void;
 }
 
-/**
- * A palette of 12 distinct speaker colors.
- * Each entry provides:
- *   - badge: classes for the speaker badge (bg + text)
- *   - border: inline border-left color
- *   - bg: inline subtle background tint
- */
-const SPEAKER_PALETTE = [
-  { badge: 'bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200', border: '#3b82f6', bgLight: 'rgba(59,130,246,0.06)', bgDark: 'rgba(59,130,246,0.10)' },
-  { badge: 'bg-purple-100 dark:bg-purple-900/60 text-purple-800 dark:text-purple-200', border: '#8b5cf6', bgLight: 'rgba(139,92,246,0.06)', bgDark: 'rgba(139,92,246,0.10)' },
-  { badge: 'bg-green-100 dark:bg-green-900/60 text-green-800 dark:text-green-200', border: '#22c55e', bgLight: 'rgba(34,197,94,0.06)', bgDark: 'rgba(34,197,94,0.10)' },
-  { badge: 'bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200', border: '#f59e0b', bgLight: 'rgba(245,158,11,0.06)', bgDark: 'rgba(245,158,11,0.10)' },
-  { badge: 'bg-pink-100 dark:bg-pink-900/60 text-pink-800 dark:text-pink-200', border: '#ec4899', bgLight: 'rgba(236,72,153,0.06)', bgDark: 'rgba(236,72,153,0.10)' },
-  { badge: 'bg-teal-100 dark:bg-teal-900/60 text-teal-800 dark:text-teal-200', border: '#14b8a6', bgLight: 'rgba(20,184,166,0.06)', bgDark: 'rgba(20,184,166,0.10)' },
-  { badge: 'bg-red-100 dark:bg-red-900/60 text-red-800 dark:text-red-200', border: '#ef4444', bgLight: 'rgba(239,68,68,0.06)', bgDark: 'rgba(239,68,68,0.10)' },
-  { badge: 'bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200', border: '#6366f1', bgLight: 'rgba(99,102,241,0.06)', bgDark: 'rgba(99,102,241,0.10)' },
-  { badge: 'bg-cyan-100 dark:bg-cyan-900/60 text-cyan-800 dark:text-cyan-200', border: '#06b6d4', bgLight: 'rgba(6,182,212,0.06)', bgDark: 'rgba(6,182,212,0.10)' },
-  { badge: 'bg-orange-100 dark:bg-orange-900/60 text-orange-800 dark:text-orange-200', border: '#f97316', bgLight: 'rgba(249,115,22,0.06)', bgDark: 'rgba(249,115,22,0.10)' },
-  { badge: 'bg-lime-100 dark:bg-lime-900/60 text-lime-800 dark:text-lime-200', border: '#84cc16', bgLight: 'rgba(132,204,22,0.06)', bgDark: 'rgba(132,204,22,0.10)' },
-  { badge: 'bg-fuchsia-100 dark:bg-fuchsia-900/60 text-fuchsia-800 dark:text-fuchsia-200', border: '#d946ef', bgLight: 'rgba(217,70,239,0.06)', bgDark: 'rgba(217,70,239,0.10)' },
-];
+/** Below this alignment confidence a segment is flagged for review. */
+const LOW_CONFIDENCE = 0.5;
 
-const FALLBACK_COLOR = {
-  badge: 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-300',
-  border: '#6b7280',
-  bgLight: 'rgba(107,114,128,0.06)',
-  bgDark: 'rgba(107,114,128,0.10)',
-};
-
-/**
- * Returns a deterministic color for a speaker based on its sorted position
- * among all speakers in the transcription.
- */
-function getSpeakerColorByIndex(index: number) {
-  return SPEAKER_PALETTE[index % SPEAKER_PALETTE.length];
-}
-
-export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentReassign, onSegmentTextUpdate, onFindReplace, currentTime, onSeek }: TranscriptionViewerProps) {
+export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentReassign, onSpeakerMerge, onSegmentSplit, onMatchDecision, canEnroll, onSegmentTextUpdate, onFindReplace, currentTime, onSeek }: TranscriptionViewerProps) {
   const [copied, setCopied] = useState(false);
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editValue, setEditValue] = useState('');
   const editInputRef = useRef<HTMLInputElement>(null);
   const [reassigningIndex, setReassigningIndex] = useState<number | null>(null);
+  const [mergingIndex, setMergingIndex] = useState<number | null>(null);
+  const [splittingIndex, setSplittingIndex] = useState<number | null>(null);
   const [editingTextIndex, setEditingTextIndex] = useState<number | null>(null);
   const [editTextValue, setEditTextValue] = useState('');
   const editTextRef = useRef<HTMLTextAreaElement>(null);
@@ -91,6 +68,16 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
   const sortedSpeakers = useMemo(() => {
     return Array.from(speakerIndexMap.keys()).sort();
   }, [speakerIndexMap]);
+
+  // First segment index for each speaker: identification badges are shown
+  // there only, so a 40-turn speaker doesn't get 40 confirm buttons.
+  const firstIndexBySpeaker = useMemo(() => {
+    const map = new Map<string, number>();
+    transcription.segments.forEach((seg, i) => {
+      if (seg.speaker && !map.has(seg.speaker)) map.set(seg.speaker, i);
+    });
+    return map;
+  }, [transcription.segments]);
 
   // Compute the active segment based on playback time
   const activeSegmentIndex = useMemo(() => {
@@ -172,6 +159,48 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
 
   const isDarkMode = () => {
     return document.documentElement.classList.contains('dark');
+  };
+
+  /** Render segment text word by word (karaoke highlight, split targets). */
+  const renderWords = (segment: TranscriptionSegment, idx: number) => {
+    const words = segment.words || [];
+    const isActive = idx === activeSegmentIndex;
+    const splitting = splittingIndex === idx;
+    return (
+      <>
+        {words.map((w, wi) => {
+          const current =
+            isActive && currentTime !== undefined && currentTime >= w.start && currentTime < w.end;
+          const lowScore = w.score !== undefined && w.score !== null && w.score < 0.3;
+          return (
+            <span key={wi}>
+              {wi > 0 && ' '}
+              <span
+                className={`rounded transition-colors ${
+                  current ? 'bg-primary-200 dark:bg-primary-700/70 text-gray-900 dark:text-white' : ''
+                } ${splitting && wi > 0 ? 'cursor-col-resize hover:bg-amber-200 dark:hover:bg-amber-700/60' : ''} ${
+                  lowScore ? 'underline decoration-dotted decoration-amber-500/70' : ''
+                }`}
+                title={
+                  splitting && wi > 0
+                    ? 'Split the segment before this word'
+                    : `${formatTimestamp(w.start)}${lowScore ? ' · not aligned' : ''}`
+                }
+                onClick={(e) => {
+                  if (splitting && wi > 0 && onSegmentSplit) {
+                    e.stopPropagation();
+                    onSegmentSplit(idx, wi);
+                    setSplittingIndex(null);
+                  }
+                }}
+              >
+                {w.word}
+              </span>
+            </span>
+          );
+        })}
+      </>
+    );
   };
 
   // --- Inline speaker editing handlers ---
@@ -460,10 +489,104 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
                       <button
                         onClick={() => setReassigningIndex(idx)}
                         className="p-1 text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all rounded hover:bg-gray-100 dark:hover:bg-gray-700"
-                        title="Reassign to different speaker"
+                        title="Reassign this segment to another speaker"
                       >
                         <ArrowRightLeft className="w-3 h-3" />
                       </button>
+                    )}
+                    {onSpeakerMerge && sortedSpeakers.length > 1 && segment.speaker && (
+                      mergingIndex === idx ? (
+                        <select
+                          autoFocus
+                          className="px-2 py-1 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-amber-400 focus:outline-none"
+                          defaultValue=""
+                          onChange={(e) => {
+                            const target = e.target.value;
+                            if (target && segment.speaker && target !== segment.speaker) {
+                              onSpeakerMerge(segment.speaker, target);
+                            }
+                            setMergingIndex(null);
+                          }}
+                          onBlur={() => setMergingIndex(null)}
+                        >
+                          <option value="" disabled>
+                            Merge {getSpeakerName(segment.speaker)} into…
+                          </option>
+                          {sortedSpeakers.filter((spk) => spk !== segment.speaker).map((spk) => (
+                            <option key={spk} value={spk}>
+                              {getSpeakerName(spk)}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <button
+                          onClick={() => setMergingIndex(idx)}
+                          className="p-1 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 opacity-0 group-hover:opacity-100 transition-all rounded hover:bg-gray-100 dark:hover:bg-gray-700"
+                          title="This speaker is the same person as… (merge all their segments)"
+                        >
+                          <GitMerge className="w-3 h-3" />
+                        </button>
+                      )
+                    )}
+                    {onSegmentSplit && segment.words && segment.words.length > 1 && (
+                      <button
+                        onClick={() => setSplittingIndex(splittingIndex === idx ? null : idx)}
+                        className={`p-1 transition-all rounded hover:bg-gray-100 dark:hover:bg-gray-700 ${
+                          splittingIndex === idx
+                            ? 'text-amber-600 dark:text-amber-400 opacity-100'
+                            : 'text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 opacity-0 group-hover:opacity-100'
+                        }`}
+                        title={splittingIndex === idx ? 'Cancel split' : 'Split this segment at a word'}
+                      >
+                        <Scissors className="w-3 h-3" />
+                      </button>
+                    )}
+                    {segment.speaker && firstIndexBySpeaker.get(segment.speaker) === idx && (() => {
+                      const match = transcription.speaker_matches?.[segment.speaker];
+                      if (!match || !match.user_id) return null;
+                      const pct = match.confidence != null ? Math.round(match.confidence * 100) : null;
+                      if (match.status === 'auto') {
+                        return (
+                          <span className="inline-flex items-center gap-1 ml-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-100 dark:bg-violet-900/50 text-violet-800 dark:text-violet-200" title={`Voice matched to ${match.display_name}${pct != null ? ` (${pct}% similarity)` : ''}. Confirm or reject.`}>
+                            <UserCheck className="w-3 h-3" />
+                            auto{pct != null ? ` · ${pct}%` : ''}
+                            {onMatchDecision && (
+                              <>
+                                <button
+                                  className="ml-1 px-1 rounded bg-white/70 dark:bg-gray-900/40 hover:bg-green-200 dark:hover:bg-green-800/60"
+                                  title={canEnroll ? 'Confirm and enrol this voice for future recordings' : 'Confirm'}
+                                  onClick={(e) => { e.stopPropagation(); onMatchDecision(segment.speaker!, 'confirm', !!canEnroll); }}
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  className="px-1 rounded bg-white/70 dark:bg-gray-900/40 hover:bg-red-200 dark:hover:bg-red-800/60"
+                                  title="Reject: this is not that person"
+                                  onClick={(e) => { e.stopPropagation(); onMatchDecision(segment.speaker!, 'reject', false); }}
+                                >
+                                  ✗
+                                </button>
+                              </>
+                            )}
+                          </span>
+                        );
+                      }
+                      if (match.status === 'confirmed') {
+                        return (
+                          <span className="inline-flex items-center gap-0.5 ml-1 text-[10px] text-green-700 dark:text-green-300" title={`Identity confirmed${match.enrolled_as ? ' and voice enrolled' : ''}`}>
+                            <UserCheck className="w-3 h-3" />
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
+                    {segment.confidence != null && segment.confidence < LOW_CONFIDENCE && (
+                      <span
+                        className="inline-flex items-center ml-1 text-amber-500"
+                        title={`Low alignment confidence (${Math.round(segment.confidence * 100)}%): timestamps and speaker for this segment may be off`}
+                      >
+                        <AlertTriangle className="w-3 h-3" />
+                      </span>
                     )}
                   </div>
                 )}
@@ -486,10 +609,12 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
                     className={`text-sm text-gray-700 dark:text-gray-300 ${
                       onSegmentTextUpdate ? 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600/50 rounded px-1 -mx-1 transition-colors' : ''
                     }`}
-                    onClick={() => startTextEditing(idx)}
-                    title={onSegmentTextUpdate ? 'Click to edit text' : undefined}
+                    onClick={() => { if (splittingIndex !== idx) startTextEditing(idx); }}
+                    title={splittingIndex === idx ? 'Click a word to split before it' : onSegmentTextUpdate ? 'Click to edit text' : undefined}
                   >
-                    {segment.text}
+                    {segment.words && segment.words.length > 0 && (currentTime !== undefined || splittingIndex === idx)
+                      ? renderWords(segment, idx)
+                      : segment.text}
                     {onSegmentTextUpdate && (
                       <Pencil className="w-3 h-3 inline-block ml-1 opacity-0 group-hover:opacity-40 transition-opacity" />
                     )}

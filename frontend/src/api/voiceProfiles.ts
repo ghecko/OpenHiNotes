@@ -57,4 +57,14 @@ export const voiceProfilesApi = {
   async deleteAllProfiles(): Promise<void> {
     await apiClient.delete('/voice-profiles');
   },
+
+  /** Admin: how many per-transcription speaker embeddings are retained. */
+  async adminCountTranscriptionEmbeddings(): Promise<{ count: number; retention_enabled: boolean }> {
+    return apiClient.get('/voice-profiles/admin/transcription-embeddings');
+  },
+
+  /** Admin: delete every retained per-transcription speaker embedding. */
+  async adminPurgeTranscriptionEmbeddings(): Promise<{ deleted: number }> {
+    return apiClient.delete('/voice-profiles/admin/transcription-embeddings');
+  },
 };
