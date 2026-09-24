@@ -63,7 +63,7 @@ from app.services.transcription import TranscriptionService
 from app.services.llm import LLMService
 from app.services.permissions import PermissionService
 from app.services.audio_concat import concat_audio_files, AudioConcatError
-from app.services.word_realign import realign_words, segment_confidence
+from app.services.word_realign import realign_words, segment_confidence, synthesize_words
 from app.utils.date_extract import extract_meeting_date
 
 logger = logging.getLogger(__name__)
@@ -940,6 +940,18 @@ async def update_title(
     return updated
 
 
+def _register_speaker(speakers: Optional[dict], label: str, display_name: Optional[str]) -> dict:
+    """Return a copy of the `speakers` map that knows `label`.
+
+    A label created from the UI ("+ New speaker") gets `display_name` as its
+    name; an existing label keeps whatever name it already has.
+    """
+    out = dict(speakers or {})
+    if label not in out:
+        out[label] = (display_name or "").strip() or label
+    return out
+
+
 @router.patch("/{transcription_id}/segments/reassign-speaker", response_model=TranscriptionResponse)
 async def reassign_segment_speaker(
     transcription_id: uuid.UUID,
@@ -965,12 +977,19 @@ async def reassign_segment_speaker(
             detail="Not authorized to update this transcription",
         )
 
+    new_speaker = reassign.new_speaker.strip()
+    if not new_speaker:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="new_speaker must not be empty")
+
     segments = list(transcription.segments or [])
     for idx in reassign.segment_indices:
         if 0 <= idx < len(segments):
-            segments[idx] = {**segments[idx], "speaker": reassign.new_speaker}
+            segments[idx] = {**segments[idx], "speaker": new_speaker}
 
     transcription.segments = segments
+    transcription.speakers = _register_speaker(
+        transcription.speakers, new_speaker, reassign.new_speaker_name
+    )
     await db.commit()
     await db.refresh(transcription)
     return transcription
@@ -1271,12 +1290,18 @@ async def split_segment(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Split a segment in two before word `word_index` (needs word timestamps).
+    """Split a segment in two before whitespace token `word_index`.
 
-    The second half takes `new_speaker` when given, otherwise it keeps the
-    original speaker so the user can reassign it afterwards. This is how a
-    diarization error inside one segment ("...d'accord. Alors moi je pense"
-    where the second sentence is someone else) gets fixed precisely.
+    With word timestamps (wordalign) the boundary is exact. Without them
+    (legacy pipeline, older transcripts) the tokens of the segment are spread
+    evenly over its time span, so the boundary is approximate; the two halves
+    are then stored without `words` so nothing pretends to be aligned.
+
+    The second half takes `new_speaker` when given (registered in `speakers`
+    with `new_speaker_name` if it is new), otherwise it keeps the original
+    speaker so the user can reassign it afterwards. This is how a diarization
+    error inside one segment ("...d'accord. Alors moi je pense" where the
+    second sentence is someone else) gets fixed precisely.
     """
     transcription = await TranscriptionService.get_transcription(db, transcription_id)
     if not transcription:
@@ -1296,10 +1321,14 @@ async def split_segment(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="segment_index out of range")
     seg = segments[split.segment_index]
     words = list(seg.get("words") or [])
+    aligned = len(words) >= 2
+    if not aligned:
+        words = synthesize_words(str(seg.get("text") or ""), float(seg.get("start") or 0.0),
+                                 float(seg.get("end") or 0.0))
     if len(words) < 2:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="This segment has no word timestamps to split on",
+            detail="This segment has fewer than two words, nothing to split",
         )
     if split.word_index <= 0 or split.word_index >= len(words):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="word_index out of range")
@@ -1310,26 +1339,30 @@ async def split_segment(
         scores = [w.get("score") for w in ws if w.get("score")]
         return round(sum(scores) / len(scores), 3) if scores else seg.get("confidence")
 
+    new_speaker = (split.new_speaker or "").strip() or None
     left = {
         **seg,
         "end": left_words[-1]["end"],
         "text": " ".join(w["word"] for w in left_words),
-        "words": left_words,
         "confidence": _conf(left_words),
     }
     right = {
         **seg,
         "start": right_words[0]["start"],
         "text": " ".join(w["word"] for w in right_words),
-        "words": right_words,
         "confidence": _conf(right_words),
-        "speaker": split.new_speaker or seg.get("speaker"),
+        "speaker": new_speaker or seg.get("speaker"),
     }
+    if aligned:
+        left["words"], right["words"] = left_words, right_words
+    else:
+        left.pop("words", None)
+        right.pop("words", None)
     segments[split.segment_index:split.segment_index + 1] = [left, right]
 
     speakers = dict(transcription.speakers or {})
-    if split.new_speaker:
-        speakers.setdefault(split.new_speaker, split.new_speaker)
+    if new_speaker:
+        speakers = _register_speaker(speakers, new_speaker, split.new_speaker_name)
 
     transcription.segments = segments
     transcription.speakers = speakers

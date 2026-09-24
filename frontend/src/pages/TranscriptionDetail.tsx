@@ -470,10 +470,10 @@ export function TranscriptionDetail() {
     await loadVoiceSources(transcription.id);
   };
 
-  const handleSplitSegment = async (segmentIndex: number, wordIndex: number) => {
+  const handleSplitSegment = async (segmentIndex: number, wordIndex: number, newSpeaker?: string, newSpeakerName?: string) => {
     if (!transcription) return;
     try {
-      const updated = await transcriptionsApi.splitSegment(transcription.id, segmentIndex, wordIndex);
+      const updated = await transcriptionsApi.splitSegment(transcription.id, segmentIndex, wordIndex, newSpeaker, newSpeakerName);
       setTranscription(updated);
     } catch (error) {
       console.error('Failed to split segment:', error);
@@ -1479,13 +1479,14 @@ ${summary.content}
                 console.error('Failed to update speaker:', error);
               }
             } : undefined}
-            onSegmentReassign={canEdit ? async (segmentIndex, newSpeaker) => {
+            onSegmentReassign={canEdit ? async (segmentIndex, newSpeaker, newSpeakerName) => {
               if (!transcription) return;
               try {
                 const updated = await transcriptionsApi.reassignSegmentSpeaker(
                   transcription.id,
                   [segmentIndex],
                   newSpeaker,
+                  newSpeakerName,
                 );
                 setTranscription(updated);
               } catch (error) {

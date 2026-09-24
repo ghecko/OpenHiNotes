@@ -6,11 +6,16 @@ import { FALLBACK_COLOR, getSpeakerColorByIndex } from '@/utils/speakerColors';
 interface TranscriptionViewerProps {
   transcription: Transcription;
   onSpeakerUpdate?: (speakerId: string, newName: string) => void;
-  onSegmentReassign?: (segmentIndex: number, newSpeaker: string) => void;
+  /** Reassign a segment; `newSpeakerName` is set when `newSpeaker` is a label created on the fly */
+  onSegmentReassign?: (segmentIndex: number, newSpeaker: string, newSpeakerName?: string) => void;
   /** Merge every segment of `source` into speaker `target` */
   onSpeakerMerge?: (source: string, target: string) => void;
-  /** Split a segment before word `wordIndex` (wordalign transcripts only) */
-  onSegmentSplit?: (segmentIndex: number, wordIndex: number) => void;
+  /**
+   * Split a segment before whitespace token `wordIndex`. Exact with word
+   * timestamps, interpolated otherwise. The second half goes to `newSpeaker`
+   * when given (`newSpeakerName` when that label is created on the fly).
+   */
+  onSegmentSplit?: (segmentIndex: number, wordIndex: number, newSpeaker?: string, newSpeakerName?: string) => void;
   /** Confirm / reject an automatic voice-fingerprint identification */
   onMatchDecision?: (speakerLabel: string, action: 'confirm' | 'reject', enroll: boolean) => void;
   /** Whether "confirm + enrol voice" is possible (audio still available) */
@@ -28,6 +33,15 @@ interface TranscriptionViewerProps {
 /** Below this alignment confidence a segment is flagged for review. */
 const LOW_CONFIDENCE = 0.5;
 
+/** Sentinel value of the "+ New speaker…" option in speaker dropdowns. */
+const NEW_SPEAKER = '__new__';
+
+/** Whitespace tokens of a segment, matching the backend's `text.split()`. */
+const segmentTokens = (segment: TranscriptionSegment): string[] =>
+  segment.words && segment.words.length > 0
+    ? segment.words.map((w) => w.word)
+    : (segment.text || '').trim().split(/\s+/).filter(Boolean);
+
 export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentReassign, onSpeakerMerge, onSegmentSplit, onMatchDecision, canEnroll, onSegmentTextUpdate, onFindReplace, currentTime, onSeek }: TranscriptionViewerProps) {
   const [copied, setCopied] = useState(false);
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
@@ -37,6 +51,12 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
   const [reassigningIndex, setReassigningIndex] = useState<number | null>(null);
   const [mergingIndex, setMergingIndex] = useState<number | null>(null);
   const [splittingIndex, setSplittingIndex] = useState<number | null>(null);
+  /** Speaker for the second half of a split: '' keeps the current one, or a label, or NEW_SPEAKER */
+  const [splitTarget, setSplitTarget] = useState<string>('');
+  const [splitNewName, setSplitNewName] = useState('');
+  /** Segment whose speaker is being reassigned to a speaker created on the fly */
+  const [newSpeakerIndex, setNewSpeakerIndex] = useState<number | null>(null);
+  const [newSpeakerName, setNewSpeakerName] = useState('');
   const [editingTextIndex, setEditingTextIndex] = useState<number | null>(null);
   const [editTextValue, setEditTextValue] = useState('');
   const editTextRef = useRef<HTMLTextAreaElement>(null);
@@ -157,21 +177,79 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
     return transcription.speakers[speaker] || speaker;
   };
 
+  /** First SPEAKER_NN label not used by the transcript (segments or names map). */
+  const nextSpeakerLabel = () => {
+    const taken = new Set<string>([...Object.keys(transcription.speakers || {}), ...sortedSpeakers]);
+    for (let i = 0; ; i++) {
+      const label = `SPEAKER_${String(i).padStart(2, '0')}`;
+      if (!taken.has(label)) return label;
+    }
+  };
+
+  const startNewSpeaker = (idx: number) => {
+    setReassigningIndex(null);
+    setNewSpeakerIndex(idx);
+    setNewSpeakerName('');
+  };
+
+  const cancelNewSpeaker = () => {
+    setNewSpeakerIndex(null);
+    setNewSpeakerName('');
+  };
+
+  const commitNewSpeaker = (idx: number) => {
+    if (onSegmentReassign) {
+      onSegmentReassign(idx, nextSpeakerLabel(), newSpeakerName.trim() || undefined);
+    }
+    cancelNewSpeaker();
+  };
+
+  const startSplit = (idx: number) => {
+    setSplittingIndex(idx);
+    setSplitTarget('');
+    setSplitNewName('');
+  };
+
+  const cancelSplit = () => {
+    setSplittingIndex(null);
+    setSplitTarget('');
+    setSplitNewName('');
+  };
+
+  const commitSplit = (idx: number, wordIndex: number) => {
+    if (onSegmentSplit) {
+      if (splitTarget === NEW_SPEAKER) {
+        onSegmentSplit(idx, wordIndex, nextSpeakerLabel(), splitNewName.trim() || undefined);
+      } else if (splitTarget) {
+        onSegmentSplit(idx, wordIndex, splitTarget);
+      } else {
+        onSegmentSplit(idx, wordIndex);
+      }
+    }
+    cancelSplit();
+  };
+
   const isDarkMode = () => {
     return document.documentElement.classList.contains('dark');
   };
 
-  /** Render segment text word by word (karaoke highlight, split targets). */
+  /**
+   * Render segment text word by word (karaoke highlight, split targets).
+   * Segments without word timestamps are rendered from their whitespace
+   * tokens so they can still be split (boundary interpolated server-side).
+   */
   const renderWords = (segment: TranscriptionSegment, idx: number) => {
-    const words = segment.words || [];
+    const words = segment.words && segment.words.length > 0 ? segment.words : null;
+    const tokens = words ? words.map((w) => w.word) : segmentTokens(segment);
     const isActive = idx === activeSegmentIndex;
     const splitting = splittingIndex === idx;
     return (
       <>
-        {words.map((w, wi) => {
+        {tokens.map((tok, wi) => {
+          const w = words ? words[wi] : null;
           const current =
-            isActive && currentTime !== undefined && currentTime >= w.start && currentTime < w.end;
-          const lowScore = w.score !== undefined && w.score !== null && w.score < 0.3;
+            !!w && isActive && currentTime !== undefined && currentTime >= w.start && currentTime < w.end;
+          const lowScore = !!w && w.score !== undefined && w.score !== null && w.score < 0.3;
           return (
             <span key={wi}>
               {wi > 0 && ' '}
@@ -183,18 +261,19 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
                 }`}
                 title={
                   splitting && wi > 0
-                    ? 'Split the segment before this word'
-                    : `${formatTimestamp(w.start)}${lowScore ? ' · not aligned' : ''}`
+                    ? `Split the segment before this word${w ? '' : ' (time estimated: no word timestamps)'}`
+                    : w
+                      ? `${formatTimestamp(w.start)}${lowScore ? ' · not aligned' : ''}`
+                      : undefined
                 }
                 onClick={(e) => {
                   if (splitting && wi > 0 && onSegmentSplit) {
                     e.stopPropagation();
-                    onSegmentSplit(idx, wi);
-                    setSplittingIndex(null);
+                    commitSplit(idx, wi);
                   }
                 }}
               >
-                {w.word}
+                {tok}
               </span>
             </span>
           );
@@ -451,6 +530,10 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
                       defaultValue={segment.speaker || ''}
                       onChange={(e) => {
                         const newSpeaker = e.target.value;
+                        if (newSpeaker === NEW_SPEAKER) {
+                          startNewSpeaker(idx);
+                          return;
+                        }
                         if (newSpeaker && newSpeaker !== segment.speaker && onSegmentReassign) {
                           onSegmentReassign(idx, newSpeaker);
                         }
@@ -463,10 +546,41 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
                           {getSpeakerName(spk)}
                         </option>
                       ))}
+                      <option value={NEW_SPEAKER}>+ New speaker…</option>
                     </select>
                     <button
                       onClick={() => setReassigningIndex(null)}
                       className="p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : newSpeakerIndex === idx ? (
+                  <div className="inline-flex items-center gap-1 mb-1">
+                    <input
+                      autoFocus
+                      type="text"
+                      value={newSpeakerName}
+                      placeholder="New speaker name"
+                      onChange={(e) => setNewSpeakerName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); commitNewSpeaker(idx); }
+                        if (e.key === 'Escape') cancelNewSpeaker();
+                      }}
+                      className="px-2 py-1 rounded text-xs font-semibold bg-white dark:bg-gray-700 text-gray-900 dark:text-white border-2 border-blue-500 outline-none"
+                      style={{ minWidth: '120px', maxWidth: '200px' }}
+                    />
+                    <button
+                      onClick={() => commitNewSpeaker(idx)}
+                      className="p-0.5 text-green-600 hover:text-green-700 dark:text-green-400"
+                      title="Create this speaker and assign the segment to them"
+                    >
+                      <Check className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={cancelNewSpeaker}
+                      className="p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                      title="Cancel"
                     >
                       <X className="w-3 h-3" />
                     </button>
@@ -485,7 +599,7 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
                         <Pencil className="w-3 h-3 opacity-0 group-hover/badge:opacity-60 transition-opacity" />
                       )}
                     </div>
-                    {onSegmentReassign && sortedSpeakers.length > 1 && (
+                    {onSegmentReassign && (
                       <button
                         onClick={() => setReassigningIndex(idx)}
                         className="p-1 text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all rounded hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -528,18 +642,55 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
                         </button>
                       )
                     )}
-                    {onSegmentSplit && segment.words && segment.words.length > 1 && (
+                    {onSegmentSplit && segmentTokens(segment).length > 1 && (
                       <button
-                        onClick={() => setSplittingIndex(splittingIndex === idx ? null : idx)}
+                        onClick={() => (splittingIndex === idx ? cancelSplit() : startSplit(idx))}
                         className={`p-1 transition-all rounded hover:bg-gray-100 dark:hover:bg-gray-700 ${
                           splittingIndex === idx
                             ? 'text-amber-600 dark:text-amber-400 opacity-100'
                             : 'text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 opacity-0 group-hover:opacity-100'
                         }`}
-                        title={splittingIndex === idx ? 'Cancel split' : 'Split this segment at a word'}
+                        title={
+                          splittingIndex === idx
+                            ? 'Cancel split'
+                            : segment.words && segment.words.length > 1
+                              ? 'Split this segment at a word'
+                              : 'Split this segment at a word (no word timestamps: boundary time is estimated)'
+                        }
                       >
                         <Scissors className="w-3 h-3" />
                       </button>
+                    )}
+                    {onSegmentSplit && splittingIndex === idx && (
+                      <span className="inline-flex items-center gap-1 ml-1 text-[11px] text-gray-500 dark:text-gray-400">
+                        <span>2nd part →</span>
+                        <select
+                          value={splitTarget}
+                          onChange={(e) => setSplitTarget(e.target.value)}
+                          className="px-1 py-0.5 rounded text-[11px] bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-amber-400 focus:outline-none"
+                          title="Speaker of the part after the cut"
+                        >
+                          <option value="">{getSpeakerName(segment.speaker)} (keep)</option>
+                          {sortedSpeakers.filter((spk) => spk !== segment.speaker).map((spk) => (
+                            <option key={spk} value={spk}>
+                              {getSpeakerName(spk)}
+                            </option>
+                          ))}
+                          <option value={NEW_SPEAKER}>+ New speaker…</option>
+                        </select>
+                        {splitTarget === NEW_SPEAKER && (
+                          <input
+                            autoFocus
+                            type="text"
+                            value={splitNewName}
+                            placeholder="New speaker name"
+                            onChange={(e) => setSplitNewName(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Escape') cancelSplit(); }}
+                            className="px-1 py-0.5 rounded text-[11px] bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-amber-400 focus:outline-none"
+                            style={{ width: '120px' }}
+                          />
+                        )}
+                      </span>
                     )}
                     {segment.speaker && firstIndexBySpeaker.get(segment.speaker) === idx && (() => {
                       const match = transcription.speaker_matches?.[segment.speaker];
@@ -612,7 +763,7 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
                     onClick={() => { if (splittingIndex !== idx) startTextEditing(idx); }}
                     title={splittingIndex === idx ? 'Click a word to split before it' : onSegmentTextUpdate ? 'Click to edit text' : undefined}
                   >
-                    {segment.words && segment.words.length > 0 && (currentTime !== undefined || splittingIndex === idx)
+                    {splittingIndex === idx || (segment.words && segment.words.length > 0 && currentTime !== undefined)
                       ? renderWords(segment, idx)
                       : segment.text}
                     {onSegmentTextUpdate && (

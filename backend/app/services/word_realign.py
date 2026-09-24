@@ -80,6 +80,16 @@ def realign_words(words: Optional[List[Dict]], new_text: str,
     return out
 
 
+def synthesize_words(text: str, start: float, end: float) -> List[Dict]:
+    """Spread the whitespace tokens of *text* evenly over [start, end].
+
+    Used to split a segment that has no word timestamps (legacy pipeline,
+    or a transcript made before wordalign). The timings are approximate,
+    which is why callers should not persist them as real ``words``.
+    """
+    return _spread(text.split(), start, end, None)
+
+
 def segment_confidence(words: Optional[List[Dict]], fallback: Optional[float]) -> Optional[float]:
     scores = [w.get("score") for w in (words or []) if w.get("score") is not None]
     return round(sum(scores) / len(scores), 3) if scores else fallback

@@ -75,16 +75,27 @@ class TitleUpdate(BaseModel):
 
 
 class SegmentSpeakerReassign(BaseModel):
-    """Schema for reassigning a speaker on specific segments."""
+    """Schema for reassigning a speaker on specific segments.
+
+    `new_speaker` may be a label that does not exist yet in the transcript:
+    it is then registered in `speakers`, with `new_speaker_name` as display
+    name when given.
+    """
     segment_indices: List[int]
     new_speaker: str
+    new_speaker_name: Optional[str] = None
 
 
 class SegmentSplit(BaseModel):
-    """Split a segment before word `word_index` (requires word timestamps)."""
+    """Split a segment before whitespace token `word_index`.
+
+    Uses the segment's word timestamps when it has them, otherwise the
+    boundary time is interpolated linearly across the segment's tokens.
+    """
     segment_index: int
     word_index: int
     new_speaker: Optional[str] = None
+    new_speaker_name: Optional[str] = None
 
 
 class SegmentTextUpdate(BaseModel):

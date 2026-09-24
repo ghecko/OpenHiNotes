@@ -172,14 +172,17 @@ export const transcriptionsApi = {
     return apiClient.patch<Transcription>(`/transcriptions/${id}/title`, { title });
   },
 
+  /** Reassign segments to `newSpeaker`; pass `newSpeakerName` when the label is created on the fly. */
   async reassignSegmentSpeaker(
     id: string,
     segmentIndices: number[],
     newSpeaker: string,
+    newSpeakerName?: string,
   ): Promise<Transcription> {
     return apiClient.patch<Transcription>(`/transcriptions/${id}/segments/reassign-speaker`, {
       segment_indices: segmentIndices,
       new_speaker: newSpeaker,
+      new_speaker_name: newSpeakerName ?? null,
     });
   },
 
@@ -221,17 +224,23 @@ export const transcriptionsApi = {
     });
   },
 
-  /** Split a segment before `wordIndex` (wordalign transcripts only). */
+  /**
+   * Split a segment before whitespace token `wordIndex` (exact with word
+   * timestamps, interpolated otherwise). The second half goes to `newSpeaker`
+   * when given; `newSpeakerName` names a label created on the fly.
+   */
   async splitSegment(
     id: string,
     segmentIndex: number,
     wordIndex: number,
     newSpeaker?: string,
+    newSpeakerName?: string,
   ): Promise<Transcription> {
     return apiClient.patch<Transcription>(`/transcriptions/${id}/segments/split`, {
       segment_index: segmentIndex,
       word_index: wordIndex,
       new_speaker: newSpeaker ?? null,
+      new_speaker_name: newSpeakerName ?? null,
     });
   },
 
