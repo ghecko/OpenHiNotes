@@ -63,6 +63,7 @@ from app.services.transcription import TranscriptionService
 from app.services.llm import LLMService
 from app.services.permissions import PermissionService
 from app.services.audio_concat import concat_audio_files, AudioConcatError
+from app.services.word_realign import realign_words, segment_confidence
 from app.utils.date_extract import extract_meeting_date
 
 logger = logging.getLogger(__name__)
@@ -1371,10 +1372,15 @@ async def update_segment_text(
 
     seg = segments[update.segment_index]
     updated = {**seg, "text": update.text}
-    if update.text.strip() != (seg.get("text") or "").strip():
-        # Edited text no longer matches the aligned words; drop them rather
-        # than show stale per-word timestamps.
-        updated.pop("words", None)
+    if update.text.strip() != (seg.get("text") or "").strip() and seg.get("words"):
+        # Carry the per-word timestamps over the edit (unchanged words keep
+        # their timing, replaced words inherit it) instead of dropping them.
+        words = realign_words(seg["words"], update.text, seg.get("start"), seg.get("end"))
+        if words:
+            updated["words"] = words
+            updated["confidence"] = segment_confidence(words, seg.get("confidence"))
+        else:
+            updated.pop("words", None)
     segments[update.segment_index] = updated
     transcription.segments = segments
 
@@ -1435,9 +1441,16 @@ async def find_and_replace(
             new_text = pattern.sub(payload.replace, text)
 
         if count > 0:
-            # The edited text no longer matches the aligned words: drop them
-            # rather than show stale per-word timestamps.
-            segments[i] = {k: v for k, v in {**seg, "text": new_text}.items() if k != "words"}
+            updated = {**seg, "text": new_text}
+            if seg.get("words"):
+                # Carry per-word timestamps over the replacement
+                words = realign_words(seg["words"], new_text, seg.get("start"), seg.get("end"))
+                if words:
+                    updated["words"] = words
+                    updated["confidence"] = segment_confidence(words, seg.get("confidence"))
+                else:
+                    updated.pop("words", None)
+            segments[i] = updated
             total_replacements += count
 
     if total_replacements == 0:
