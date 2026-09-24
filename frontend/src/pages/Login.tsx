@@ -3,7 +3,7 @@ import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@/store/useAuthStore';
 import { authApi } from '@/api/auth';
 import { OIDCProviderInfo } from '@/types';
-import { LogIn, Mail, Lock, AlertCircle } from 'lucide-react';
+import { Mail, Lock, AlertCircle } from 'lucide-react';
 
 /** Map well-known provider slugs to display-friendly icon names. */
 const PROVIDER_ICONS: Record<string, string> = {
@@ -159,11 +159,14 @@ export function Login() {
         <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl rounded-2xl shadow-2xl p-8 border border-white/20 dark:border-gray-700/40">
           {/* Brand */}
           <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 shadow-lg shadow-primary-500/25 mb-4">
-              <LogIn className="w-8 h-8 text-white" />
-            </div>
+            <img
+              src="/logo-mark.png"
+              alt=""
+              className="inline-block w-24 h-24 object-contain mb-3 select-none"
+              draggable={false}
+            />
             <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-              OpenHiNotes
+              Open<span className="text-emerald-500 dark:text-emerald-400">Hi</span>Notes
             </h1>
             <p className="text-gray-500 dark:text-gray-400 mt-1 text-sm">
               Sign in to your account
