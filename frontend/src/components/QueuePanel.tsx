@@ -15,6 +15,7 @@ import {
   Ban,
 } from 'lucide-react';
 import { useQueueStore } from '@/store/useQueueStore';
+import { parseServerDate } from '@/utils/dates';
 
 function formatTimeAgo(timestamp: number): string {
   const seconds = Math.floor((Date.now() - timestamp) / 1000);
@@ -32,7 +33,7 @@ function ElapsedTime({ startedAt }: { startedAt: string | null | undefined }) {
     return () => clearInterval(id);
   }, []);
   if (!startedAt) return null;
-  const seconds = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000);
+  const seconds = Math.floor((Date.now() - parseServerDate(startedAt).getTime()) / 1000);
   if (seconds < 5) return null;
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;

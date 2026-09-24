@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Bell, Check, Trash2 } from 'lucide-react';
 import { notificationsApi } from '@/api/notifications';
 import { AppNotification } from '@/types';
+import { parseServerDate } from '@/utils/dates';
 
 const POLL_MS = 30_000;
 
@@ -221,7 +222,7 @@ export function NotificationsBell() {
                           </p>
                         )}
                         <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
-                          {new Date(n.created_at).toLocaleString()}
+                          {parseServerDate(n.created_at).toLocaleString()}
                         </p>
                       </button>
                       <div className="flex flex-col gap-1 shrink-0">

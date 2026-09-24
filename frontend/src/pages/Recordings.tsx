@@ -20,6 +20,7 @@ function detectRecordingType(fileName: string): RecordingType {
 }
 import { format } from 'date-fns';
 import { settingsApi } from '@/api/settings';
+import { parseServerDate } from '@/utils/dates';
 
 /* ── Delete confirmation modal ────────────────────────────────────── */
 interface DeleteModalProps {
@@ -1177,7 +1178,7 @@ export function Recordings() {
                         : '—'}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-                      {format(new Date(t.created_at), 'MMM d, yyyy HH:mm')}
+                      {format(parseServerDate(t.created_at), 'MMM d, yyyy HH:mm')}
                     </td>
                     <td className="px-6 py-4 text-center">
                       <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">

@@ -21,6 +21,7 @@ import { ShareModal } from '@/components/ShareModal';
 import { InteractiveMarkdown } from '@/components/InteractiveMarkdown';
 import { TemplateSelector } from '@/components/TemplateSelector';
 import { formatMarkdown } from '@/utils/formatMarkdown';
+import { parseServerDate } from '@/utils/dates';
 
 function SummaryModal({
   summary,
@@ -61,7 +62,7 @@ function SummaryModal({
           <div>
             <p className="text-sm font-semibold text-gray-900 dark:text-white">Summary</p>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              {format(new Date(summary.created_at), 'MMM d, yyyy HH:mm')} &bull; {summary.model_used}
+              {format(parseServerDate(summary.created_at), 'MMM d, yyyy HH:mm')} &bull; {summary.model_used}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -792,7 +793,7 @@ export function TranscriptionDetail() {
     const title = transcription?.title || transcription?.original_filename || 'Summary';
     const cleanTitle = title.replace(/\.[^/.]+$/, '');
     const markdownText = `# Summary - ${title}
-Date: ${format(new Date(summary.created_at), 'MMM d, yyyy HH:mm')}
+Date: ${format(parseServerDate(summary.created_at), 'MMM d, yyyy HH:mm')}
 Model: ${summary.model_used}
 
 ${summary.content}
@@ -812,7 +813,7 @@ ${summary.content}
     const htmlContent = `
       <div class="container">
         <h1>Summary - ${title}</h1>
-        <div class="meta">${format(new Date(summary.created_at), 'MMM d, yyyy HH:mm')} &bull; ${summary.model_used}</div>
+        <div class="meta">${format(parseServerDate(summary.created_at), 'MMM d, yyyy HH:mm')} &bull; ${summary.model_used}</div>
         <div class="markdown-content">${formatMarkdown(summary.content)}</div>
       </div>
     `;
@@ -1639,7 +1640,7 @@ ${summary.content}
                     >
                       <div className="flex items-start justify-between mb-2">
                         <p className="text-xs text-gray-500 dark:text-gray-400">
-                          {format(new Date(summary.created_at), 'MMM d, yyyy HH:mm')}
+                          {format(parseServerDate(summary.created_at), 'MMM d, yyyy HH:mm')}
                         </p>
                         <div className="flex items-center gap-1">
                           <button
