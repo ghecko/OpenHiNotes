@@ -1,12 +1,14 @@
 """Retained per-transcription speaker embeddings (admin-gated).
 
-Revision ID: 030_transcription_speaker_embeddings
+Note: alembic_version.version_num is VARCHAR(32); keep revision ids <= 32 chars.
+
+Revision ID: 030_speaker_embeddings
 Revises: 029_speaker_matches_num_speakers
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "030_transcription_speaker_embeddings"
+revision = "030_speaker_embeddings"
 down_revision = "029_speaker_matches_num_speakers"
 branch_labels = None
 depends_on = None
