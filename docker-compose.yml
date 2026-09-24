@@ -55,6 +55,7 @@ services:
       - proxy-net
     environment:
       - SITE_HOST=${SITE_HOST:-localhost}
+      - HMR_CLIENT_PORT=${HMR_CLIENT_PORT:-}
 
 volumes:
   postgres_data:

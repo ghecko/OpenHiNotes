@@ -54,6 +54,7 @@ services:
       - hinotes-internal
     environment:
       - SITE_HOST=${SITE_HOST:-localhost}
+      - HMR_CLIENT_PORT=${HMR_CLIENT_PORT:-}
 
   caddy:
     image: caddy:2-alpine

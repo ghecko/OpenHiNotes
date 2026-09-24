@@ -6,6 +6,21 @@ const INTERFACE_NUMBER = 0;
 const ENDPOINT_IN = 2;
 const ENDPOINT_OUT = 1;
 
+/** Size of each bulk IN request. 512 * 128 (wMaxPacketSize multiple). */
+const USB_READ_SIZE = 65536;
+/**
+ * Number of bulk IN transfers kept pending during file streaming.
+ * With a single outstanding transferIn the host controller stops polling the
+ * device between the completion of one read and the issue of the next (parse,
+ * copy, IPC round-trip), which idles the bus. Keeping several transfers queued
+ * mirrors what the official jensen.js / node-usb startPoll(3, ...) do.
+ * Chrome completes bulk IN transfers on a given endpoint in issue order, so
+ * data stays ordered.
+ */
+const STREAM_INFLIGHT_READS = 3;
+/** Progress callbacks are rate-limited to avoid a React re-render per packet. */
+const PROGRESS_INTERVAL_MS = 100;
+
 const COMMANDS = {
   GET_DEVICE_INFO: 1,
   SET_DEVICE_TIME: 3,
@@ -342,6 +357,14 @@ class DeviceService {
   private connectingPromise: Promise<HiDockDevice> | null = null;
 
   /**
+   * Bulk IN transfers already issued but not yet consumed, in issue order.
+   * WebUSB cannot cancel a pending transferIn, so reads left over from a
+   * pipelined download are simply consumed by the next command instead of
+   * being lost. Cleared on (re)connect and disconnect.
+   */
+  private pendingReads: Promise<Uint8Array | null>[] = [];
+
+  /**
    * In-memory cache of downloaded audio blobs keyed by fileName.
    * Survives component re-renders and page navigations because
    * DeviceService is a singleton.  Cleared on device disconnect.
@@ -375,6 +398,7 @@ class DeviceService {
         this.device = device;
         this.sequenceId = 0;
         this.receiveBuffer.clear();
+        this.pendingReads = [];
 
         if (!device.opened) {
           await device.open();
@@ -415,6 +439,7 @@ class DeviceService {
       }
       this.device = null;
       this.receiveBuffer.clear();
+      this.pendingReads = [];
       this.blobCache.clear();
     }
   }
@@ -529,21 +554,23 @@ class DeviceService {
     let received = 0;
     const startTime = Date.now();
     let consecutiveTimeouts = 0;
-    const maxConsecutiveTimeouts = 100;
+    const maxConsecutiveTimeouts = 15; // x READ_TIMEOUT_MS of silence before aborting
+    const READ_TIMEOUT_MS = 1000;
     let lastProgressLog = -1; // Track last logged progress percentage
+    let lastProgressAt = 0;
 
-    // Optimized download loop matching reference implementation pattern:
-    // 1. Read raw USB data into buffer
-    // 2. Parse ALL available packets in a tight inner loop
-    // This avoids per-packet overhead from receiveResponse() and extracts
-    // multiple packets per USB read, dramatically improving throughput.
+    // Download loop:
+    // 1. Keep STREAM_INFLIGHT_READS bulk IN transfers pending at all times so
+    //    the device is never left waiting for the host between reads.
+    // 2. Parse ALL available packets in a tight inner loop per read.
     while (received < fileSize && consecutiveTimeouts < maxConsecutiveTimeouts) {
-      const gotData = await this.readToBuffer();
+      const got = await this.readToBuffer(STREAM_INFLIGHT_READS, READ_TIMEOUT_MS);
 
-      if (!gotData) {
+      if (got < 0) {
+        // Timeout or USB error: no data for READ_TIMEOUT_MS
         consecutiveTimeouts++;
-        if (consecutiveTimeouts % 20 === 0) {
-          console.warn('[OpenHiNotes] Download: %d consecutive empty reads at %d/%d bytes',
+        if (consecutiveTimeouts % 5 === 0) {
+          console.warn('[OpenHiNotes] Download: %ds without data at %d/%d bytes',
             consecutiveTimeouts, received, fileSize);
         }
         // Check if we're close enough to done
@@ -551,9 +578,10 @@ class DeviceService {
           console.log('[OpenHiNotes] Close enough to expected size, finishing');
           break;
         }
-        await new Promise((r) => setTimeout(r, 20));
         continue;
       }
+
+      if (got === 0) continue; // zero-length packet: device alive, nothing to parse
 
       consecutiveTimeouts = 0;
 
@@ -570,7 +598,7 @@ class DeviceService {
           continue;
         }
 
-        chunks.push(new Uint8Array(msg.body));
+        chunks.push(msg.body); // body is already a private copy (extractAndConsume)
         received += msg.body.length;
 
         // Log progress at every 10% milestone (not every chunk)
@@ -585,13 +613,17 @@ class DeviceService {
         }
 
         if (onProgress && fileSize > 0) {
-          onProgress(Math.min(100, pct));
+          const now = Date.now();
+          if (received >= fileSize || now - lastProgressAt >= PROGRESS_INTERVAL_MS) {
+            lastProgressAt = now;
+            onProgress(Math.min(100, pct));
+          }
         }
       }
     }
 
     if (consecutiveTimeouts >= maxConsecutiveTimeouts) {
-      console.error('[OpenHiNotes] Too many consecutive timeouts, aborting');
+      console.error('[OpenHiNotes] No data for %ds, aborting', consecutiveTimeouts);
       throw new Error(`Download stalled at ${Math.round((received / fileSize) * 100)}% (${received}/${fileSize} bytes)`);
     }
 
@@ -682,31 +714,63 @@ class DeviceService {
   }
 
   /**
-   * Read raw USB data into the receive buffer.
-   * Returns true if data was received, false on timeout/error.
+   * Issue one bulk IN transfer. Resolves with a private copy of the data
+   * (possibly empty for a zero-length packet), or null on USB error.
    */
-  private async readToBuffer(): Promise<boolean> {
-    if (!this.device) return false;
+  private issueRead(): Promise<Uint8Array | null> {
+    const device = this.device;
+    if (!device) return Promise.resolve(null);
+    return device.transferIn(ENDPOINT_IN, USB_READ_SIZE).then(
+      (result) => {
+        if (result.status === 'ok' && result.data && result.data.byteLength > 0) {
+          // Copy out: the underlying buffer may be reused by WebUSB
+          return new Uint8Array(
+            result.data.buffer.slice(
+              result.data.byteOffset,
+              result.data.byteOffset + result.data.byteLength,
+            ),
+          );
+        }
+        return result.status === 'ok' ? new Uint8Array(0) : null;
+      },
+      () => null, // InvalidStateError (disconnect), AbortError (close), ...
+    );
+  }
 
-    try {
-      const result = await this.device.transferIn(ENDPOINT_IN, 65536);
-      if (result.status === 'ok' && result.data && result.data.byteLength > 0) {
-        // Use slice() to create a copy — the underlying buffer may be reused by WebUSB
-        const newData = new Uint8Array(
-          result.data.buffer.slice(
-            result.data.byteOffset,
-            result.data.byteOffset + result.data.byteLength,
-          ),
-        );
-        this.receiveBuffer.append(newData);
-        return true;
-      }
-      return false;
-    } catch (err) {
-      // DOMException NetworkError = USB timeout (expected, device has no data yet)
-      // DOMException InvalidStateError = device disconnected
-      return false;
+  /**
+   * Read raw USB data into the receive buffer.
+   *
+   * Keeps `inflight` transfers pending (issuing new ones as needed) and awaits
+   * the oldest. A read that times out stays queued and is awaited again on the
+   * next call, so no data is ever dropped (WebUSB cannot cancel a transferIn).
+   *
+   * Returns the number of bytes appended (0 for a zero-length packet), or -1
+   * on timeout / USB error.
+   */
+  private async readToBuffer(inflight = 1, timeoutMs = 2000): Promise<number> {
+    if (!this.device) return -1;
+
+    while (this.pendingReads.length < inflight) {
+      this.pendingReads.push(this.issueRead());
     }
+    const head = this.pendingReads[0];
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), timeoutMs);
+    });
+
+    const outcome = await Promise.race([head, timeout]);
+    clearTimeout(timer);
+
+    if (outcome === 'timeout') return -1; // leave `head` queued
+
+    // `head` settled: dequeue it (it is still at index 0 unless a reset happened)
+    if (this.pendingReads[0] === head) this.pendingReads.shift();
+
+    if (outcome === null) return -1;
+    if (outcome.length > 0) this.receiveBuffer.append(outcome);
+    return outcome.length;
   }
 
   private async receiveResponse(
@@ -725,9 +789,11 @@ class DeviceService {
         return pkt;
       }
 
-      const gotData = await this.readToBuffer();
-      if (!gotData) {
-        // Small delay to prevent busy-waiting when device has no data
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      const got = await this.readToBuffer(1, Math.min(1000, remaining));
+      if (got < 0) {
+        // Small delay to prevent busy-waiting on a hard USB error
         await new Promise((r) => setTimeout(r, 20));
       }
     }
@@ -857,8 +923,6 @@ class DeviceService {
         if (recordings.length > 0) break; // If we have some, assume done
         throw error;
       }
-
-      await new Promise(r => setTimeout(r, 10));
     }
 
     if (fileDataBuffer.length > 0) {
