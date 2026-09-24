@@ -27,3 +27,15 @@ dist-ssr
 .env
 .env.local
 .env.*.local
+
+# Vite temp config bundles (left behind when the dev server is killed mid-start)
+vite.config.ts.timestamp-*.mjs
+
+# Stray tsc output next to sources (the build goes through Vite, tsc is typecheck only)
+src/**/*.js
+src/**/*.js.map
+src/**/*.d.ts
+src/**/*.d.ts.map
+vite.config.js
+vite.config.d.ts
+!src/vite-env.d.ts
