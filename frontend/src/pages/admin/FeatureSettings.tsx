@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Layout } from '@/components/Layout';
 import { settingsApi } from '@/api/settings';
+import { voiceProfilesApi } from '@/api/voiceProfiles';
 import { Server, Fingerprint, Users, CheckCircle, AlertCircle } from 'lucide-react';
 
 export function FeatureSettings({ embedded }: { embedded?: boolean }) {
@@ -13,6 +14,12 @@ export function FeatureSettings({ embedded }: { embedded?: boolean }) {
   // Voice fingerprinting
   const [voiceFingerprintingEnabled, setVoiceFingerprintingEnabled] = useState(false);
   const [savingVoice, setSavingVoice] = useState(false);
+
+  // Retention of per-transcription speaker embeddings
+  const [retentionEnabled, setRetentionEnabled] = useState(false);
+  const [savingRetention, setSavingRetention] = useState(false);
+  const [retainedCount, setRetainedCount] = useState<number | null>(null);
+  const [purging, setPurging] = useState(false);
 
   // Groups
   const [allowUserGroupCreation, setAllowUserGroupCreation] = useState(false);
@@ -38,8 +45,49 @@ export function FeatureSettings({ embedded }: { embedded?: boolean }) {
       const data = await settingsApi.getSettings();
       const setting = data.find((s) => s.key === 'voice_fingerprinting_enabled');
       setVoiceFingerprintingEnabled(setting?.value?.toLowerCase() === 'true');
+      const retention = data.find((s) => s.key === 'speaker_embedding_retention_enabled');
+      setRetentionEnabled(retention?.value?.toLowerCase() === 'true');
     } catch {
       // ignore
+    }
+    try {
+      const info = await voiceProfilesApi.adminCountTranscriptionEmbeddings();
+      setRetainedCount(info.count);
+    } catch {
+      setRetainedCount(null);
+    }
+  };
+
+  const handleToggleRetention = async () => {
+    setSavingRetention(true);
+    try {
+      const newValue = !retentionEnabled;
+      await settingsApi.updateSetting('speaker_embedding_retention_enabled', newValue ? 'true' : 'false');
+      setRetentionEnabled(newValue);
+      setMessage({
+        type: 'success',
+        text: `Speaker embedding retention ${newValue ? 'enabled' : 'disabled'}${
+          !newValue && retainedCount ? ` (${retainedCount} already retained embeddings kept; purge below if needed)` : ''
+        }`,
+      });
+    } catch {
+      setMessage({ type: 'error', text: 'Failed to update retention setting' });
+    } finally {
+      setSavingRetention(false);
+    }
+  };
+
+  const handlePurgeRetained = async () => {
+    if (!window.confirm('Delete every retained per-transcription speaker embedding? Voice profiles are not affected. This cannot be undone.')) return;
+    setPurging(true);
+    try {
+      const res = await voiceProfilesApi.adminPurgeTranscriptionEmbeddings();
+      setRetainedCount(0);
+      setMessage({ type: 'success', text: `${res.deleted} retained embedding(s) deleted` });
+    } catch {
+      setMessage({ type: 'error', text: 'Failed to purge retained embeddings' });
+    } finally {
+      setPurging(false);
     }
   };
 
@@ -186,6 +234,40 @@ export function FeatureSettings({ embedded }: { embedded?: boolean }) {
             enabled={voiceFingerprintingEnabled}
             onClick={handleToggleVoiceFingerprinting}
             disabled={savingVoice}
+          />
+        </div>
+        <div className="flex items-center justify-between mt-5 pt-5 border-t border-gray-200 dark:border-gray-700">
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Retain speaker embeddings from transcriptions
+            </label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              Keep the encrypted voice embedding of every diarized speaker together with its
+              transcription. Users can then save a speaker as a voice profile from the transcript
+              at any time, even after the audio was deleted, and confirmed identifications enrich
+              profiles. Embeddings are deleted with their transcription. Without this, saving a
+              voice from a transcript only works while the audio is still stored.
+              {retainedCount !== null && (
+                <span className="block mt-1 text-gray-600 dark:text-gray-300">
+                  Currently retained: <strong>{retainedCount}</strong> embedding(s).
+                  {retainedCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={handlePurgeRetained}
+                      disabled={purging}
+                      className="ml-2 text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+                    >
+                      {purging ? 'Purging…' : 'Purge all'}
+                    </button>
+                  )}
+                </span>
+              )}
+            </p>
+          </div>
+          <Toggle
+            enabled={retentionEnabled}
+            onClick={handleToggleRetention}
+            disabled={savingRetention || !voiceFingerprintingEnabled}
           />
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { Transcription, PaginatedResponse, QueueStatus, QueueSSEEvent } from '@/types';
+import { Transcription, PaginatedResponse, QueueStatus, QueueSSEEvent, VoiceSources } from '@/types';
 
 export interface TranscriptionProgressEvent {
   event: 'progress';
@@ -183,6 +183,58 @@ export const transcriptionsApi = {
     });
   },
 
+  /** Merge every segment of `source` into speaker `target`. */
+  async mergeSpeakers(id: string, source: string, target: string): Promise<Transcription> {
+    return apiClient.patch<Transcription>(`/transcriptions/${id}/speakers/merge`, {
+      source,
+      target,
+    });
+  },
+
+  /** Confirm or reject an automatic voice-fingerprint identification. */
+  async decideSpeakerMatch(
+    id: string,
+    speakerLabel: string,
+    action: 'confirm' | 'reject',
+    enroll: boolean = false,
+  ): Promise<Transcription> {
+    return apiClient.post<Transcription>(
+      `/transcriptions/${id}/speakers/${encodeURIComponent(speakerLabel)}/match`,
+      { action, enroll },
+    );
+  },
+
+  /** What each speaker can be enrolled from (retained embedding / audio / nothing). */
+  async getVoiceSources(id: string): Promise<VoiceSources> {
+    return apiClient.get<VoiceSources>(`/transcriptions/${id}/speakers/voice-sources`);
+  },
+
+  /** Save one speaker of the transcription as a voice profile (self, or another user for admins). */
+  async enrollSpeaker(
+    id: string,
+    speakerLabel: string,
+    options: { userId?: string | null; label?: string } = {},
+  ): Promise<{ profile_id: string; user_id: string; label: string; source: 'stored' | 'audio' }> {
+    return apiClient.post(`/transcriptions/${id}/speakers/${encodeURIComponent(speakerLabel)}/enroll`, {
+      user_id: options.userId ?? null,
+      label: options.label ?? null,
+    });
+  },
+
+  /** Split a segment before `wordIndex` (wordalign transcripts only). */
+  async splitSegment(
+    id: string,
+    segmentIndex: number,
+    wordIndex: number,
+    newSpeaker?: string,
+  ): Promise<Transcription> {
+    return apiClient.patch<Transcription>(`/transcriptions/${id}/segments/split`, {
+      segment_index: segmentIndex,
+      word_index: wordIndex,
+      new_speaker: newSpeaker ?? null,
+    });
+  },
+
   async updateSegmentText(
     id: string,
     segmentIndex: number,
@@ -269,6 +321,7 @@ export const transcriptionsApi = {
     autoSummarize: boolean = false,
     templateId?: string,
     recordingType?: 'record' | 'whisper',
+    numSpeakers?: number | null,
   ): Promise<Transcription> {
     const extraFields: Record<string, string> = {
       language,
@@ -280,6 +333,9 @@ export const transcriptionsApi = {
     }
     if (recordingType) {
       extraFields.recording_type = recordingType;
+    }
+    if (numSpeakers && numSpeakers > 0) {
+      extraFields.num_speakers = String(numSpeakers);
     }
     return apiClient.uploadFile<Transcription>(
       '/transcriptions/queue',
@@ -435,6 +491,7 @@ export const transcriptionsApi = {
       autoSummarize?: boolean;
       templateId?: string;
       recordingType?: 'record' | 'whisper';
+      numSpeakers?: number | null;
     } = {},
   ): Promise<Transcription> {
     if (files.length < 2) {
@@ -450,6 +507,7 @@ export const transcriptionsApi = {
     if (options.autoSummarize !== undefined) form.append('auto_summarize', String(options.autoSummarize));
     if (options.templateId) form.append('template_id', options.templateId);
     if (options.recordingType) form.append('recording_type', options.recordingType);
+    if (options.numSpeakers && options.numSpeakers > 0) form.append('num_speakers', String(options.numSpeakers));
 
     const token = localStorage.getItem('auth_token');
     const headers: HeadersInit = {};

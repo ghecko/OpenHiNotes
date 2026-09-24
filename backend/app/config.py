@@ -17,7 +17,12 @@ class Settings(BaseSettings):
     voxhub_api_key: str = ""
     voxhub_model: str = "large-v3"
     voxhub_job_mode: str = "false"
-    voxhub_vad_mode: str = "silero"
+    # VAD mode for VoxHub's legacy pipeline. Empty = let VoxHub apply its own
+    # default. "silero" carries NO speaker labels: combined with diarization
+    # it silently yields a single SPEAKER_00, so it is no longer the default.
+    voxhub_vad_mode: str = ""
+    # VoxHub pipeline: "" (server default), "wordalign" or "legacy".
+    voxhub_pipeline: str = ""
 
     # LLM API (OpenAI-compatible)
     llm_api_url: str = "http://localhost:11434/v1"

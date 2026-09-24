@@ -48,6 +48,8 @@ export function TranscribeModal({
   const navigate = useNavigate();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [language, setLanguage] = useState('auto');
+  // Optional exact participant count, forwarded to the diarizer (pyannote).
+  const [numSpeakers, setNumSpeakers] = useState<string>('');
   const [keepAudio, setKeepAudio] = useState(false);
   const [autoSummarize, setAutoSummarize] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
@@ -127,6 +129,7 @@ export function TranscribeModal({
       const file = new File([audioFile], fileName, { type: 'audio/wav' });
 
       // Always use queue — returns immediately
+      const parsedSpeakers = parseInt(numSpeakers, 10);
       const transcription = await transcriptionsApi.queueTranscription(
         file,
         language,
@@ -134,6 +137,7 @@ export function TranscribeModal({
         autoSummarize,
         autoSummarize ? selectedTemplate : undefined,
         recordingType,
+        recordingType === 'record' && Number.isFinite(parsedSpeakers) && parsedSpeakers > 0 ? parsedSpeakers : null,
       );
 
       // Apply user-chosen title (falls back to initialTitle prop if untouched)
@@ -316,6 +320,28 @@ export function TranscribeModal({
               </button>
             </div>
           </div>
+
+          {recordingType === 'record' && (
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-2">
+                Number of participants <span className="font-normal text-gray-400">(optional)</span>
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                inputMode="numeric"
+                value={numSpeakers}
+                onChange={(e) => setNumSpeakers(e.target.value.replace(/[^0-9]/g, ''))}
+                disabled={isSubmitting}
+                placeholder="Auto-detect"
+                className="w-full px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+              />
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                If you know how many people spoke, say so: it is the best guard against one voice being split into two speakers.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-3">
             {keepAudioAllowed && (

@@ -4,10 +4,17 @@ import { settingsApi, AppSetting } from '@/api/settings';
 import { Save, RotateCcw, Loader, CheckCircle, AlertCircle } from 'lucide-react';
 
 const VAD_MODE_OPTIONS = [
-  { value: 'silero', label: 'Silero — Fast, lightweight VAD' },
+  { value: '', label: 'Server default (recommended)' },
   { value: 'pyannote', label: 'Pyannote — High-accuracy segmentation + diarization' },
   { value: 'hybrid', label: 'Hybrid — Silero gate + Pyannote refiner (best recall + precision)' },
+  { value: 'silero', label: 'Silero — Fast VAD, NO speaker labels (breaks diarization)' },
   { value: 'none', label: 'None — No segmentation (pre-segmented audio)' },
+];
+
+const PIPELINE_OPTIONS = [
+  { value: '', label: 'Server default' },
+  { value: 'wordalign', label: 'Word-align — chunked transcription + CTC word timestamps + per-word speakers' },
+  { value: 'legacy', label: 'Legacy — diarize first, transcribe each speaker turn' },
 ];
 
 const SETTING_LABELS: Record<string, { label: string; placeholder: string; type: string; options?: { value: string; label: string }[] }> = {
@@ -31,9 +38,15 @@ const SETTING_LABELS: Record<string, { label: string; placeholder: string; type:
     placeholder: 'false',
     type: 'toggle',
   },
+  voxhub_pipeline: {
+    label: 'Pipeline',
+    placeholder: '',
+    type: 'select',
+    options: PIPELINE_OPTIONS,
+  },
   voxhub_vad_mode: {
-    label: 'VAD Mode',
-    placeholder: 'silero',
+    label: 'VAD Mode (legacy pipeline only)',
+    placeholder: '',
     type: 'select',
     options: VAD_MODE_OPTIONS,
   },
@@ -303,6 +316,7 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
             'voxhub_api_key',
             'voxhub_model',
             'voxhub_job_mode',
+            'voxhub_pipeline',
             'voxhub_vad_mode',
           ])}
           {renderSettingGroup('LLM / Chat', [

@@ -347,6 +347,7 @@ class TranscriptionQueue:
                 stored_filename = transcription.filename
                 language = transcription.language
                 recording_type = transcription.recording_type
+                num_speakers = transcription.num_speakers
 
             # Notify: processing started
             await self._notify(transcription_id, {
@@ -406,26 +407,42 @@ class TranscriptionQueue:
                     voxhub_response = await TranscriptionService.transcribe_with_voxhub(
                         file_path, language=language, diarize=should_diarize, db=db,
                         on_progress=on_progress, on_job_submitted=on_job_submitted,
+                        num_speakers=num_speakers,
                     )
 
                 parsed = TranscriptionService.parse_voxhub_response(voxhub_response)
 
-                # Speaker identification: match embeddings against known voice profiles
+                # Speaker identification: match embeddings against known voice
+                # profiles (1:1 user assignment). The verdicts land in
+                # speaker_matches so the UI can show them as confirmable badges.
+                speaker_matches = None
                 speaker_embeddings = parsed.get("speaker_embeddings")
                 if speaker_embeddings:
                     try:
-                        from app.services.speaker_identification import match_speakers, apply_speaker_matches
+                        from app.services.speaker_identification import identify_speakers
                         async with AsyncSessionLocal() as db:
-                            matches = await match_speakers(
-                                db, speaker_embeddings,
-                                threshold=settings.speaker_match_threshold,
+                            parsed["speakers"], speaker_matches = await identify_speakers(
+                                db, speaker_embeddings, parsed["speakers"],
+                                embedding_model=parsed.get("speaker_embedding_model"),
                             )
-                            if matches:
-                                parsed["speakers"] = apply_speaker_matches(
-                                    parsed["speakers"], matches
-                                )
                     except Exception as e:
                         logger.warning("Speaker identification failed (non-fatal): %s", e)
+
+                    # Optional retention of the embeddings themselves (admin flag),
+                    # so a speaker can be saved as a voice profile later, audio or not.
+                    try:
+                        from app.services.speaker_identification import (
+                            is_retention_enabled, store_transcription_embeddings,
+                        )
+                        async with AsyncSessionLocal() as db:
+                            if await is_retention_enabled(db):
+                                n = await store_transcription_embeddings(
+                                    db, transcription_id, speaker_embeddings,
+                                    embedding_model=parsed.get("speaker_embedding_model"),
+                                )
+                                logger.info("Retained %d speaker embedding(s) for %s", n, transcription_id)
+                    except Exception as e:
+                        logger.warning("Speaker embedding retention failed (non-fatal): %s", e)
 
                 async with AsyncSessionLocal() as db:
                     result = await db.execute(
@@ -435,7 +452,10 @@ class TranscriptionQueue:
                     transcription.text = parsed["text"]
                     transcription.segments = parsed["segments"]
                     transcription.speakers = parsed["speakers"]
+                    transcription.speaker_matches = speaker_matches or None
                     transcription.audio_duration = parsed["duration"]
+                    if parsed.get("language") and not transcription.language:
+                        transcription.language = parsed["language"]
                     transcription.status = TranscriptionStatus.completed
                     transcription.progress = 100
                     transcription.completed_at = datetime.utcnow()

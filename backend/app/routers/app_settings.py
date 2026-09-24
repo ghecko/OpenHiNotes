@@ -20,6 +20,10 @@ CONFIGURABLE_KEYS = {
         "description": "Enable speaker voice fingerprinting (users can record voice profiles for auto-identification)",
         "default_from_env": "",
     },
+    "speaker_embedding_retention_enabled": {
+        "description": "Keep the (encrypted) voice embedding of every diarized speaker with its transcription, so a speaker can later be saved as a voice profile without the audio",
+        "default_from_env": "",
+    },
     "voxhub_api_url": {
         "description": "VoxHub API base URL (e.g. http://server:8000)",
         "default_from_env": "voxhub_api_url",
@@ -38,8 +42,12 @@ CONFIGURABLE_KEYS = {
         "default_from_env": "voxhub_job_mode",
     },
     "voxhub_vad_mode": {
-        "description": "VAD strategy: silero (fast), pyannote (accurate), hybrid (best recall+precision), none (pre-segmented)",
+        "description": "VAD strategy for the legacy pipeline: empty = VoxHub server default, silero (no speaker labels!), pyannote, hybrid, none",
         "default_from_env": "voxhub_vad_mode",
+    },
+    "voxhub_pipeline": {
+        "description": "VoxHub pipeline: empty = server default, wordalign (chunks + CTC word alignment + per-word speakers), legacy (diarize then transcribe turns)",
+        "default_from_env": "voxhub_pipeline",
     },
     "llm_api_url": {
         "description": "LLM API base URL (OpenAI-compatible endpoint)",
@@ -127,7 +135,7 @@ async def get_settings(
 
 # ── Feature Flags (readable by all authenticated users) ──────────────
 
-FEATURE_FLAG_KEYS = {"voice_fingerprinting_enabled"}
+FEATURE_FLAG_KEYS = {"voice_fingerprinting_enabled", "speaker_embedding_retention_enabled"}
 
 
 @router.get("/features")

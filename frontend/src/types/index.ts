@@ -33,11 +33,47 @@ export interface RegistrationSettings {
 
 export type TranscriptionStatus = 'pending' | 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
+export interface TranscriptionWord {
+  word: string;
+  start: number;
+  end: number;
+  /** CTC alignment score 0..1 (0 = interpolated, not aligned) */
+  score?: number | null;
+}
+
 export interface TranscriptionSegment {
   start: number;
   end: number;
   text: string;
   speaker?: string;
+  /** Mean alignment confidence 0..1 (VoxHub wordalign pipeline only) */
+  confidence?: number | null;
+  /** Word timestamps (VoxHub wordalign pipeline only) */
+  words?: TranscriptionWord[] | null;
+}
+
+export type VoiceSource = 'stored' | 'audio' | null;
+
+/** What each speaker of a transcription can be enrolled from. */
+export interface VoiceSources {
+  fingerprinting_enabled: boolean;
+  retention_enabled: boolean;
+  audio_available: boolean;
+  sources: Record<string, VoiceSource>;
+}
+
+export type SpeakerMatchStatus = 'auto' | 'confirmed' | 'rejected' | 'unmatched';
+
+/** Voice-fingerprint identification result for one diarization label. */
+export interface SpeakerMatch {
+  profile_id?: string | null;
+  user_id?: string | null;
+  display_name?: string | null;
+  distance?: number | null;
+  confidence?: number | null;
+  status: SpeakerMatchStatus;
+  /** Label of the voice profile created when the user confirmed with enrol */
+  enrolled_as?: string | null;
 }
 
 export type PermissionLevel = 'owner' | 'write' | 'read';
@@ -88,6 +124,10 @@ export interface Transcription {
   /** For combined transcriptions: ordered list of source recording
    *  filenames that were merged. null on normal single-source rows. */
   combined_sources: string[] | null;
+  /** Speaker-count hint given at upload (forwarded to the diarizer) */
+  num_speakers?: number | null;
+  /** Automatic speaker identification results keyed by diarization label */
+  speaker_matches?: Record<string, SpeakerMatch> | null;
   created_at: string;
   updated_at: string;
   permission_level?: PermissionLevel | null;
