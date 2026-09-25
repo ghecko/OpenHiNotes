@@ -540,6 +540,20 @@ class TranscriptionQueue:
                         if transcription.status == TranscriptionStatus.cancelled:
                             logger.info("Transcription %s was cancelled during processing", transcription_id)
                             return
+                        # Giving up on our side (stale timeout, poll error, ...)
+                        # does not stop VoxHub: the job would keep running as a
+                        # zombie, burning Silero CPU, vLLM slots and GPU
+                        # diarization in competition with the next jobs. Cancel
+                        # it best-effort; VoxHub answers non-200 if it already
+                        # finished or failed, which is fine.
+                        if transcription.voxhub_job_id:
+                            try:
+                                await TranscriptionService.cancel_voxhub_job(transcription.voxhub_job_id, db)
+                            except Exception as cancel_err:  # pragma: no cover — best-effort
+                                logger.warning(
+                                    "Could not cancel VoxHub job %s after failure: %s",
+                                    transcription.voxhub_job_id, cancel_err,
+                                )
                         transcription.status = TranscriptionStatus.failed
                         transcription.error_message = str(e)
                         transcription.completed_at = datetime.utcnow()
