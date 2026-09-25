@@ -20,6 +20,10 @@ const USB_READ_SIZE = 65536;
 const STREAM_INFLIGHT_READS = 3;
 /** Progress callbacks are rate-limited to avoid a React re-render per packet. */
 const PROGRESS_INTERVAL_MS = 100;
+/** After a stream (file list, download): wait this long without data before
+ *  considering the device idle, so the next command is not sent mid-stream. */
+const STREAM_DRAIN_SILENCE_MS = 150;
+const STREAM_DRAIN_MAX_MS = 1500;
 
 const COMMANDS = {
   GET_DEVICE_INFO: 1,
@@ -364,6 +368,10 @@ class DeviceService {
    */
   private pendingReads: Promise<Uint8Array | null>[] = [];
 
+  /** USB read (transferIn) rejections since connect; logged throttled in issueRead(). */
+  private usbReadErrors = 0;
+  private lastUsbReadErrorLogAt = 0;
+
   /**
    * In-memory cache of downloaded audio blobs keyed by fileName.
    * Survives component re-renders and page navigations because
@@ -399,6 +407,7 @@ class DeviceService {
         this.sequenceId = 0;
         this.receiveBuffer.clear();
         this.pendingReads = [];
+        this.usbReadErrors = 0;
 
         if (!device.opened) {
           await device.open();
@@ -657,6 +666,7 @@ class DeviceService {
 
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     console.log('[OpenHiNotes] Download complete: received %d/%d bytes in %ds', received, fileSize, elapsed);
+    await this.drainStream('Download');
 
     // Detect the actual audio format from the first chunk
     const format = chunks.length > 0 ? detectAudioFormat(chunks[0]) : 'pcm';
@@ -680,7 +690,12 @@ class DeviceService {
   async deleteFile(fileName: string): Promise<void> {
     const fileNameBytes = new TextEncoder().encode(fileName);
     const seqId = await this.sendCommand(COMMANDS.DELETE_FILE, fileNameBytes);
-    await this.receiveResponse(seqId);
+    const { body } = await this.receiveResponse(seqId, 10000, COMMANDS.DELETE_FILE);
+    // jensen.js: body[0] = 0 success, 1 file does not exist, 2 failed
+    const status = body.length > 0 ? body[0] : 0;
+    if (status === 1) throw new Error(`Device says ${fileName} does not exist`);
+    if (status === 2) throw new Error(`Device failed to delete ${fileName}`);
+    if (status !== 0) console.warn('[OpenHiNotes] DELETE_FILE: unexpected status %d for %s', status, fileName);
   }
 
   async formatStorage(): Promise<void> {
@@ -733,8 +748,38 @@ class DeviceService {
 
     if (body) packet.set(body, 12);
 
+    // Nothing received before the command can be its response. A stale partial
+    // packet left by a previous stream would otherwise swallow the reply
+    // (tryParsePacket waits forever for the rest of a truncated body).
+    if (this.receiveBuffer.length > 0) {
+      console.debug('[OpenHiNotes] Dropping %d stale byte(s) before cmd %d', this.receiveBuffer.length, commandId);
+      this.receiveBuffer.clear();
+    }
+
     await this.device.transferOut(ENDPOINT_OUT, packet);
     return seqId;
+  }
+
+  /**
+   * After a stream: keep reading until the device has been silent for
+   * STREAM_DRAIN_SILENCE_MS (bounded by STREAM_DRAIN_MAX_MS), then drop
+   * whatever trailing bytes arrived. Ensures the device is idle before the
+   * next command and that no truncated packet lingers in the buffer.
+   */
+  private async drainStream(label: string): Promise<void> {
+    const before = this.receiveBuffer.length;
+    let extra = 0;
+    const start = Date.now();
+    while (Date.now() - start < STREAM_DRAIN_MAX_MS) {
+      const got = await this.readToBuffer(1, STREAM_DRAIN_SILENCE_MS);
+      if (got < 0) break;
+      extra += got;
+    }
+    if (before + extra > 0) {
+      console.debug('[OpenHiNotes] %s: discarded %d leftover + %d trailing byte(s) in %dms',
+        label, before, extra, Date.now() - start);
+    }
+    this.receiveBuffer.clear();
   }
 
   /**
@@ -755,10 +800,24 @@ class DeviceService {
             ),
           );
         }
+        if (result.status !== 'ok') this.noteReadError(`status=${result.status}`);
         return result.status === 'ok' ? new Uint8Array(0) : null;
       },
-      () => null, // InvalidStateError (disconnect), AbortError (close), ...
+      (err: unknown) => {
+        // InvalidStateError (disconnect), AbortError (close), NetworkError (stall), ...
+        this.noteReadError(err instanceof Error ? `${err.name}: ${err.message}` : String(err));
+        return null;
+      },
     );
+  }
+
+  private noteReadError(detail: string): void {
+    this.usbReadErrors++;
+    const now = Date.now();
+    if (now - this.lastUsbReadErrorLogAt > 1000) {
+      this.lastUsbReadErrorLogAt = now;
+      console.warn('[OpenHiNotes] USB read failed (#%d): %s', this.usbReadErrors, detail);
+    }
   }
 
   /**
@@ -805,6 +864,7 @@ class DeviceService {
     if (!this.device) throw new Error('Device not connected');
 
     const deadline = Date.now() + timeout;
+    const errorsBefore = this.usbReadErrors;
 
     while (Date.now() < deadline) {
       // Check buffer first before reading more data
@@ -821,7 +881,11 @@ class DeviceService {
         await new Promise((r) => setTimeout(r, 20));
       }
     }
-    throw new Error(`Timeout waiting for resp (seq ${expectedSeqId}, cmd ${expectedCommandId})`);
+    const buf = this.receiveBuffer;
+    const head = Array.from({ length: Math.min(16, buf.length) }, (_, i) => buf.byteAt(i).toString(16).padStart(2, '0')).join(' ');
+    console.warn('[OpenHiNotes] Response timeout: seq=%d cmd=%s, %d byte(s) buffered [%s], %d read(s) pending, %d USB read error(s) during wait',
+      expectedSeqId, expectedCommandId ?? '?', buf.length, head, this.pendingReads.length, this.usbReadErrors - errorsBefore);
+    throw new Error(`Timeout waiting for resp (seq ${expectedSeqId}, cmd ${expectedCommandId ?? '?'})`);
   }
 
   private tryParsePacket(
@@ -948,6 +1012,8 @@ class DeviceService {
         throw error;
       }
     }
+
+    await this.drainStream('File list');
 
     if (fileDataBuffer.length > 0) {
       console.warn('[OpenHiNotes] Unparsed file data remaining (%d bytes):', fileDataBuffer.length,
