@@ -645,34 +645,7 @@ export function Recordings() {
     }
   };
 
-  if (!device?.connected) {
-    return (
-      <Layout title="Recordings">
-        <div className="flex flex-col items-center justify-center py-12">
-          <AlertCircle className="w-16 h-16 text-gray-400 mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-            No Device Connected
-          </h2>
-          <p className="text-gray-600 dark:text-gray-400 mb-6">
-            Please connect your HiDock device to access recordings
-          </p>
-          <button
-            onClick={connectDevice}
-            disabled={isLoading}
-            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
-          >
-            {isLoading ? 'Connecting...' : 'Connect Device'}
-          </button>
-        </div>
-      </Layout>
-    );
-  }
-
-  const storagePercent = device.storageInfo
-    ? (device.storageInfo.usedSpace / device.storageInfo.totalSpace) * 100
-    : 0;
-
-  const hasSelection = selectedRecordings.length > 0;
+  // Hooks below must stay above the early return (rules of hooks)
   const handleSort = useCallback((key: SortKey) => {
     setSort((prev) => {
       const next: SortState = prev.key === key
@@ -722,6 +695,35 @@ export function Recordings() {
     });
     return list;
   }, [serverOnlyRecordings, typeFilter, sort]);
+
+  if (!device?.connected) {
+    return (
+      <Layout title="Recordings">
+        <div className="flex flex-col items-center justify-center py-12">
+          <AlertCircle className="w-16 h-16 text-gray-400 mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+            No Device Connected
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">
+            Please connect your HiDock device to access recordings
+          </p>
+          <button
+            onClick={connectDevice}
+            disabled={isLoading}
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+          >
+            {isLoading ? 'Connecting...' : 'Connect Device'}
+          </button>
+        </div>
+      </Layout>
+    );
+  }
+
+  const storagePercent = device.storageInfo
+    ? (device.storageInfo.usedSpace / device.storageInfo.totalSpace) * 100
+    : 0;
+
+  const hasSelection = selectedRecordings.length > 0;
 
   return (
     <Layout title="Recordings">
