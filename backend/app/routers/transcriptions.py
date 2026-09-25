@@ -820,6 +820,95 @@ async def toggle_keep_audio(
     return transcription
 
 
+@router.post("/{transcription_id}/audio", response_model=TranscriptionResponse)
+async def attach_transcription_audio(
+    transcription_id: uuid.UUID,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-attach the audio of an already transcribed recording.
+
+    Used when a recording was transcribed with keep_audio off and the user
+    later wants the audio on the server (playback without the HiDock, voice
+    enrolment from audio, benchmark references). The frontend pulls the file
+    from the device over WebUSB and posts it here. The file is stored under
+    the transcription's existing ``filename`` so ``GET /audio/{id}`` keeps
+    working unchanged.
+    """
+    from app.models.app_settings import AppSetting
+
+    ka_result = await db.execute(
+        select(AppSetting).where(AppSetting.key == "keep_audio_enabled")
+    )
+    ka_setting = ka_result.scalars().first()
+    if ka_setting and ka_setting.value.lower() != "true":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Keeping audio is disabled by administrator",
+        )
+
+    transcription = await TranscriptionService.get_transcription(db, transcription_id)
+    if not transcription:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transcription not found")
+
+    has_access = await PermissionService.check_access(
+        db, current_user, ResourceType.transcription, transcription_id, "write"
+    )
+    if not has_access:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    if transcription.status != TranscriptionStatus.completed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Audio can only be attached to a completed transcription",
+        )
+
+    if not file.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No file provided")
+    if Path(file.filename).name != transcription.original_filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Filename mismatch: this transcription was made from "
+                f"'{transcription.original_filename}', got '{file.filename}'"
+            ),
+        )
+
+    file_path = Path(settings.uploads_directory) / str(transcription.user_id) / transcription.filename
+    if transcription.audio_available and file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Audio is already stored on the server for this transcription",
+        )
+
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = file_path.with_name(file_path.name + ".part")
+    try:
+        with open(tmp_path, "wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+        if tmp_path.stat().st_size == 0:
+            raise ValueError("empty file")
+        os.replace(str(tmp_path), str(file_path))
+    except Exception as e:
+        if tmp_path.exists():
+            os.remove(str(tmp_path))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to save file: {str(e)}",
+        )
+
+    transcription.keep_audio = True
+    transcription.audio_available = True
+    await db.commit()
+    await db.refresh(transcription)
+    return transcription
+
+
 @router.get("/{transcription_id}", response_model=TranscriptionResponse)
 async def get_transcription(
     transcription_id: uuid.UUID,

@@ -373,6 +373,51 @@ export const transcriptionsApi = {
     );
   },
 
+  /**
+   * Re-attach the audio of an already transcribed recording (keep_audio was
+   * off at transcription time). The blob is typically pulled from the HiDock
+   * over WebUSB; `fileName` must equal the transcription's original_filename.
+   * Uses XHR so the upload progress can be reported.
+   */
+  async attachAudio(
+    id: string,
+    blob: Blob,
+    fileName: string,
+    onProgress?: (fraction: number) => void,
+  ): Promise<Transcription> {
+    const form = new FormData();
+    form.append('file', blob, fileName);
+    const token = localStorage.getItem('auth_token');
+    return new Promise<Transcription>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `/api/transcriptions/${id}/audio`);
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.upload.onprogress = (e) => {
+        if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText) as Transcription);
+          } catch (err) {
+            reject(err);
+          }
+          return;
+        }
+        let detail = `HTTP ${xhr.status}`;
+        try {
+          const body = JSON.parse(xhr.responseText);
+          detail = body.detail || body.message || detail;
+        } catch {
+          /* keep default */
+        }
+        reject(new Error(detail));
+      };
+      xhr.onerror = () => reject(new Error('Network error while uploading audio'));
+      xhr.send(form);
+    });
+  },
+
   async getQueueStatus(): Promise<QueueStatus> {
     return apiClient.get<QueueStatus>('/transcriptions/queue/status');
   },

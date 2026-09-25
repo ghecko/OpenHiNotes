@@ -10,13 +10,14 @@ import { transcriptionsApi } from '@/api/transcriptions';
 import { summariesApi } from '@/api/summaries';
 import { templatesApi } from '@/api/templates';
 import { collectionsApi } from '@/api/collections';
+import { settingsApi } from '@/api/settings';
 import { useAppStore } from '@/store/useAppStore';
 import { useDeviceConnection } from '@/hooks/useDeviceConnection';
 import { deviceService } from '@/services/deviceService';
 import { Transcription, Summary, SummaryTemplate, Collection, VoiceSources } from '@/types';
 import { useAuthStore } from '@/store/useAuthStore';
 import { format } from 'date-fns';
-import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, Play, Pause, Volume2, Disc3, Share2, Lock, Eye, ChevronDown, Pin } from 'lucide-react';
+import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, Play, Pause, Volume2, Disc3, Share2, Lock, Eye, ChevronDown, Pin, CloudUpload } from 'lucide-react';
 import { ShareModal } from '@/components/ShareModal';
 import { InteractiveMarkdown } from '@/components/InteractiveMarkdown';
 import { TemplateSelector } from '@/components/TemplateSelector';
@@ -210,6 +211,18 @@ export function TranscriptionDetail() {
   // useEffect below for the state machine.
   type DeviceLookupState = 'idle' | 'checking' | 'found' | 'not_found';
   const [deviceLookupState, setDeviceLookupState] = useState<DeviceLookupState>('idle');
+  // "Save audio on server" (re-attach audio after a keep_audio=off transcription)
+  const [keepAudioEnabled, setKeepAudioEnabled] = useState(true);
+  const [isSavingAudio, setIsSavingAudio] = useState(false);
+  const [saveAudioProgress, setSaveAudioProgress] = useState(0);
+  const [saveAudioError, setSaveAudioError] = useState<string | null>(null);
+
+  // Admin switch: when keeping audio is disabled, hide "Save on server".
+  useEffect(() => {
+    settingsApi.getAudioSettings()
+      .then((s) => setKeepAudioEnabled(s.keep_audio_enabled))
+      .catch(() => { /* keep default */ });
+  }, []);
 
   // Subscribe to real-time updates when transcription is queued/processing
   useEffect(() => {
@@ -632,50 +645,109 @@ export function TranscriptionDetail() {
     }
   }, [transcription]);
 
+  // Pull the source recording from the HiDock (blob cache first). Shared by
+  // "Load from Device" and "Save on server". Returns null when the recording
+  // is not on the device or the transfer failed (already logged).
+  const fetchDeviceBlob = useCallback(async (
+    onProgress: (pct: number) => void,
+  ): Promise<Blob | null> => {
+    if (!transcription) return null;
+    const cached = deviceService.getCachedBlob(transcription.original_filename);
+    if (cached) return cached;
+
+    // Use the already-known sourceRecording, or re-fetch the list from the
+    // device if recordings haven't been loaded yet (e.g. after a page refresh).
+    let rec = sourceRecording;
+    if (!rec && deviceService.isConnected()) {
+      try {
+        const freshRecs = await deviceService.getFileList();
+        rec = freshRecs.find((r) => r.fileName === transcription.original_filename);
+      } catch (e) {
+        console.warn('[OpenHiNotes] Could not refresh recording list:', e);
+      }
+    }
+
+    if (!rec) {
+      console.error('[OpenHiNotes] Recording not found on device:', transcription.original_filename);
+      return null;
+    }
+
+    const blob = await downloadRecording(
+      rec.fileName,
+      rec.size,
+      (pct) => onProgress(Math.round(pct)),
+      rec.fileVersion,
+    );
+    if (blob) deviceService.setCachedBlob(rec.fileName, blob);
+    return blob ?? null;
+  }, [sourceRecording, transcription, downloadRecording]);
+
   const handleLoadAudio = useCallback(async () => {
     if (!transcription) return;
     setIsLoadingAudio(true);
     setLoadAudioProgress(0);
     try {
-      const cached = deviceService.getCachedBlob(transcription.original_filename);
-      if (cached) {
-        setAudioBlob(cached);
-        return;
-      }
-
-      // Use the already-known sourceRecording, or re-fetch the list from the
-      // device if recordings haven't been loaded yet (e.g. after a page refresh).
-      let rec = sourceRecording;
-      if (!rec && deviceService.isConnected()) {
-        try {
-          const freshRecs = await deviceService.getFileList();
-          rec = freshRecs.find((r) => r.fileName === transcription.original_filename);
-        } catch (e) {
-          console.warn('[OpenHiNotes] Could not refresh recording list:', e);
-        }
-      }
-
-      if (!rec) {
-        console.error('[OpenHiNotes] Recording not found on device:', transcription.original_filename);
-        return;
-      }
-
-      const blob = await downloadRecording(
-        rec.fileName,
-        rec.size,
-        (pct) => setLoadAudioProgress(Math.round(pct)),
-        rec.fileVersion,
-      );
-      if (blob) {
-        deviceService.setCachedBlob(rec.fileName, blob);
-        setAudioBlob(blob);
-      }
+      const blob = await fetchDeviceBlob(setLoadAudioProgress);
+      if (blob) setAudioBlob(blob);
     } catch (err) {
       console.error('Failed to download audio:', err);
     } finally {
       setIsLoadingAudio(false);
     }
-  }, [sourceRecording, transcription, downloadRecording]);
+  }, [transcription, fetchDeviceBlob]);
+
+  // Re-attach the audio to a transcription made with keep_audio off: take the
+  // blob already loaded (or pull it from the device), POST it to the server,
+  // then flip audio_available/keep_audio from the server's answer.
+  const handleSaveAudioToServer = useCallback(async () => {
+    if (!transcription || transcription.audio_available) return;
+    setIsSavingAudio(true);
+    setSaveAudioError(null);
+    setSaveAudioProgress(0);
+    try {
+      let blob = audioBlob;
+      if (!blob) {
+        // Device transfer takes the first half of the bar, upload the second.
+        blob = await fetchDeviceBlob((pct) => setSaveAudioProgress(Math.round(pct / 2)));
+        if (!blob) {
+          setSaveAudioError('Recording not found on the device');
+          return;
+        }
+        setAudioBlob(blob);
+      }
+      const updated = await transcriptionsApi.attachAudio(
+        transcription.id,
+        blob,
+        transcription.original_filename,
+        (fraction) => setSaveAudioProgress(50 + Math.round(fraction * 50)),
+      );
+      setTranscription(updated);
+      setSaveAudioProgress(100);
+    } catch (err) {
+      console.error('Failed to save audio on server:', err);
+      setSaveAudioError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSavingAudio(false);
+    }
+  }, [transcription, audioBlob, fetchDeviceBlob]);
+
+  // Save the loaded audio to the user's computer. HiDock .hda files come back
+  // from the device as WAV, so give the download a .wav extension in that case.
+  const handleDownloadAudio = useCallback(() => {
+    if (!audioBlob || !transcription) return;
+    let name = transcription.original_filename || `audio-${transcription.id}`;
+    if (audioBlob.type === 'audio/wav' && !/\.wav$/i.test(name)) {
+      name = name.replace(/\.[^.]+$/, '') + '.wav';
+    }
+    const url = URL.createObjectURL(audioBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, [audioBlob, transcription]);
 
   // Auto-load audio from server if it's available and kept
   useEffect(() => {
@@ -1336,7 +1408,31 @@ ${summary.content}
                       Playing
                     </span>
                   )}
+                  <span className="ml-auto inline-flex items-center gap-2">
+                    {!transcription.audio_available && !isCombined && canEdit && keepAudioEnabled && (
+                      <button
+                        onClick={handleSaveAudioToServer}
+                        disabled={isSavingAudio}
+                        title="Store this audio on the server so it can be played back and used for voice profiles without the device"
+                        className="px-2.5 py-1 text-xs font-medium bg-primary-600 hover:bg-primary-700 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                      >
+                        {isSavingAudio ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <CloudUpload className="w-3.5 h-3.5" />}
+                        {isSavingAudio ? `Saving… ${saveAudioProgress}%` : 'Save on server'}
+                      </button>
+                    )}
+                    <button
+                      onClick={handleDownloadAudio}
+                      title="Download the audio to this computer"
+                      className="px-2.5 py-1 text-xs font-medium rounded-md bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors flex items-center gap-1.5"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download
+                    </button>
+                  </span>
                 </div>
+                {saveAudioError && (
+                  <p className="text-xs text-red-600 dark:text-red-400">{saveAudioError}</p>
+                )}
                 {!isWhisper && (
                   <SpeakerTimeline
                     segments={transcription.segments}
@@ -1413,14 +1509,38 @@ ${summary.content}
                           : 'Load from Device'}
                     </button>
                   )}
+                  {!transcription.audio_available && !isCombined && canEdit && keepAudioEnabled && (
+                    <button
+                      onClick={handleSaveAudioToServer}
+                      disabled={
+                        isSavingAudio ||
+                        isLoadingAudio ||
+                        !device?.connected ||
+                        deviceLookupState === 'checking' ||
+                        deviceLookupState === 'not_found'
+                      }
+                      title={
+                        !device?.connected
+                          ? 'Connect your device to fetch the recording'
+                          : 'Pull the recording from the device and store it on the server'
+                      }
+                      className="px-4 py-1.5 text-sm font-medium rounded-lg border border-primary-600 text-primary-700 dark:text-primary-300 hover:bg-primary-50 dark:hover:bg-primary-900/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      {isSavingAudio ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <CloudUpload className="w-3.5 h-3.5" />}
+                      {isSavingAudio ? `Saving… ${saveAudioProgress}%` : 'Save on server'}
+                    </button>
+                  )}
                 </div>
-                {isLoadingAudio && (
+                {(isLoadingAudio || isSavingAudio) && (
                   <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1.5 overflow-hidden">
                     <div
                       className="bg-primary-600 h-1.5 rounded-full transition-all duration-200"
-                      style={{ width: `${loadAudioProgress}%` }}
+                      style={{ width: `${isSavingAudio ? saveAudioProgress : loadAudioProgress}%` }}
                     />
                   </div>
+                )}
+                {saveAudioError && (
+                  <p className="text-xs text-red-600 dark:text-red-400">{saveAudioError}</p>
                 )}
               </div>
             )}
