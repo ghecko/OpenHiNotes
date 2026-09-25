@@ -1,9 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Volume2, Keyboard } from 'lucide-react';
+import { Play, Pause, Volume2, Keyboard, X } from 'lucide-react';
 
 interface AudioPlayerProps {
   src: string | Blob;
   fileName: string;
+  /** Start playback as soon as the source is set (only works after a user gesture). */
+  autoPlay?: boolean;
+  /** When provided, shows a close button that calls this. */
+  onClose?: () => void;
 }
 
 // Phase 6.4 — playback speeds cycled by the "S" shortcut.
@@ -17,7 +21,7 @@ function isEditableTarget(target: EventTarget | null) {
   return false;
 }
 
-export function AudioPlayer({ src, fileName }: AudioPlayerProps) {
+export function AudioPlayer({ src, fileName, autoPlay = false, onClose }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -35,6 +39,8 @@ export function AudioPlayer({ src, fileName }: AudioPlayerProps) {
       setDuration(audio.duration);
       setAudioError(null);
     };
+    const handlePlay = () => setIsPlaying(true);
+    const handlePause = () => setIsPlaying(false);
     const handleEnded = () => setIsPlaying(false);
     const handleError = () => {
       const err = audio.error;
@@ -45,21 +51,27 @@ export function AudioPlayer({ src, fileName }: AudioPlayerProps) {
     };
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+    audio.addEventListener('play', handlePlay);
+    audio.addEventListener('pause', handlePause);
     audio.addEventListener('ended', handleEnded);
     audio.addEventListener('error', handleError);
     return () => {
       audio.removeEventListener('timeupdate', handleTimeUpdate);
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      audio.removeEventListener('play', handlePlay);
+      audio.removeEventListener('pause', handlePause);
       audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('error', handleError);
     };
   }, []);
 
   const togglePlay = () => {
-    if (audioRef.current) {
-      if (isPlaying) audioRef.current.pause();
-      else audioRef.current.play();
-      setIsPlaying(!isPlaying);
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      audio.play().catch((err) => console.warn('[OpenHiNotes] AudioPlayer: play() rejected:', err));
+    } else {
+      audio.pause();
     }
   };
 
@@ -144,6 +156,15 @@ export function AudioPlayer({ src, fileName }: AudioPlayerProps) {
     return () => URL.revokeObjectURL(url);
   }, [src]);
 
+  // Auto-start when a new source is set (the click on "Play" in the list is
+  // the user gesture that allows it). Runs after the <audio src> commit.
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!autoPlay || !audioSrc || !audio) return;
+    setCurrentTime(0);
+    audio.play().catch((err) => console.warn('[OpenHiNotes] AudioPlayer: autoplay rejected:', err));
+  }, [audioSrc, autoPlay]);
+
   return (
     <div className="flex flex-col gap-3 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
       <audio ref={audioRef} src={audioSrc} />
@@ -167,6 +188,15 @@ export function AudioPlayer({ src, fileName }: AudioPlayerProps) {
           >
             <Keyboard className="w-4 h-4" />
           </button>
+          {onClose && (
+            <button
+              onClick={onClose}
+              title="Close player"
+              className="p-1.5 rounded text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-white dark:hover:bg-gray-700 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 

@@ -793,12 +793,6 @@ export function Recordings() {
         </div>
       </div>
 
-      {playingFile && (
-        <div className="mb-6">
-          <AudioPlayer src={playingFile.blob} fileName={playingFile.name} />
-        </div>
-      )}
-
       {/* Recording type filter tabs */}
       <div className="mb-4 flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit">
@@ -1338,6 +1332,21 @@ export function Recordings() {
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Player bar: sticks to the bottom of the scroll area so it stays visible
+          whatever row was clicked, and auto-starts the selected recording. */}
+      {playingFile && (
+        <div className="sticky bottom-0 z-20 mt-6 -mx-3 sm:-mx-6 -mb-3 sm:-mb-6 px-3 sm:px-6 py-3 bg-gray-50/90 dark:bg-gray-950/90 backdrop-blur border-t border-gray-200/60 dark:border-gray-700/40">
+          <div className="shadow-lg rounded-lg">
+            <AudioPlayer
+              src={playingFile.blob}
+              fileName={playingFile.name}
+              autoPlay
+              onClose={() => setPlayingFile(null)}
+            />
           </div>
         </div>
       )}
