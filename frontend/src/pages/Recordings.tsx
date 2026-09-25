@@ -1,22 +1,97 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Layout } from '@/components/Layout';
 import { useDeviceConnection } from '@/hooks/useDeviceConnection';
 import { useAppStore } from '@/store/useAppStore';
 import { useQueueStore } from '@/store/useQueueStore';
 import { TranscribeModal } from '@/components/TranscribeModal';
 import { AudioPlayer } from '@/components/AudioPlayer';
-import { Collection, Transcription } from '@/types';
+import { AudioRecording, Collection, Transcription } from '@/types';
 import { deviceService } from '@/services/deviceService';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { collectionsApi } from '@/api/collections';
 import { recordingAliasesApi } from '@/api/recordingAliases';
-import { Play, Download, Trash2, Zap, FileText, AlertCircle, Pencil, X, CheckCircle, FolderOpen, TriangleAlert, Server, ServerOff, Mic, MessageSquare, Loader } from 'lucide-react';
+import { Play, Download, Trash2, Zap, FileText, AlertCircle, Pencil, X, CheckCircle, FolderOpen, TriangleAlert, Server, ServerOff, Mic, MessageSquare, Loader, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import type { RecordingType } from '@/types';
 
 /** Detect recording type from HiDock filename convention.
  *  Filenames like "2026Apr12-122705-Wip08.hda" contain the type marker after the timestamp. */
 function detectRecordingType(fileName: string): RecordingType {
   return /wip/i.test(fileName) ? 'whisper' : 'record';
+}
+
+/* ── Column sorting ───────────────────────────────────────────────── */
+type SortKey = 'name' | 'size' | 'duration' | 'date' | 'status';
+type SortDir = 'asc' | 'desc';
+interface SortState { key: SortKey; dir: SortDir; }
+
+const SORT_STORAGE_KEY = 'openhinotes.recordings.sort';
+const DEFAULT_SORT: SortState = { key: 'date', dir: 'desc' };
+/** Direction used the first time a column is clicked (numbers/dates: biggest/newest first). */
+const DEFAULT_DIR: Record<SortKey, SortDir> = { name: 'asc', size: 'desc', duration: 'desc', date: 'desc', status: 'asc' };
+
+function loadSortState(): SortState {
+  try {
+    const raw = localStorage.getItem(SORT_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<SortState>;
+      if (parsed.key && parsed.key in DEFAULT_DIR && (parsed.dir === 'asc' || parsed.dir === 'desc')) {
+        return { key: parsed.key, dir: parsed.dir };
+      }
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_SORT;
+}
+
+/** Rank used to sort the Status column (ascending = transcribed first, no transcript last). */
+function statusRank(status: string | undefined): number {
+  switch (status) {
+    case 'completed': return 0;
+    case 'processing': return 1;
+    case 'pending': return 2;
+    case 'failed': return 3;
+    case undefined: return 5;
+    default: return 4;
+  }
+}
+
+/** Natural, case-insensitive filename comparison (digits compared numerically). */
+const nameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+interface SortableHeaderProps {
+  label: string;
+  sortKey: SortKey;
+  sort: SortState;
+  onSort: (key: SortKey) => void;
+  align?: 'left' | 'center' | 'right';
+}
+
+function SortableHeader({ label, sortKey, sort, onSort, align = 'left' }: SortableHeaderProps) {
+  const active = sort.key === sortKey;
+  // Static class names so Tailwind picks them up
+  const textAlign = align === 'center' ? 'text-center' : align === 'right' ? 'text-right' : 'text-left';
+  const justify = align === 'center' ? 'justify-center' : align === 'right' ? 'justify-end' : 'justify-start';
+  return (
+    <th
+      className={`px-6 py-3 ${textAlign} text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider select-none`}
+      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`group inline-flex items-center gap-1 ${justify} uppercase tracking-wider hover:text-gray-900 dark:hover:text-white transition-colors ${
+          active ? 'text-gray-900 dark:text-white' : ''
+        }`}
+        title={`Sort by ${label.toLowerCase()}`}
+      >
+        {label}
+        {active ? (
+          sort.dir === 'asc' ? <ArrowUp className="w-3.5 h-3.5" /> : <ArrowDown className="w-3.5 h-3.5" />
+        ) : (
+          <ArrowUpDown className="w-3.5 h-3.5 opacity-0 group-hover:opacity-60 transition-opacity" />
+        )}
+      </button>
+    </th>
+  );
 }
 import { format } from 'date-fns';
 import { settingsApi } from '@/api/settings';
@@ -216,6 +291,7 @@ export function Recordings() {
   const [transcriptMap, setTranscriptMap] = useState<Record<string, { id: string; status: string; title: string | null; keep_audio: boolean; audio_available: boolean }>>({});
   const [keepAudioEnabled, setKeepAudioEnabled] = useState(true);
   const [typeFilter, setTypeFilter] = useState<'all' | RecordingType>('all');
+  const [sort, setSort] = useState<SortState>(loadSortState);
 
   // Collections for batch assign
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -597,12 +673,55 @@ export function Recordings() {
     : 0;
 
   const hasSelection = selectedRecordings.length > 0;
-  const filteredRecordings = typeFilter === 'all'
-    ? recordings
-    : recordings.filter((r) => detectRecordingType(r.fileName) === typeFilter);
-  const filteredServerOnly = typeFilter === 'all'
-    ? serverOnlyRecordings
-    : serverOnlyRecordings.filter((t) => (t.recording_type || detectRecordingType(t.original_filename)) === typeFilter);
+  const handleSort = useCallback((key: SortKey) => {
+    setSort((prev) => {
+      const next: SortState = prev.key === key
+        ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: DEFAULT_DIR[key] };
+      try { localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
+  const filteredRecordings = useMemo(() => {
+    const list = typeFilter === 'all'
+      ? [...recordings]
+      : recordings.filter((r) => detectRecordingType(r.fileName) === typeFilter);
+    const sign = sort.dir === 'asc' ? 1 : -1;
+    const byDate = (a: AudioRecording, b: AudioRecording) => b.dateCreated.getTime() - a.dateCreated.getTime();
+    list.sort((a, b) => {
+      let cmp = 0;
+      switch (sort.key) {
+        case 'name': cmp = nameCollator.compare(a.fileName, b.fileName); break;
+        case 'size': cmp = a.size - b.size; break;
+        case 'duration': cmp = a.duration - b.duration; break;
+        case 'date': cmp = a.dateCreated.getTime() - b.dateCreated.getTime(); break;
+        case 'status': cmp = statusRank(transcriptMap[a.fileName]?.status) - statusRank(transcriptMap[b.fileName]?.status); break;
+      }
+      // Tie-break on date (newest first) so equal values keep a stable, predictable order
+      return cmp !== 0 ? cmp * sign : byDate(a, b);
+    });
+    return list;
+  }, [recordings, typeFilter, sort, transcriptMap]);
+
+  const filteredServerOnly = useMemo(() => {
+    const list = typeFilter === 'all'
+      ? [...serverOnlyRecordings]
+      : serverOnlyRecordings.filter((t) => (t.recording_type || detectRecordingType(t.original_filename)) === typeFilter);
+    const sign = sort.dir === 'asc' ? 1 : -1;
+    const time = (t: Transcription) => parseServerDate(t.created_at).getTime();
+    list.sort((a, b) => {
+      let cmp = 0;
+      switch (sort.key) {
+        case 'name': cmp = nameCollator.compare(a.original_filename, b.original_filename); break;
+        case 'duration': cmp = (a.audio_duration ?? 0) - (b.audio_duration ?? 0); break;
+        // Size and status are not shown for server-only audio: fall back to date
+        default: cmp = time(a) - time(b); break;
+      }
+      return cmp !== 0 ? cmp * sign : time(b) - time(a);
+    });
+    return list;
+  }, [serverOnlyRecordings, typeFilter, sort]);
 
   return (
     <Layout title="Recordings">
@@ -891,21 +1010,11 @@ export function Recordings() {
                       className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
                     />
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                    Name
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                    Size
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                    Duration
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                    Date
-                  </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                    Status
-                  </th>
+                  <SortableHeader label="Name" sortKey="name" sort={sort} onSort={handleSort} />
+                  <SortableHeader label="Size" sortKey="size" sort={sort} onSort={handleSort} />
+                  <SortableHeader label="Duration" sortKey="duration" sort={sort} onSort={handleSort} />
+                  <SortableHeader label="Date" sortKey="date" sort={sort} onSort={handleSort} />
+                  <SortableHeader label="Status" sortKey="status" sort={sort} onSort={handleSort} align="center" />
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
                     Actions
                   </th>
@@ -1126,15 +1235,9 @@ export function Recordings() {
             <table className="w-full">
               <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                    Name
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                    Duration
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                    Date
-                  </th>
+                  <SortableHeader label="Name" sortKey="name" sort={sort} onSort={handleSort} />
+                  <SortableHeader label="Duration" sortKey="duration" sort={sort} onSort={handleSort} />
+                  <SortableHeader label="Date" sortKey="date" sort={sort} onSort={handleSort} />
                   <th className="px-6 py-3 text-center text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
                     Audio
                   </th>
