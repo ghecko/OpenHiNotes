@@ -383,7 +383,7 @@ async def is_feature_enabled(db: AsyncSession) -> bool:
 async def match_speakers(
     db: AsyncSession,
     speaker_embeddings: Dict[str, Dict],
-    threshold: float = 0.5,
+    threshold: float = 0.3,
 ) -> List[SpeakerMatchResult]:
     """Match speaker embeddings from a transcription against all known profiles.
 
@@ -416,7 +416,7 @@ async def match_speakers(
 def assign_speakers_to_profiles(
     speaker_embeddings: Dict[str, Dict],
     known_profiles: List[Tuple[uuid.UUID, uuid.UUID, str, str, List[float]]],
-    threshold: float = 0.5,
+    threshold: float = 0.3,
 ) -> List[SpeakerMatchResult]:
     """One-to-one assignment of diarized speakers to enrolled users.
 

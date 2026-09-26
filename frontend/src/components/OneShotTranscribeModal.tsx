@@ -19,7 +19,9 @@ interface OneShotResult {
 // when diarization produced something meaningful: a profile-matched name, or
 // at least two distinct speakers. A lone unmatched SPEAKER_00 falls back to
 // plain text. Matched profiles surface the real name; unmatched generic codes
-// become "Speaker N".
+// become "Speaker N", numbered by order of first appearance rather than by
+// the digits in the label: VoxHub merges clusters of one voice after
+// diarization, so labels can have gaps (SPEAKER_00, SPEAKER_02).
 function buildSpeakerView(
   segments: Array<{ text: string; speaker?: string }>,
   speakersMap: Record<string, string>,
@@ -27,11 +29,12 @@ function buildSpeakerView(
   const distinct = Array.from(
     new Set(segments.map((s) => s.speaker).filter(Boolean)),
   ) as string[];
+  const ordinal = new Map(distinct.map((code, i) => [code, i + 1]));
   const resolve = (code: string): string => {
     const mapped = speakersMap[code];
     if (mapped && mapped !== code) return mapped;
-    const m = /^SPEAKER_(\d+)$/.exec(code);
-    return m ? `Speaker ${parseInt(m[1], 10) + 1}` : code;
+    const n = ordinal.get(code);
+    return n ? `Speaker ${n}` : code;
   };
   // Diarization off is already stripped server-side (no speakers at all), so
   // any speaker present means diarization ran — show it (matched name if we

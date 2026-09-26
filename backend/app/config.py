@@ -63,8 +63,14 @@ class Settings(BaseSettings):
     # generated with: python -c "import os; print(os.urandom(32).hex())"
     oidc_encryption_key: str = ""
 
-    # Speaker matching threshold (cosine distance, 0.0 = identical, 1.0 = unrelated)
-    speaker_match_threshold: float = 0.5
+    # Speaker matching threshold (cosine distance, 0.0 = identical, 1.0 = unrelated).
+    # Measured in the pyannote/embedding space on HiDock meetings (VoxHub bench,
+    # 2026-09-26): clusters of the same voice sit at 0.10-0.13 (0.28 on a degraded
+    # phone call), clusters of different people at 0.35-0.48. 0.5 therefore let a
+    # stranger match an enrolled profile; 0.3 keeps a margin on both sides. Check
+    # the `distance` stored in transcriptions.speaker_matches (confirmed vs
+    # rejected) before raising it again.
+    speaker_match_threshold: float = 0.3
 
     # Public base URL for the frontend (used in notification emails). When
     # empty, completion emails still send but with a relative link — set

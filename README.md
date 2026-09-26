@@ -206,7 +206,7 @@ All configuration is through environment variables. See [`.env.example`](.env.ex
 | `LLM_VERIFY_SSL` | SSL verification for LLM (`true`/`false`/path) | `true` |
 | `VOICE_EMBEDDING_KEY` | AES-256 key for voice embedding encryption | *(derived from SECRET_KEY)* |
 | `VOICE_EMBEDDING_KEY_OLD` | Previous key during rotation only | *(empty)* |
-| `SPEAKER_MATCH_THRESHOLD` | Cosine distance threshold for speaker matching | `0.5` |
+| `SPEAKER_MATCH_THRESHOLD` | Cosine distance threshold for speaker matching (same voice ≈ 0.1-0.3, different people ≥ 0.35) | `0.3` |
 | `OIDC_ENCRYPTION_KEY` | AES-256 key for OIDC client secret encryption | *(derived from SECRET_KEY)* |
 | `CORS_ORIGINS` | Allowed CORS origins | `*` |
 
