@@ -26,7 +26,9 @@ class VoiceProfile(Base):
         encrypted_embedding: AES-256-GCM encrypted 512-dim float vector.
         encryption_nonce: 12-byte nonce used for GCM encryption (unique per row).
         encryption_tag: 16-byte GCM authentication tag.
-        embedding_dim: Dimensionality of the embedding (always 512 for pyannote).
+        embedding_dim: Dimensionality of the embedding (256 for the current model).
+        embedding_model: Id of the embedding space the vector lives in. Only
+            profiles from the space VoxHub currently reports are matched.
         is_active: Soft-delete flag. Inactive profiles are excluded from matching.
         created_at / updated_at: Timestamps.
     """
@@ -41,7 +43,10 @@ class VoiceProfile(Base):
     encrypted_embedding: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     encryption_nonce: Mapped[bytes] = mapped_column(LargeBinary(12), nullable=False)
     encryption_tag: Mapped[bytes] = mapped_column(LargeBinary(16), nullable=False)
-    embedding_dim: Mapped[int] = mapped_column(default=512, nullable=False)
+    embedding_dim: Mapped[int] = mapped_column(default=256, nullable=False)
+    embedding_model: Mapped[str] = mapped_column(
+        String(100), nullable=False, default="pyannote/speaker-diarization-community-1#embedding"
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

@@ -17,6 +17,7 @@ class VoiceProfileResponse(BaseModel):
     user_id: uuid.UUID
     label: str
     embedding_dim: int
+    embedding_model: str = "pyannote/embedding"
     is_active: bool
     created_at: datetime
     updated_at: datetime

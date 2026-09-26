@@ -36,6 +36,20 @@ from app.schemas.voice_profile import SpeakerMatchResult
 
 logger = logging.getLogger(__name__)
 
+# Embedding space VoxHub must be using for stored profiles to be comparable.
+# VoxHub reports it as `speaker_embedding_model` next to `speaker_embeddings`
+# and as `model` on /v1/audio/embeddings.
+#
+# Switched on 2026-09-27 from pyannote/embedding (512-d) to the model the
+# speaker-diarization-community-1 pipeline clusters with (WeSpeaker ResNet34,
+# 256-d). Measured on six meeting recordings (VoxHub bench/embedding_models.py):
+# same voice across recordings <= 0.227, different voices >= 0.369, so the
+# 0.3 matching threshold sits in the gap. pyannote/embedding had the same
+# person on two microphones at 0.36-0.58 and a Teams synthetic voice at 0.22
+# from a real speaker. Profiles from the old space are skipped, not compared.
+EXPECTED_EMBEDDING_MODEL = "pyannote/speaker-diarization-community-1#embedding"
+EXPECTED_EMBEDDING_DIM = 256
+
 # ---------------------------------------------------------------------------
 # Encryption helpers
 # ---------------------------------------------------------------------------
@@ -236,6 +250,13 @@ async def extract_embedding_via_voxhub(
     embedding = data.get("embedding")
     if not embedding or not isinstance(embedding, list):
         raise Exception("VoxHub returned invalid embedding response")
+    model_id = data.get("model")
+    if (model_id and model_id != EXPECTED_EMBEDDING_MODEL) or len(embedding) != EXPECTED_EMBEDDING_DIM:
+        raise Exception(
+            f"VoxHub embeds with {model_id!r} ({len(embedding)}-d) but profiles use "
+            f"{EXPECTED_EMBEDDING_MODEL!r} ({EXPECTED_EMBEDDING_DIM}-d); "
+            "set VOXHUB_EMBEDDING_MODEL on VoxHub to match"
+        )
 
     return embedding
 
@@ -276,6 +297,11 @@ async def create_voice_profile(
     """Encrypt and store a voice embedding for a user."""
     ciphertext, nonce, tag = encrypt_embedding(embedding)
 
+    if len(embedding) != EXPECTED_EMBEDDING_DIM:
+        raise ValueError(
+            f"Embedding has {len(embedding)} dimensions, expected {EXPECTED_EMBEDDING_DIM} "
+            f"({EXPECTED_EMBEDDING_MODEL}); is VoxHub running the right VOXHUB_EMBEDDING_MODEL?"
+        )
     profile = VoiceProfile(
         user_id=user_id,
         label=label,
@@ -283,6 +309,7 @@ async def create_voice_profile(
         encryption_nonce=nonce,
         encryption_tag=tag,
         embedding_dim=len(embedding),
+        embedding_model=EXPECTED_EMBEDDING_MODEL,
     )
     db.add(profile)
     await db.commit()
@@ -356,7 +383,11 @@ async def load_all_active_embeddings(
     rows = result.all()
 
     profiles = []
+    stale = 0
     for vp, display_name in rows:
+        if vp.embedding_model != EXPECTED_EMBEDDING_MODEL or vp.embedding_dim != EXPECTED_EMBEDDING_DIM:
+            stale += 1
+            continue
         try:
             embedding = decrypt_embedding(
                 vp.encrypted_embedding, vp.encryption_nonce, vp.encryption_tag
@@ -365,6 +396,12 @@ async def load_all_active_embeddings(
         except Exception as e:
             logger.error("Failed to decrypt voice profile %s: %s", vp.id, e)
             continue
+    if stale:
+        logger.warning(
+            "%d voice profile(s) enrolled with another embedding model are ignored; "
+            "delete them and re-enrol (current space: %s, %d-d)",
+            stale, EXPECTED_EMBEDDING_MODEL, EXPECTED_EMBEDDING_DIM,
+        )
 
     return profiles
 
@@ -485,10 +522,6 @@ def assign_speakers_to_profiles(
     return results
 
 
-# Embedding space VoxHub must be using for stored profiles to be comparable.
-# VoxHub reports it as `speaker_embedding_model` next to `speaker_embeddings`.
-EXPECTED_EMBEDDING_MODEL = "pyannote/embedding"
-EXPECTED_EMBEDDING_DIM = 512
 
 
 async def identify_speakers(
