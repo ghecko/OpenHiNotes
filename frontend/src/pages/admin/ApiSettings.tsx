@@ -1,7 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Layout } from '@/components/Layout';
-import { settingsApi, AppSetting } from '@/api/settings';
-import { Save, RotateCcw, Loader, CheckCircle, AlertCircle } from 'lucide-react';
+import {
+  settingsApi,
+  AppSetting,
+  ConnectionService,
+  ConnectionTestResult,
+} from '@/api/settings';
+import { Save, RotateCcw, Loader, CheckCircle, AlertCircle, Plug, XCircle } from 'lucide-react';
 
 const VAD_MODE_OPTIONS = [
   { value: '', label: 'Server default (recommended)' },
@@ -78,6 +83,8 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
   const [isLoading, setIsLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [testing, setTesting] = useState<ConnectionService | null>(null);
+  const [testResults, setTestResults] = useState<Partial<Record<ConnectionService, ConnectionTestResult>>>({});
 
   useEffect(() => {
     loadSettings();
@@ -134,13 +141,135 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
     }
   };
 
-  const renderSettingGroup = (title: string, keys: string[]) => {
+  const handleTest = async (service: ConnectionService) => {
+    setTesting(service);
+    try {
+      // Test what is in the form, saved or not. The key field is empty unless
+      // the admin typed a new one; the backend then uses the stored key.
+      const result = await settingsApi.testConnection(service, {
+        api_url: editValues[`${service}_api_url`] || undefined,
+        api_key: editValues[`${service}_api_key`] || undefined,
+        model: editValues[`${service}_model`] || undefined,
+      });
+      setTestResults((prev) => ({ ...prev, [service]: result }));
+    } catch (error) {
+      setTestResults((prev) => ({
+        ...prev,
+        [service]: {
+          service,
+          ok: false,
+          url: editValues[`${service}_api_url`] || '',
+          latency_ms: null,
+          model: '',
+          models: [],
+          model_found: null,
+          error: error instanceof Error ? error.message : 'Test request failed',
+          hint: null,
+          details: {},
+        },
+      }));
+    } finally {
+      setTesting(null);
+    }
+  };
+
+  const renderTestResult = (service: ConnectionService) => {
+    const r = testResults[service];
+    if (!r) return null;
+    const modelKey = `${service}_model`;
+    const currentModel = editValues[modelKey] || '';
+    const loaded = new Set(r.details?.loaded || []);
+    return (
+      <div
+        className={`mb-4 p-3 rounded-lg border text-sm ${
+          r.ok
+            ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+            : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+        }`}
+      >
+        <div className="flex items-start gap-2">
+          {r.ok ? (
+            <CheckCircle className="w-4 h-4 mt-0.5 text-green-600 dark:text-green-400 shrink-0" />
+          ) : (
+            <XCircle className="w-4 h-4 mt-0.5 text-red-600 dark:text-red-400 shrink-0" />
+          )}
+          <div className="min-w-0 flex-1">
+            <p className={r.ok ? 'text-green-800 dark:text-green-300' : 'text-red-800 dark:text-red-300'}>
+              {r.ok
+                ? `Connected to ${r.url}${r.latency_ms != null ? ` (${r.latency_ms} ms)` : ''}`
+                : r.error}
+            </p>
+            {r.hint && (
+              <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">{r.hint}</p>
+            )}
+            {r.details?.models_error && (
+              <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                Model list unavailable: {r.details.models_error}
+              </p>
+            )}
+            {r.ok && r.models.length > 0 && (
+              <div className="mt-2">
+                <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">
+                  {r.models.length} model{r.models.length > 1 ? 's' : ''} available, click to select
+                  {loaded.size > 0 && ' (● = loaded in memory)'}:
+                </p>
+                <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+                  {r.models.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setEditValues((prev) => ({ ...prev, [modelKey]: m }))}
+                      className={`px-2 py-0.5 rounded text-xs font-mono border transition-colors ${
+                        m === currentModel
+                          ? 'bg-blue-600 border-blue-600 text-white'
+                          : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:border-blue-500'
+                      }`}
+                      title={m === currentModel ? 'Current value' : 'Use this model (then save)'}
+                    >
+                      {loaded.has(m) && '● '}
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {r.ok && r.models.length === 0 && !r.details?.models_error && (
+              <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
+                The server answered but returned no model.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderSettingGroup = (title: string, keys: string[], service?: ConnectionService) => {
     const groupSettings = settings.filter((s) => keys.includes(s.key));
     if (groupSettings.length === 0) return null;
 
     return (
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">{title}</h3>
+        <div className="flex items-center justify-between mb-4 gap-2">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h3>
+          {service && (
+            <button
+              type="button"
+              onClick={() => handleTest(service)}
+              disabled={testing !== null}
+              className="px-3 py-1.5 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5 text-sm"
+              title="Check that the backend can reach this service and list its models (uses the values in the form, saved or not)"
+            >
+              {testing === service ? (
+                <Loader className="w-4 h-4 animate-spin" />
+              ) : (
+                <Plug className="w-4 h-4" />
+              )}
+              Test connection
+            </button>
+          )}
+        </div>
+        {service && renderTestResult(service)}
         <div className="space-y-4">
           {groupSettings.map((setting) => {
             const meta = SETTING_LABELS[setting.key];
@@ -221,6 +350,11 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
                   ) : (
                     <input
                       type={meta?.type === 'password' ? 'password' : 'text'}
+                      list={
+                        service && setting.key === `${service}_model` && testResults[service]?.models.length
+                          ? `${setting.key}-options`
+                          : undefined
+                      }
                       value={editValues[setting.key] || ''}
                       onChange={(e) =>
                         setEditValues((prev) => ({ ...prev, [setting.key]: e.target.value }))
@@ -233,6 +367,13 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
                       className="flex-1 px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                     />
                   )}
+                  {service && setting.key === `${service}_model` && testResults[service]?.models.length ? (
+                    <datalist id={`${setting.key}-options`}>
+                      {testResults[service]!.models.map((m) => (
+                        <option key={m} value={m} />
+                      ))}
+                    </datalist>
+                  ) : null}
                   <button
                     onClick={() => handleSave(setting.key)}
                     disabled={isSaving || !isModified}
@@ -318,13 +459,13 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
             'voxhub_job_mode',
             'voxhub_pipeline',
             'voxhub_vad_mode',
-          ])}
+          ], 'voxhub')}
           {renderSettingGroup('LLM / Chat', [
             'llm_api_url',
             'llm_api_key',
             'llm_model',
             'llm_system_prompt',
-          ])}
+          ], 'llm')}
 
           <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
             <p className="text-sm text-gray-600 dark:text-gray-400">

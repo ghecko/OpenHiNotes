@@ -351,6 +351,49 @@ async def update_groups_settings(
     return {"allow_user_group_creation": body.allow_user_group_creation}
 
 
+# ── Connectivity checks ────────────────────────────────────────────────
+
+
+class ConnectionTestRequest(BaseModel):
+    """Optional overrides so the admin can test values before saving them.
+
+    Any field left empty falls back to the effective setting (DB, then env).
+    The API key is never echoed back.
+    """
+    api_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+
+
+@router.post("/test/{service}")
+async def test_service_connection(
+    service: str,
+    body: Optional[ConnectionTestRequest] = None,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check that the backend can reach VoxHub or the LLM, and list its models (admin only).
+
+    The probe runs from the backend container, so it sees the same DNS,
+    network and TLS setup as a real transcription or summary request.
+    """
+    from app.services.settings_service import get_effective_setting
+    from app.services.connectivity import check_llm, check_voxhub
+
+    if service not in ("llm", "voxhub"):
+        raise HTTPException(status_code=400, detail=f"Unknown service: {service}")
+
+    body = body or ConnectionTestRequest()
+    prefix = f"{service}_"
+    api_url = (body.api_url or "").strip() or await get_effective_setting(db, f"{prefix}api_url")
+    api_key = (body.api_key or "").strip() or await get_effective_setting(db, f"{prefix}api_key")
+    model = (body.model or "").strip() or await get_effective_setting(db, f"{prefix}model")
+
+    if service == "llm":
+        return await check_llm(api_url, api_key, model, env_settings.llm_ssl_verify)
+    return await check_voxhub(api_url, api_key, model, env_settings.voxhub_ssl_verify)
+
+
 # ── Generic key/value settings ─────────────────────────────────────────
 
 

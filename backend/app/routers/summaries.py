@@ -11,6 +11,8 @@ from app.dependencies import get_current_user
 from app.services.llm import LLMService
 from app.utils.date_extract import extract_meeting_date
 import uuid
+import httpx
+from app.services.connectivity import describe_http_error
 
 router = APIRouter(prefix="/summaries", tags=["summaries"])
 
@@ -101,6 +103,16 @@ async def create_summary(
         summary_text, model_used = await LLMService.create_summary(
             transcript_text, prompt, summary_create.custom_prompt, db=db,
             meeting_date=meeting_date,
+        )
+    except httpx.HTTPError as e:
+        # Network / DNS / TLS problem reaching the LLM: it is the upstream
+        # that failed, not us, and the admin needs an actionable message.
+        req = getattr(e, "_request", None)
+        target = str(req.url) if req is not None else "LLM API"
+        msg, hint = describe_http_error(e, target)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to create summary: {msg}" + (f". {hint}" if hint else ""),
         )
     except Exception as e:
         raise HTTPException(
