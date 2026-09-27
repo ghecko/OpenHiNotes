@@ -21,6 +21,7 @@ import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, P
 import { ShareModal } from '@/components/ShareModal';
 import { InteractiveMarkdown } from '@/components/InteractiveMarkdown';
 import { TemplateSelector } from '@/components/TemplateSelector';
+import { CustomPromptModal } from '@/components/CustomPromptModal';
 import { formatMarkdown } from '@/utils/formatMarkdown';
 import { parseServerDate } from '@/utils/dates';
 
@@ -138,7 +139,7 @@ export function TranscriptionDetail() {
   const authUser = useAuthStore((s) => s.user);
   const [timelineHover, setTimelineHover] = useState<string | null>(null);
   const [showCustomPrompt, setShowCustomPrompt] = useState(false);
-  const [customPrompt, setCustomPrompt] = useState('');
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -497,24 +498,42 @@ export function TranscriptionDetail() {
   const colorForSpeaker = (spk: string | undefined) =>
     (spk && speakerColorMap.get(spk)) || FALLBACK_COLOR;
 
-  const handleGenerateSummary = async () => {
+  /** Create a summary from a template or a custom prompt. Throws on failure. */
+  const runSummary = async (opts: { templateId?: string; customPrompt?: string }) => {
     if (!transcription) return;
-
     setIsGeneratingSummary(true);
+    setSummaryError(null);
     try {
       const summary = await summariesApi.createSummary({
         transcription_id: transcription.id,
-        template_id: !showCustomPrompt ? selectedTemplate : undefined,
-        custom_prompt: showCustomPrompt ? customPrompt : undefined,
+        template_id: opts.templateId,
+        custom_prompt: opts.customPrompt,
       });
-
       setSummaries((prev) => [...prev, summary]);
-      setShowCustomPrompt(false);
-      setCustomPrompt('');
-    } catch (error) {
-      console.error('Failed to generate summary:', error);
     } finally {
       setIsGeneratingSummary(false);
+    }
+  };
+
+  const handleGenerateSummary = async () => {
+    try {
+      await runSummary({ templateId: selectedTemplate });
+    } catch (error) {
+      console.error('Failed to generate summary:', error);
+      setSummaryError(error instanceof Error ? error.message : 'Failed to generate summary');
+    }
+  };
+
+  /** After a template is created/updated from the custom prompt modal. */
+  const handleTemplateSaved = async (saved: SummaryTemplate) => {
+    if (!transcription) return;
+    const recType = transcription.recording_type === 'whisper' ? 'whisper' : 'record';
+    try {
+      const temps = await templatesApi.getTemplates({ targetType: showAllTemplates ? undefined : recType });
+      setTemplates(temps);
+      if (temps.find((t) => t.id === saved.id)) setSelectedTemplate(saved.id);
+    } catch (error) {
+      console.error('Failed to reload templates:', error);
     }
   };
 
@@ -1800,68 +1819,58 @@ ${summary.content}
 
               {/* Generate summary controls */}
               <div className="space-y-4">
-                {showCustomPrompt ? (
-                  <>
-                    <textarea
-                      value={customPrompt}
-                      onChange={(e) => setCustomPrompt(e.target.value)}
-                      rows={4}
-                      placeholder="Enter custom prompt for summarization..."
-                      className="w-full px-4 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                {showCustomPrompt && (
+                  <CustomPromptModal
+                    templates={templates}
+                    initialTemplateId={selectedTemplate}
+                    recordingType={isWhisper ? 'whisper' : 'record'}
+                    currentUser={authUser}
+                    isGenerating={isGeneratingSummary}
+                    onGenerate={(prompt) => runSummary({ customPrompt: prompt })}
+                    onTemplateSaved={handleTemplateSaved}
+                    onClose={() => setShowCustomPrompt(false)}
+                  />
+                )}
+                <TemplateSelector
+                  templates={templates}
+                  value={selectedTemplate}
+                  onChange={setSelectedTemplate}
+                />
+                {isWhisper && (
+                  <label className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={showAllTemplates}
+                      onChange={(e) => setShowAllTemplates(e.target.checked)}
+                      className="rounded border-gray-300 dark:border-gray-600"
                     />
-                    <div className="flex gap-3">
-                      <button
-                        onClick={handleGenerateSummary}
-                        disabled={isGeneratingSummary || !customPrompt.trim()}
-                        className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                      >
-                        {isGeneratingSummary && <Loader className="w-4 h-4 animate-spin" />}
-                        Generate
-                      </button>
-                      <button
-                        onClick={() => setShowCustomPrompt(false)}
-                        className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-900 dark:text-white rounded-lg font-medium transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <TemplateSelector
-                      templates={templates}
-                      value={selectedTemplate}
-                      onChange={setSelectedTemplate}
-                    />
-                    {isWhisper && (
-                      <label className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={showAllTemplates}
-                          onChange={(e) => setShowAllTemplates(e.target.checked)}
-                          className="rounded border-gray-300 dark:border-gray-600"
-                        />
-                        Show all templates
-                      </label>
-                    )}
-                    <div className="flex gap-3">
-                      <button
-                        onClick={handleGenerateSummary}
-                        disabled={isGeneratingSummary || !selectedTemplate}
-                        className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                      >
-                        {isGeneratingSummary && <Loader className="w-4 h-4 animate-spin" />}
-                        <Plus className="w-4 h-4" />
-                        Generate Summary
-                      </button>
-                      <button
-                        onClick={() => setShowCustomPrompt(true)}
-                        className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-900 dark:text-white rounded-lg font-medium transition-colors"
-                      >
-                        Custom Prompt
-                      </button>
-                    </div>
-                  </>
+                    Show all templates
+                  </label>
+                )}
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleGenerateSummary}
+                    disabled={isGeneratingSummary || !selectedTemplate}
+                    className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isGeneratingSummary && <Loader className="w-4 h-4 animate-spin" />}
+                    <Plus className="w-4 h-4" />
+                    Generate Summary
+                  </button>
+                  <button
+                    onClick={() => setShowCustomPrompt(true)}
+                    className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-900 dark:text-white rounded-lg font-medium transition-colors"
+                  >
+                    Custom Prompt
+                  </button>
+                </div>
+                {summaryError && (
+                  <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-sm text-red-800 dark:text-red-300 flex items-start gap-2">
+                    <span className="flex-1 break-words min-w-0">{summaryError}</span>
+                    <button onClick={() => setSummaryError(null)} className="shrink-0" title="Dismiss">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
