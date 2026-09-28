@@ -55,16 +55,13 @@ from app.models.user_group import UserGroup, user_group_members
 from app.models.transcription_pin import transcription_pins
 from app.models.user import User, UserRole
 from app.models.transcription import Transcription, TranscriptionStatus
-from app.models.summary import Summary
-from app.models.template import SummaryTemplate
 from app.models.resource_share import ResourceType
 from app.dependencies import get_current_user
 from app.services.transcription import TranscriptionService
-from app.services.llm import LLMService
+from app.services.summary_queue import summary_queue
 from app.services.permissions import PermissionService
 from app.services.audio_concat import concat_audio_files, AudioConcatError
 from app.services.word_realign import realign_words, segment_confidence, synthesize_words
-from app.utils.date_extract import extract_meeting_date
 
 logger = logging.getLogger(__name__)
 
@@ -142,39 +139,13 @@ async def upload_transcription(
             detail=f"Failed to transcribe: {str(e)}",
         )
 
-    # Auto-summarize if requested
-    if auto_summarize and template_id:
+    # Auto-summarize if requested: queued, generated in the background
+    if auto_summarize and template_id and transcription.text:
         try:
-            # Get template
-            result = await db.execute(
-                select(SummaryTemplate).where(SummaryTemplate.id == template_id)
-            )
-            template = result.scalars().first()
-
-            if not template:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Template not found",
-                )
-
-            # Create summary
-            if transcription.text:
-                meeting_date = extract_meeting_date(transcription.original_filename)
-                summary_text, model_used = await LLMService.create_summary(
-                    transcription.text, template.prompt_template,
-                    db=db, meeting_date=meeting_date,
-                )
-                summary = Summary(
-                    transcription_id=transcription.id,
-                    template_id=template_id,
-                    content=summary_text,
-                    model_used=model_used,
-                )
-                db.add(summary)
-                await db.commit()
+            await summary_queue.enqueue(db, transcription_id=transcription.id, template_id=template_id)
         except Exception as e:
             # Log error but don't fail the upload
-            print(f"Auto-summarization failed: {str(e)}")
+            logger.error("Auto-summarization could not be queued: %s", e)
 
     return transcription
 
@@ -238,29 +209,12 @@ async def upload_transcription_stream(
                 on_progress=on_progress,
             )
 
-            # Auto-summarize if requested
+            # Auto-summarize if requested: queued, generated in the background
             if auto_summarize and template_id and transcription.text:
                 try:
-                    result = await db.execute(
-                        select(SummaryTemplate).where(SummaryTemplate.id == template_id)
-                    )
-                    template = result.scalars().first()
-                    if template:
-                        meeting_date = extract_meeting_date(transcription.original_filename)
-                        summary_text, model_used = await LLMService.create_summary(
-                            transcription.text, template.prompt_template,
-                            db=db, meeting_date=meeting_date,
-                        )
-                        summary = Summary(
-                            transcription_id=transcription.id,
-                            template_id=template_id,
-                            content=summary_text,
-                            model_used=model_used,
-                        )
-                        db.add(summary)
-                        await db.commit()
+                    await summary_queue.enqueue(db, transcription_id=transcription.id, template_id=template_id)
                 except Exception as e:
-                    print(f"Auto-summarization failed: {str(e)}")
+                    logger.error("Auto-summarization could not be queued: %s", e)
 
             progress_queue.put_nowait(("complete", transcription, None))
         except Exception as e:

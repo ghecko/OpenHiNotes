@@ -9,11 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update
 from app.database import AsyncSessionLocal
 from app.models.transcription import Transcription, TranscriptionStatus
-from app.models.template import SummaryTemplate
-from app.models.summary import Summary
 from app.services.transcription import TranscriptionService
-from app.services.llm import LLMService
-from app.utils.date_extract import extract_meeting_date
+from app.services.summary_queue import summary_queue
 from app.config import settings
 from app.services.notifications import notify_transcription_completed
 from app.services.email import EmailService, EmailSettingsService
@@ -472,16 +469,19 @@ class TranscriptionQueue:
                                 logger.warning("Failed to delete audio %s: %s", audio_path, e)
                         transcription.audio_available = False
 
-                    # Capture auto-summarize settings before commit
-                    should_summarize = transcription.auto_summarize
+                    # Auto-summarize: queue the summary in the same commit, so
+                    # the frontend already sees it (pending) when it reloads on
+                    # the "completed" event below.
                     tpl_id = transcription.auto_summarize_template_id
-                    transcript_text = transcription.text
+                    will_summarize = bool(transcription.auto_summarize and tpl_id and transcription.text)
                     orig_filename = transcription.original_filename
+                    if will_summarize:
+                        db.add(summary_queue.new_pending(transcription_id=transcription_id, template_id=tpl_id))
 
                     await db.commit()
 
-                # Determine if auto-summarize will run
-                will_summarize = bool(should_summarize and tpl_id and transcript_text)
+                if will_summarize:
+                    summary_queue.wake()
 
                 # Notify completion immediately so the frontend can load the
                 # transcript — don't block on auto-summarize.
@@ -499,32 +499,6 @@ class TranscriptionQueue:
                     display_name=orig_filename or stored_filename,
                     failed=False,
                 )
-
-                # Auto-summarize if requested and transcription produced text
-                if will_summarize:
-                    try:
-                        async with AsyncSessionLocal() as db:
-                            result = await db.execute(
-                                select(SummaryTemplate).where(SummaryTemplate.id == tpl_id)
-                            )
-                            template = result.scalars().first()
-                            if template:
-                                meeting_date = extract_meeting_date(orig_filename)
-                                summary_text, model_used = await LLMService.create_summary(
-                                    transcript_text, template.prompt_template, db=db,
-                                    meeting_date=meeting_date,
-                                )
-                                summary = Summary(
-                                    transcription_id=transcription_id,
-                                    template_id=tpl_id,
-                                    content=summary_text,
-                                    model_used=model_used,
-                                )
-                                db.add(summary)
-                                await db.commit()
-                                logger.info("Auto-summary created for transcription %s", transcription_id)
-                    except Exception as e:
-                        logger.error("Auto-summary failed for %s: %s", transcription_id, e)
 
                 logger.info("Transcription %s completed successfully", transcription_id)
 

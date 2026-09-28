@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import { LlmFeatures } from '@/types';
 
 export interface AppSetting {
   key: string;
@@ -33,6 +34,12 @@ export interface ConnectionTestOverrides {
   model?: string;
 }
 
+export interface ReasoningControl {
+  value: string;
+  label: string;
+  levels: string[];
+}
+
 export interface AudioSettings {
   keep_audio_enabled: boolean;
 }
@@ -57,6 +64,16 @@ export const settingsApi = {
     overrides: ConnectionTestOverrides = {},
   ): Promise<ConnectionTestResult> {
     return apiClient.post<ConnectionTestResult>(`/settings/test/${service}`, overrides);
+  },
+
+  /** Thinking levels the configured LLM accepts (any authenticated user). */
+  async getLlmFeatures(): Promise<LlmFeatures> {
+    return apiClient.get<LlmFeatures>('/settings/llm-features');
+  },
+
+  /** Reasoning dialects an admin can choose from. */
+  async getReasoningControls(): Promise<ReasoningControl[]> {
+    return apiClient.get<ReasoningControl[]>('/settings/llm-reasoning-controls');
   },
 
   async getAudioSettings(): Promise<AudioSettings> {

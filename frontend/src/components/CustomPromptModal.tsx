@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { ReactNode, useEffect, useMemo, useState } from 'react';
 import { X, Loader, Sparkles, Save, RotateCcw, AlertCircle, CheckCircle } from 'lucide-react';
 import { templatesApi } from '@/api/templates';
 import { TemplateSelector } from '@/components/TemplateSelector';
@@ -12,11 +12,13 @@ interface CustomPromptModalProps {
   recordingType: 'record' | 'whisper';
   currentUser: User | null;
   isGenerating: boolean;
-  /** Runs the summary. Must throw on failure so the modal can show the error. */
+  /** Queues the summary. Must throw on failure so the modal can show the error. */
   onGenerate: (prompt: string) => Promise<void>;
   /** Called after a create/update so the parent can refresh and select it. */
   onTemplateSaved: (template: SummaryTemplate) => void;
   onClose: () => void;
+  /** Rendered in the footer next to Generate (e.g. the thinking level selector). */
+  extraControls?: ReactNode;
 }
 
 /** Mirror of the backend `_can_edit` rule in routers/templates.py. */
@@ -43,6 +45,7 @@ export function CustomPromptModal({
   onGenerate,
   onTemplateSaved,
   onClose,
+  extraControls,
 }: CustomPromptModalProps) {
   const initial = templates.find((t) => t.id === initialTemplateId);
   const [baseId, setBaseId] = useState<string>(initial?.id ?? '');
@@ -346,6 +349,7 @@ export function CustomPromptModal({
             </button>
           )}
           <div className="flex-1" />
+          {extraControls}
           <button
             onClick={onClose}
             disabled={busy}

@@ -68,7 +68,7 @@ async def export_transcription(
     if format in ("md", "docx"):
         s_result = await db.execute(
             select(Summary)
-            .where(Summary.transcription_id == transcription_id)
+            .where(Summary.transcription_id == transcription_id, Summary.status == "completed")
             .order_by(Summary.created_at.asc())
         )
         summaries = s_result.scalars().all()

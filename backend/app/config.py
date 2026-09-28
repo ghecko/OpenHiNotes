@@ -28,6 +28,21 @@ class Settings(BaseSettings):
     llm_api_url: str = "http://localhost:11434/v1"
     llm_api_key: str = ""
     llm_model: str = "gpt-3.5-turbo"
+    # Empty = built-in default (LLMService.DEFAULT_SYSTEM_PROMPT)
+    llm_system_prompt: str = ""
+    # How a per-summary reasoning level is sent: "" (not at all),
+    # "reasoning_effort", "enable_thinking" or "ollama_think" (see services/llm.py)
+    llm_reasoning_control: str = ""
+    # Level used when a summary does not ask for one ("" = model default)
+    llm_reasoning_default: str = ""
+    # JSON object merged into every chat completion request (e.g. {"top_p": 0.9})
+    llm_extra_body: str = ""
+    # Seconds without any data from the LLM before giving up (streaming)
+    llm_idle_timeout: str = "300"
+    # Seconds a whole generation may take
+    llm_max_duration: str = "1800"
+    # Summaries generated in parallel by the background queue
+    llm_summary_concurrency: str = "1"
 
     # SSL / TLS verification for outbound API calls
     # Set to "false" to disable SSL verification (dev only)

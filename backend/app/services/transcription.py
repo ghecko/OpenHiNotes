@@ -551,7 +551,16 @@ class TranscriptionService:
         if not transcription:
             return False
 
-        # Delete related summaries first (FK constraint)
+        # Stop summaries still being generated, then delete them (FK constraint)
+        from app.services.summary_queue import summary_queue
+        running = await db.execute(
+            select(Summary.id).where(
+                Summary.transcription_id == transcription_id,
+                Summary.status.in_(("pending", "processing")),
+            )
+        )
+        for summary_id in running.scalars().all():
+            summary_queue.cancel(summary_id)
         await db.execute(
             sa_delete(Summary).where(Summary.transcription_id == transcription_id)
         )

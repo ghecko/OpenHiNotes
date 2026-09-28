@@ -223,13 +223,41 @@ export interface NotificationCount {
   unread: number;
 }
 
+export type SummaryStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+/** While processing: 'waiting' (no token yet), 'thinking', 'writing'; 'queued' while pending. */
+export type SummaryPhase = 'queued' | 'waiting' | 'thinking' | 'writing';
+export type ReasoningLevel = 'default' | 'off' | 'on' | 'low' | 'medium' | 'high';
+
 export interface Summary {
   id: string;
   transcription_id: string;
   template_id: string | null;
+  /** Partial while writing, empty while pending. */
   content: string;
   model_used: string;
   created_at: string;
+  status: SummaryStatus;
+  phase: SummaryPhase | null;
+  /** Failure reason, or a warning on a completed summary (e.g. truncated output). */
+  error_message: string | null;
+  reasoning_level: ReasoningLevel | null;
+  /** The model's reasoning, split out of the answer. Partial while thinking. */
+  reasoning: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  updated_at: string | null;
+  /** 1 = next in the summary queue; null unless pending. */
+  queue_position: number | null;
+}
+
+export const ACTIVE_SUMMARY_STATUSES: SummaryStatus[] = ['pending', 'processing'];
+
+export interface LlmFeatures {
+  model: string;
+  reasoning_control: string;
+  /** Empty when the admin did not configure a reasoning control: hide the selector. */
+  reasoning_levels: { value: Exclude<ReasoningLevel, 'default'>; label: string }[];
+  reasoning_default: Exclude<ReasoningLevel, 'default'> | null;
 }
 
 export interface ChatMessage {

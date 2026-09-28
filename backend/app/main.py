@@ -191,6 +191,10 @@ async def startup_event():
     from app.services.queue import transcription_queue
     await transcription_queue.start()
 
+    # Start the summary queue worker (background LLM generation)
+    from app.services.summary_queue import summary_queue
+    await summary_queue.start()
+
     logger.info("Application startup complete")
 
 
@@ -200,6 +204,9 @@ async def shutdown_event():
     # Stop the transcription queue worker
     from app.services.queue import transcription_queue
     await transcription_queue.stop()
+
+    from app.services.summary_queue import summary_queue
+    await summary_queue.stop()
 
     await engine.dispose()
     logger.info("Application shutdown complete")

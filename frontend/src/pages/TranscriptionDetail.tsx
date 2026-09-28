@@ -14,7 +14,10 @@ import { settingsApi } from '@/api/settings';
 import { useAppStore } from '@/store/useAppStore';
 import { useDeviceConnection } from '@/hooks/useDeviceConnection';
 import { deviceService } from '@/services/deviceService';
-import { Transcription, Summary, SummaryTemplate, Collection, VoiceSources } from '@/types';
+import {
+  Transcription, Summary, SummaryTemplate, Collection, VoiceSources,
+  LlmFeatures, ReasoningLevel, ACTIVE_SUMMARY_STATUSES,
+} from '@/types';
 import { useAuthStore } from '@/store/useAuthStore';
 import { format } from 'date-fns';
 import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, Play, Pause, Volume2, Disc3, Share2, Lock, Eye, ChevronDown, Pin, CloudUpload } from 'lucide-react';
@@ -22,6 +25,9 @@ import { ShareModal } from '@/components/ShareModal';
 import { InteractiveMarkdown } from '@/components/InteractiveMarkdown';
 import { TemplateSelector } from '@/components/TemplateSelector';
 import { CustomPromptModal } from '@/components/CustomPromptModal';
+import { ReasoningSelect } from '@/components/ReasoningSelect';
+import { SummaryJobCard } from '@/components/SummaryJobCard';
+import { SummaryMeta } from '@/components/SummaryReasoning';
 import { formatMarkdown } from '@/utils/formatMarkdown';
 import { parseServerDate } from '@/utils/dates';
 
@@ -112,6 +118,7 @@ function SummaryModal({
         </div>
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
+          <SummaryMeta summary={summary} />
           <InteractiveMarkdown
             content={summary.content}
             onContentChange={onContentChange}
@@ -148,8 +155,9 @@ export function TranscriptionDetail() {
   const [openSummaryId, setOpenSummaryId] = useState<string | null>(null);
   const [showAllTemplates, setShowAllTemplates] = useState(false);
 
-  // Auto-summarize status
-  const [isAutoSummarizing, setIsAutoSummarizing] = useState(false);
+  // Thinking level for the next summary, and what the LLM supports
+  const [llmFeatures, setLlmFeatures] = useState<LlmFeatures | null>(null);
+  const [reasoningLevel, setReasoningLevel] = useState<ReasoningLevel>('default');
 
   // Collection assignment
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -223,6 +231,9 @@ export function TranscriptionDetail() {
     settingsApi.getAudioSettings()
       .then((s) => setKeepAudioEnabled(s.keep_audio_enabled))
       .catch(() => { /* keep default */ });
+    settingsApi.getLlmFeatures()
+      .then(setLlmFeatures)
+      .catch(() => { /* no selector */ });
   }, []);
 
   // Subscribe to real-time updates when transcription is queued/processing
@@ -236,7 +247,6 @@ export function TranscriptionDetail() {
         // Handle terminal events outside the state updater (side-effects
         // should not live inside setState callbacks).
         if (event.event === 'completed' || event.event === 'failed' || event.event === 'cancelled') {
-          const willAutoSummarize = event.event === 'completed' && event.auto_summarize;
           setTranscription((prev) => {
             if (!prev) return prev;
             return {
@@ -246,13 +256,9 @@ export function TranscriptionDetail() {
               queue_position: null,
             };
           });
-          // Reload full data shortly after — transcript & speakers are
-          // committed before the SSE event is sent.
+          // Reload full data shortly after — transcript & speakers (and the
+          // pending auto-summary, if any) are committed before the SSE event.
           setTimeout(() => loadData(), 600);
-          // If auto-summarize will run, start polling for it
-          if (willAutoSummarize) {
-            setIsAutoSummarizing(true);
-          }
           return;
         }
 
@@ -308,49 +314,25 @@ export function TranscriptionDetail() {
     }
   };
 
-  // Detect auto-summarize in progress when loading data for a just-completed transcription
+  // Poll while a summary is queued or being generated (background LLM queue).
+  const hasActiveSummary = summaries.some((s) => ACTIVE_SUMMARY_STATUSES.includes(s.status));
   useEffect(() => {
-    if (
-      transcription?.status === 'completed' &&
-      transcription?.auto_summarize &&
-      summaries.length === 0
-    ) {
-      setIsAutoSummarizing(true);
-    } else if (summaries.length > 0) {
-      setIsAutoSummarizing(false);
-    }
-  }, [transcription?.id, transcription?.status, transcription?.auto_summarize, summaries.length]);
-
-  // Poll for auto-summary completion
-  useEffect(() => {
-    if (!isAutoSummarizing || !transcription?.id) return;
-
+    if (!hasActiveSummary || !transcription?.id) return;
+    const tid = transcription.id;
     let cancelled = false;
-    const poll = async () => {
-      let attempts = 0;
-      const maxAttempts = 40; // ~2 minutes at 3s intervals
-      while (!cancelled && attempts < maxAttempts) {
-        await new Promise((r) => setTimeout(r, 3000));
-        if (cancelled) break;
-        attempts++;
-        try {
-          const s = await summariesApi.getSummaries(transcription.id);
-          if (s.length > 0) {
-            setSummaries(s);
-            setIsAutoSummarizing(false);
-            return;
-          }
-        } catch {
-          // Ignore polling errors
-        }
+    const timer = setInterval(async () => {
+      try {
+        const s = await summariesApi.getSummaries(tid);
+        if (!cancelled) setSummaries(s);
+      } catch {
+        // transient, next tick retries
       }
-      // Timed out — stop showing indicator
-      if (!cancelled) setIsAutoSummarizing(false);
+    }, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
     };
-
-    poll();
-    return () => { cancelled = true; };
-  }, [isAutoSummarizing, transcription?.id]);
+  }, [hasActiveSummary, transcription?.id]);
 
   // Reload templates when showAllTemplates toggle changes
   useEffect(() => {
@@ -498,7 +480,7 @@ export function TranscriptionDetail() {
   const colorForSpeaker = (spk: string | undefined) =>
     (spk && speakerColorMap.get(spk)) || FALLBACK_COLOR;
 
-  /** Create a summary from a template or a custom prompt. Throws on failure. */
+  /** Queue a summary from a template or a custom prompt. Throws on failure. */
   const runSummary = async (opts: { templateId?: string; customPrompt?: string }) => {
     if (!transcription) return;
     setIsGeneratingSummary(true);
@@ -508,10 +490,30 @@ export function TranscriptionDetail() {
         transcription_id: transcription.id,
         template_id: opts.templateId,
         custom_prompt: opts.customPrompt,
+        reasoning_level: reasoningLevel,
       });
       setSummaries((prev) => [...prev, summary]);
     } finally {
       setIsGeneratingSummary(false);
+    }
+  };
+
+  const replaceSummary = (updated: Summary) =>
+    setSummaries((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+
+  const handleCancelSummary = async (id: string) => {
+    try {
+      replaceSummary(await summariesApi.cancelSummary(id));
+    } catch (error) {
+      setSummaryError(error instanceof Error ? error.message : 'Failed to cancel summary');
+    }
+  };
+
+  const handleRetrySummary = async (id: string) => {
+    try {
+      replaceSummary(await summariesApi.retrySummary(id));
+    } catch (error) {
+      setSummaryError(error instanceof Error ? error.message : 'Failed to retry summary');
     }
   };
 
@@ -1055,7 +1057,10 @@ ${summary.content}
   }
 
   const displayTitle = transcription.title || transcription.original_filename;
-  const openSummary = summaries.find((s) => s.id === openSummaryId) || null;
+  const doneSummaries = summaries.filter((s) => s.status === 'completed');
+  const jobSummaries = summaries.filter((s) => s.status !== 'completed');
+  const openSummary = doneSummaries.find((s) => s.id === openSummaryId) || null;
+  const templateNameById = new Map(templates.map((t) => [t.id, t.name]));
   const baseName = (transcription.title || transcription.original_filename).replace(/\.[^/.]+$/, '');
 
   const formatTs = (seconds: number) => {
@@ -1703,48 +1708,54 @@ ${summary.content}
             {/* Summaries Section */}
             <div className="bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
               <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">
-                Summaries {summaries.length > 0 && <span className="text-sm font-normal text-gray-500">({summaries.length})</span>}
+                Summaries {doneSummaries.length > 0 && <span className="text-sm font-normal text-gray-500">({doneSummaries.length})</span>}
               </h3>
 
-              {/* Auto-summarize in progress indicator */}
-              {isAutoSummarizing && (
-                <div className="mb-4 flex items-center gap-3 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                  <Loader className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" />
-                  <span className="text-sm text-blue-700 dark:text-blue-300">
-                    Generating summary automatically...
-                  </span>
+              {/* Queued / running / failed doneSummaries */}
+              {jobSummaries.length > 0 && (
+                <div className="mb-4 space-y-2">
+                  {jobSummaries.map((s) => (
+                    <SummaryJobCard
+                      key={s.id}
+                      summary={s}
+                      templateName={s.template_id ? templateNameById.get(s.template_id) : 'Custom prompt'}
+                      onCancel={handleCancelSummary}
+                      onRetry={handleRetrySummary}
+                      onDelete={handleDeleteSummary}
+                    />
+                  ))}
                 </div>
               )}
 
-              {summaries.length === 1 ? (
+              {doneSummaries.length === 1 ? (
                 /* Single summary: show inline with delete button */
                 <div className="mb-6">
                   <div className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600">
                     <div className="flex items-start justify-between mb-2">
                       <p className="text-xs text-gray-500 dark:text-gray-400">
-                        {format(new Date(summaries[0].created_at), 'MMM d, yyyy HH:mm')} &bull;{' '}
-                        {summaries[0].model_used}
+                        {format(parseServerDate(doneSummaries[0].created_at), 'MMM d, yyyy HH:mm')} &bull;{' '}
+                        {doneSummaries[0].model_used}
                       </p>
                       <div className="flex items-center gap-2">
-                        <div className="relative" ref={activeExportSummaryId === summaries[0].id ? inlineExportRef : null}>
+                        <div className="relative" ref={activeExportSummaryId === doneSummaries[0].id ? inlineExportRef : null}>
                           <button
-                            onClick={() => setActiveExportSummaryId(activeExportSummaryId === summaries[0].id ? null : summaries[0].id)}
+                            onClick={() => setActiveExportSummaryId(activeExportSummaryId === doneSummaries[0].id ? null : doneSummaries[0].id)}
                             className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
                           >
                             <Download className="w-3 h-3" />
                             Export
                             <ChevronDown className="w-2.5 h-2.5" />
                           </button>
-                          {activeExportSummaryId === summaries[0].id && (
+                          {activeExportSummaryId === doneSummaries[0].id && (
                             <div className="absolute right-0 mt-1 w-36 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20 overflow-hidden">
                               <button
-                                onClick={() => { setActiveExportSummaryId(null); handleExportSummaryMarkdown(summaries[0]); }}
+                                onClick={() => { setActiveExportSummaryId(null); handleExportSummaryMarkdown(doneSummaries[0]); }}
                                 className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                               >
                                 Markdown (.md)
                               </button>
                               <button
-                                onClick={() => { setActiveExportSummaryId(null); handleExportSummaryPDF(summaries[0]); }}
+                                onClick={() => { setActiveExportSummaryId(null); handleExportSummaryPDF(doneSummaries[0]); }}
                                 className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                               >
                                 PDF Document (.pdf)
@@ -1754,7 +1765,7 @@ ${summary.content}
                         </div>
 
                         <button
-                          onClick={() => handleDeleteSummary(summaries[0].id)}
+                          onClick={() => handleDeleteSummary(doneSummaries[0].id)}
                           className="p-1 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
                           title="Delete summary"
                         >
@@ -1762,17 +1773,18 @@ ${summary.content}
                         </button>
                       </div>
                     </div>
+                    <SummaryMeta summary={doneSummaries[0]} />
                     <InteractiveMarkdown
-                      content={summaries[0].content}
-                      onContentChange={(c) => handleSummaryContentChange(summaries[0].id, c)}
+                      content={doneSummaries[0].content}
+                      onContentChange={(c) => handleSummaryContentChange(doneSummaries[0].id, c)}
                       className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed"
                     />
                   </div>
                 </div>
-              ) : summaries.length > 1 ? (
-                /* Multiple summaries: show as tiles, click to open modal */
+              ) : doneSummaries.length > 1 ? (
+                /* Multiple doneSummaries: show as tiles, click to open modal */
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
-                  {summaries.map((summary) => (
+                  {doneSummaries.map((summary) => (
                     <div
                       key={summary.id}
                       onClick={() => setOpenSummaryId(summary.id)}
@@ -1829,6 +1841,14 @@ ${summary.content}
                     onGenerate={(prompt) => runSummary({ customPrompt: prompt })}
                     onTemplateSaved={handleTemplateSaved}
                     onClose={() => setShowCustomPrompt(false)}
+                    extraControls={
+                      <ReasoningSelect
+                        features={llmFeatures}
+                        value={reasoningLevel}
+                        onChange={setReasoningLevel}
+                        disabled={isGeneratingSummary}
+                      />
+                    }
                   />
                 )}
                 <TemplateSelector
@@ -1857,6 +1877,12 @@ ${summary.content}
                     <Plus className="w-4 h-4" />
                     Generate Summary
                   </button>
+                  <ReasoningSelect
+                    features={llmFeatures}
+                    value={reasoningLevel}
+                    onChange={setReasoningLevel}
+                    disabled={isGeneratingSummary}
+                  />
                   <button
                     onClick={() => setShowCustomPrompt(true)}
                     className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-900 dark:text-white rounded-lg font-medium transition-colors"

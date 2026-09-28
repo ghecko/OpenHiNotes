@@ -62,7 +62,70 @@ CONFIGURABLE_KEYS = {
         "description": "LLM model name (e.g. gpt-4, llama3, mistral)",
         "default_from_env": "llm_model",
     },
+    "llm_system_prompt": {
+        "description": "System prompt for summaries (empty = built-in meeting assistant prompt)",
+        "default_from_env": "llm_system_prompt",
+    },
+    "llm_reasoning_control": {
+        "description": "How the thinking level chosen for a summary is sent to the LLM. Empty = not sent, and users get no thinking selector",
+        "default_from_env": "llm_reasoning_control",
+    },
+    "llm_reasoning_default": {
+        "description": "Thinking level used when the user keeps 'Default' (empty = let the model decide)",
+        "default_from_env": "llm_reasoning_default",
+    },
+    "llm_extra_body": {
+        "description": "JSON object merged into every LLM request, e.g. {\"top_p\": 0.9} or {\"chat_template_kwargs\": {...}}",
+        "default_from_env": "llm_extra_body",
+    },
+    "llm_idle_timeout": {
+        "description": "Seconds without any token from the LLM before a request is abandoned (includes the prompt processing before the first token)",
+        "default_from_env": "llm_idle_timeout",
+    },
+    "llm_max_duration": {
+        "description": "Maximum seconds for one generation (summary or chat answer)",
+        "default_from_env": "llm_max_duration",
+    },
+    "llm_summary_concurrency": {
+        "description": "Summaries generated in parallel (1-8). Others wait in the queue",
+        "default_from_env": "llm_summary_concurrency",
+    },
 }
+
+
+def _validate_setting(key: str, value: str) -> None:
+    """Reject values the services would silently ignore. Empty = default."""
+    from app.services.llm import REASONING_CONTROLS, parse_extra_body
+
+    v = (value or "").strip()
+    if not v:
+        return
+    if key == "llm_reasoning_control" and v not in REASONING_CONTROLS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown reasoning control '{v}' (allowed: {', '.join(k for k in REASONING_CONTROLS if k)})",
+        )
+    if key == "llm_reasoning_default":
+        levels = {l for c in REASONING_CONTROLS.values() for l in c["levels"]}
+        if v not in levels:
+            raise HTTPException(status_code=400, detail=f"Unknown reasoning level '{v}'")
+    if key == "llm_extra_body":
+        try:
+            parse_extra_body(v)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON for extra body: {e}")
+    if key in ("llm_idle_timeout", "llm_max_duration"):
+        try:
+            if float(v) <= 0:
+                raise ValueError
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"{key} must be a positive number of seconds")
+    if key == "llm_summary_concurrency":
+        try:
+            if not 1 <= int(v) <= 8:
+                raise ValueError
+        except ValueError:
+            raise HTTPException(status_code=400, detail="llm_summary_concurrency must be an integer between 1 and 8")
 
 
 class SettingUpdate(BaseModel):
@@ -153,6 +216,23 @@ async def get_feature_flags(
     for key in FEATURE_FLAG_KEYS:
         flags[key] = db_settings.get(key, "false").lower() == "true"
     return flags
+
+
+@router.get("/llm-features")
+async def get_llm_features(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Thinking levels the configured LLM accepts (available to all authenticated users)."""
+    from app.services.llm import LLMService
+    return await LLMService.get_features(db)
+
+
+@router.get("/llm-reasoning-controls")
+async def get_llm_reasoning_controls(current_user: User = Depends(require_admin)):
+    """Reasoning dialects the admin can choose from, with their levels (admin only)."""
+    from app.services.llm import REASONING_CONTROLS
+    return [{"value": k, "label": v["label"], "levels": v["levels"]} for k, v in REASONING_CONTROLS.items()]
 
 
 # ── Registration Settings ──────────────────────────────────────────────
@@ -407,6 +487,7 @@ async def update_setting(
     """Update a single setting (admin only)."""
     if key not in CONFIGURABLE_KEYS:
         raise HTTPException(status_code=400, detail=f"Unknown setting: {key}")
+    _validate_setting(key, body.value)
 
     result = await db.execute(select(AppSetting).where(AppSetting.key == key))
     setting = result.scalars().first()

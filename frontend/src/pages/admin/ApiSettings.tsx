@@ -5,6 +5,7 @@ import {
   AppSetting,
   ConnectionService,
   ConnectionTestResult,
+  ReasoningControl,
 } from '@/api/settings';
 import { Save, RotateCcw, Loader, CheckCircle, AlertCircle, Plug, XCircle } from 'lucide-react';
 
@@ -75,6 +76,36 @@ const SETTING_LABELS: Record<string, { label: string; placeholder: string; type:
     placeholder: 'You are a professional meeting assistant...',
     type: 'textarea',
   },
+  llm_reasoning_control: {
+    label: 'Thinking control',
+    placeholder: '',
+    type: 'select', // options from GET /settings/llm-reasoning-controls
+  },
+  llm_reasoning_default: {
+    label: 'Default thinking level',
+    placeholder: '',
+    type: 'select', // options = levels of the selected control
+  },
+  llm_extra_body: {
+    label: 'Extra request body (JSON)',
+    placeholder: '{"top_p": 0.9}',
+    type: 'textarea',
+  },
+  llm_idle_timeout: {
+    label: 'LLM idle timeout (seconds)',
+    placeholder: '300',
+    type: 'text',
+  },
+  llm_max_duration: {
+    label: 'LLM max duration (seconds)',
+    placeholder: '1800',
+    type: 'text',
+  },
+  llm_summary_concurrency: {
+    label: 'Summaries in parallel',
+    placeholder: '1',
+    type: 'text',
+  },
 };
 
 export function ApiSettings({ embedded }: { embedded?: boolean }) {
@@ -85,6 +116,31 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [testing, setTesting] = useState<ConnectionService | null>(null);
   const [testResults, setTestResults] = useState<Partial<Record<ConnectionService, ConnectionTestResult>>>({});
+  const [reasoningControls, setReasoningControls] = useState<ReasoningControl[]>([]);
+
+  useEffect(() => {
+    settingsApi.getReasoningControls().then(setReasoningControls).catch(() => setReasoningControls([]));
+  }, []);
+
+  /** Select options: static for most keys, dynamic for the thinking settings. */
+  const getOptions = (key: string): { value: string; label: string }[] | undefined => {
+    if (key === 'llm_reasoning_control') {
+      return reasoningControls.map((c) => ({ value: c.value, label: c.label }));
+    }
+    if (key === 'llm_reasoning_default') {
+      const control = reasoningControls.find((c) => c.value === (editValues.llm_reasoning_control || ''));
+      const levels = control?.levels ?? [];
+      const current = editValues.llm_reasoning_default || '';
+      const opts = [
+        { value: '', label: 'Model default (send nothing)' },
+        ...levels.map((l) => ({ value: l, label: l.charAt(0).toUpperCase() + l.slice(1) })),
+      ];
+      // Keep an out-of-range saved value visible so it can be fixed.
+      if (current && !levels.includes(current)) opts.push({ value: current, label: `${current} (not supported by this control)` });
+      return opts;
+    }
+    return SETTING_LABELS[key]?.options;
+  };
 
   useEffect(() => {
     loadSettings();
@@ -118,7 +174,8 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
       setMessage({ type: 'success', text: `${SETTING_LABELS[key]?.label || key} updated` });
       await loadSettings();
     } catch (error) {
-      setMessage({ type: 'error', text: `Failed to update ${key}` });
+      const detail = error instanceof Error ? error.message : '';
+      setMessage({ type: 'error', text: `Failed to update ${key}${detail ? `: ${detail}` : ''}` });
     } finally {
       setSaving(null);
     }
@@ -333,7 +390,7 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
                       rows={4}
                       className="flex-1 px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono resize-y"
                     />
-                  ) : meta?.type === 'select' && meta.options ? (
+                  ) : meta?.type === 'select' && getOptions(setting.key) ? (
                     <select
                       value={editValues[setting.key] || ''}
                       onChange={(e) =>
@@ -341,7 +398,7 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
                       }
                       className="flex-1 px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                     >
-                      {meta.options.map((opt) => (
+                      {getOptions(setting.key)!.map((opt) => (
                         <option key={opt.value} value={opt.value}>
                           {opt.label}
                         </option>
@@ -466,6 +523,14 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
             'llm_model',
             'llm_system_prompt',
           ], 'llm')}
+          {renderSettingGroup('LLM generation (thinking, timeouts, queue)', [
+            'llm_reasoning_control',
+            'llm_reasoning_default',
+            'llm_extra_body',
+            'llm_idle_timeout',
+            'llm_max_duration',
+            'llm_summary_concurrency',
+          ])}
 
           <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
             <p className="text-sm text-gray-600 dark:text-gray-400">

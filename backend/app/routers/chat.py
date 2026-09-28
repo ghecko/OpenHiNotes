@@ -11,32 +11,13 @@ from app.models.resource_share import ResourceType
 from app.dependencies import get_current_user
 from app.services.llm import LLMService
 from app.services.permissions import PermissionService
+from app.utils.transcript_text import build_annotated_text
 import json
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-def _build_annotated_text(transcription: Transcription) -> str:
-    """Build speaker-annotated transcript text from a Transcription object."""
-    transcript_text = transcription.text or ""
-    if transcription.segments and transcription.speakers:
-        speaker_map = transcription.speakers or {}
-        annotated_parts = []
-        prev_speaker = None
-        for seg in transcription.segments:
-            speaker_id = seg.get("speaker")
-            speaker_name = speaker_map.get(speaker_id, speaker_id) if speaker_id else None
-            text = seg.get("text", "").strip()
-            if not text:
-                continue
-            if speaker_name and speaker_name != prev_speaker:
-                annotated_parts.append(f"\n{speaker_name}: {text}")
-                prev_speaker = speaker_name
-            else:
-                annotated_parts.append(f" {text}")
-        if annotated_parts:
-            transcript_text = "".join(annotated_parts).strip()
-    return transcript_text
+_build_annotated_text = build_annotated_text
 
 
 async def _resolve_transcriptions(
