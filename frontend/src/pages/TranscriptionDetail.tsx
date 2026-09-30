@@ -1648,6 +1648,7 @@ ${summary.content}
                 setTranscription(updated);
               } catch (error) {
                 console.error('Failed to update segment text:', error);
+                throw error;
               }
             } : undefined}
             onFindReplace={canEdit ? async (find, replace, caseSensitive) => {
@@ -1658,6 +1659,11 @@ ${summary.content}
                 replace,
                 caseSensitive,
               );
+              setTranscription(updated);
+            } : undefined}
+            onSegmentTextsRestore={canEdit ? async (updates) => {
+              if (!transcription) return;
+              const updated = await transcriptionsApi.updateSegmentTexts(transcription.id, updates);
               setTranscription(updated);
             } : undefined}
           />
@@ -1906,6 +1912,13 @@ ${summary.content}
               <ChatPanel
                 transcriptionId={transcription.id}
                 transcriptionNames={{ [transcription.id]: transcription.title || transcription.original_filename }}
+                transcription={transcription}
+                summaryOptions={summaries
+                  .filter((s) => s.status === 'completed' && s.content)
+                  .map((s) => ({
+                    id: s.id,
+                    label: `${s.template_id ? templateNameById.get(s.template_id) ?? 'Summary' : 'Custom prompt'} · ${format(parseServerDate(s.created_at), 'MMM d, HH:mm')}`,
+                  }))}
               />
             </div>
           </>

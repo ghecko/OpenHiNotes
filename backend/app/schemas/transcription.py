@@ -104,11 +104,23 @@ class SegmentTextUpdate(BaseModel):
     text: str
 
 
+class SegmentTextItem(BaseModel):
+    segment_index: int
+    text: str
+
+
+class SegmentTextsUpdate(BaseModel):
+    """Schema for setting the text of several segments at once (undo)."""
+    updates: List[SegmentTextItem]
+
+
 class TranscriptFindReplace(BaseModel):
     """Schema for finding and replacing text across all segments."""
     find: str
     replace: str
     case_sensitive: bool = False
+    # When given, only these segments are touched (single "Replace" in the editor).
+    segment_indices: Optional[List[int]] = None
 
 
 class WordResponse(BaseModel):

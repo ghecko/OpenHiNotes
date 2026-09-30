@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Copy, Check, Pencil, ArrowRightLeft, X, Search, Replace, GitMerge, Scissors, UserCheck, AlertTriangle } from 'lucide-react';
+import { Copy, Check, Pencil, ArrowRightLeft, X, Search, Replace, GitMerge, Scissors, UserCheck, AlertTriangle, ChevronUp, ChevronDown, Undo2, Redo2 } from 'lucide-react';
 import { Transcription, TranscriptionSegment } from '@/types';
 import { FALLBACK_COLOR, getSpeakerColorByIndex } from '@/utils/speakerColors';
 
@@ -21,9 +21,11 @@ interface TranscriptionViewerProps {
   /** Whether "confirm + enrol voice" is possible (audio still available) */
   canEnroll?: boolean;
   /** Called when user edits a segment's text to fix a mis-transcription */
-  onSegmentTextUpdate?: (segmentIndex: number, newText: string) => void;
+  onSegmentTextUpdate?: (segmentIndex: number, newText: string) => void | Promise<void>;
   /** Called when user performs find-and-replace across all segments */
-  onFindReplace?: (find: string, replace: string, caseSensitive: boolean) => void;
+  onFindReplace?: (find: string, replace: string, caseSensitive: boolean) => void | Promise<void>;
+  /** Set the text of several segments at once (undo / redo of an edit or a replace) */
+  onSegmentTextsRestore?: (updates: { segment_index: number; text: string }[]) => void | Promise<void>;
   /** Current audio playback time in seconds — used for highlight sync */
   currentTime?: number;
   /** Called when user clicks a segment timestamp to seek */
@@ -42,7 +44,24 @@ const segmentTokens = (segment: TranscriptionSegment): string[] =>
     ? segment.words.map((w) => w.word)
     : (segment.text || '').trim().split(/\s+/).filter(Boolean);
 
-export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentReassign, onSpeakerMerge, onSegmentSplit, onMatchDecision, canEnroll, onSegmentTextUpdate, onFindReplace, currentTime, onSeek }: TranscriptionViewerProps) {
+/** One occurrence of the search text inside a segment. */
+interface TextMatch {
+  segment: number;
+  offset: number;
+  length: number;
+}
+
+/** Texts of some segments before an edit, so it can be undone (and redone). */
+interface TextEdit {
+  label: string;
+  changes: { segment_index: number; text: string }[];
+  /** Segment count when the edit was made: split/merge shifts indices, so stale entries are dropped */
+  segmentCount: number;
+}
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentReassign, onSpeakerMerge, onSegmentSplit, onMatchDecision, canEnroll, onSegmentTextUpdate, onFindReplace, onSegmentTextsRestore, currentTime, onSeek }: TranscriptionViewerProps) {
   const [copied, setCopied] = useState(false);
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -71,6 +90,15 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
   const [replaceText, setReplaceText] = useState('');
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [findReplaceStatus, setFindReplaceStatus] = useState<string | null>(null);
+  const [currentMatch, setCurrentMatch] = useState(0);
+  const [isReplacing, setIsReplacing] = useState(false);
+  const findInputRef = useRef<HTMLInputElement>(null);
+  const currentMatchRef = useRef<HTMLElement>(null);
+
+  // Undo / redo of text edits (single edit, replace one, replace all)
+  const [undoStack, setUndoStack] = useState<TextEdit[]>([]);
+  const [redoStack, setRedoStack] = useState<TextEdit[]>([]);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   // Build a deterministic sorted speaker list → index map
   const speakerIndexMap = useMemo(() => {
@@ -326,6 +354,7 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
     if (editingTextIndex !== null && onSegmentTextUpdate && editTextValue.trim()) {
       const originalText = transcription.segments[editingTextIndex].text;
       if (editTextValue.trim() !== originalText.trim()) {
+        recordEdit('Edit text', [editingTextIndex]);
         onSegmentTextUpdate(editingTextIndex, editTextValue.trim());
       }
     }
@@ -348,45 +377,206 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
     }
   };
 
-  // --- Find & Replace handlers ---
-  const handleFindReplace = async () => {
-    if (!onFindReplace || !findText.trim()) return;
-    setFindReplaceStatus(null);
+  // --- Undo / redo ---
+  const segmentCount = transcription.segments.length;
+  const undoAvailable = undoStack.filter((e) => e.segmentCount === segmentCount);
+  const redoAvailable = redoStack.filter((e) => e.segmentCount === segmentCount);
+
+  /** Remember the current text of `indices` so the edit about to happen can be undone. */
+  const recordEdit = (label: string, indices: number[]) => {
+    const changes = indices.map((i) => ({ segment_index: i, text: transcription.segments[i].text }));
+    setUndoStack((stack) => [...stack.filter((e) => e.segmentCount === segmentCount), { label, changes, segmentCount }].slice(-50));
+    setRedoStack([]);
+  };
+
+  const applyHistory = async (from: 'undo' | 'redo') => {
+    if (!onSegmentTextsRestore || isRestoring) return;
+    const stack = from === 'undo' ? undoAvailable : redoAvailable;
+    const entry = stack[stack.length - 1];
+    if (!entry) return;
+    // What the segments hold now, to allow going back the other way
+    const reverse: TextEdit = {
+      label: entry.label,
+      changes: entry.changes.map((c) => ({ segment_index: c.segment_index, text: transcription.segments[c.segment_index].text })),
+      segmentCount,
+    };
+    setIsRestoring(true);
     try {
-      await onFindReplace(findText, replaceText, caseSensitive);
-      setFindReplaceStatus('Replacements applied successfully');
-      setTimeout(() => setFindReplaceStatus(null), 3000);
+      await onSegmentTextsRestore(entry.changes);
+      if (from === 'undo') {
+        setUndoStack((st) => st.filter((e) => e !== entry));
+        setRedoStack((st) => [...st, reverse]);
+      } else {
+        setRedoStack((st) => st.filter((e) => e !== entry));
+        setUndoStack((st) => [...st, reverse]);
+      }
     } catch (err: any) {
-      setFindReplaceStatus(err?.message || 'No matches found');
-      setTimeout(() => setFindReplaceStatus(null), 3000);
+      setFindReplaceStatus(err?.message || `Could not ${from}`);
+      setTimeout(() => setFindReplaceStatus(null), 4000);
+    } finally {
+      setIsRestoring(false);
     }
   };
 
-  // Count occurrences for preview
-  const matchCount = useMemo(() => {
-    if (!findText.trim()) return 0;
-    let count = 0;
-    for (const seg of transcription.segments) {
-      if (caseSensitive) {
-        let idx = 0;
-        while ((idx = seg.text.indexOf(findText, idx)) !== -1) {
-          count++;
-          idx += findText.length;
-        }
-      } else {
-        const re = new RegExp(findText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-        const matches = seg.text.match(re);
-        if (matches) count += matches.length;
+  // --- Find & Replace ---
+  /** Every occurrence of the search text, in transcript order. */
+  const matches = useMemo<TextMatch[]>(() => {
+    if (!findText) return [];
+    const found: TextMatch[] = [];
+    const re = new RegExp(escapeRegExp(findText), caseSensitive ? 'g' : 'gi');
+    transcription.segments.forEach((seg, i) => {
+      const text = seg.text || '';
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text)) !== null) {
+        found.push({ segment: i, offset: m.index, length: m[0].length });
+        if (m[0].length === 0) re.lastIndex++;
       }
-    }
-    return count;
+    });
+    return found;
   }, [findText, caseSensitive, transcription.segments]);
+  const matchCount = matches.length;
+
+  // Keep the current match in range when the text or the matches change
+  useEffect(() => {
+    setCurrentMatch((c) => (matchCount === 0 ? 0 : Math.min(c, matchCount - 1)));
+  }, [matchCount]);
+
+  // Bring the current match into view
+  useEffect(() => {
+    if (showFindReplace && matchCount > 0 && currentMatchRef.current) {
+      currentMatchRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [currentMatch, matchCount, showFindReplace]);
+
+  useEffect(() => {
+    if (showFindReplace) findInputRef.current?.focus();
+  }, [showFindReplace]);
+
+  const goToMatch = (delta: number) => {
+    if (matchCount === 0) return;
+    setCurrentMatch((c) => (c + delta + matchCount) % matchCount);
+  };
+
+  const flashStatus = (text: string) => {
+    setFindReplaceStatus(text);
+    setTimeout(() => setFindReplaceStatus(null), 3000);
+  };
+
+  /** Replace only the current occurrence (client-side splice, sent as a text edit). */
+  const handleReplaceOne = async () => {
+    const match = matches[currentMatch];
+    if (!onSegmentTextUpdate || !match || isReplacing) return;
+    const seg = transcription.segments[match.segment];
+    const newText = seg.text.slice(0, match.offset) + replaceText + seg.text.slice(match.offset + match.length);
+    setIsReplacing(true);
+    try {
+      recordEdit(`Replace "${findText}"`, [match.segment]);
+      await onSegmentTextUpdate(match.segment, newText);
+      // The next occurrence now sits at the same index (this one is gone),
+      // unless the replacement itself contains the search text.
+      const replacementMatches = new RegExp(escapeRegExp(findText), caseSensitive ? 'g' : 'gi').test(replaceText);
+      setCurrentMatch((c) => (replacementMatches ? c + 1 : c));
+      findInputRef.current?.focus();
+    } catch (err: any) {
+      flashStatus(err?.message || 'Replacement failed');
+    } finally {
+      setIsReplacing(false);
+    }
+  };
+
+  const handleReplaceAll = async () => {
+    if (!onFindReplace || !findText || matchCount === 0 || isReplacing) return;
+    setFindReplaceStatus(null);
+    setIsReplacing(true);
+    try {
+      const touched = Array.from(new Set(matches.map((m) => m.segment)));
+      recordEdit(`Replace all "${findText}"`, touched);
+      await onFindReplace(findText, replaceText, caseSensitive);
+      flashStatus(`${matchCount} replacement${matchCount !== 1 ? 's' : ''} applied`);
+    } catch (err: any) {
+      flashStatus(err?.message || 'No matches found');
+    } finally {
+      setIsReplacing(false);
+    }
+  };
+
+  const handleFindKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      goToMatch(e.shiftKey ? -1 : 1);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setShowFindReplace(false);
+    }
+  };
+
+  const handleReplaceKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // Enter replaces the current occurrence only; "Replace All" is a button on purpose.
+      handleReplaceOne();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setShowFindReplace(false);
+    }
+  };
+
+  /** Segment text with the search matches highlighted (current one in orange). */
+  const renderHighlighted = (segment: TranscriptionSegment, idx: number) => {
+    const text = segment.text || '';
+    const own = matches.map((m, i) => ({ ...m, index: i })).filter((m) => m.segment === idx);
+    if (own.length === 0) return text;
+    const parts: React.ReactNode[] = [];
+    let pos = 0;
+    for (const m of own) {
+      if (m.offset > pos) parts.push(text.slice(pos, m.offset));
+      const isCurrent = m.index === currentMatch;
+      parts.push(
+        <mark
+          key={m.index}
+          ref={isCurrent ? currentMatchRef : undefined}
+          className={`rounded px-0.5 ${
+            isCurrent
+              ? 'bg-orange-300 dark:bg-orange-500/70 text-gray-900 dark:text-white ring-2 ring-orange-400'
+              : 'bg-yellow-200 dark:bg-yellow-500/40 text-gray-900 dark:text-white'
+          }`}
+        >
+          {text.slice(m.offset, m.offset + m.length)}
+        </mark>,
+      );
+      pos = m.offset + m.length;
+    }
+    if (pos < text.length) parts.push(text.slice(pos));
+    return <>{parts}</>;
+  };
+
+  const searching = showFindReplace && findText.length > 0;
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
       <div className="flex items-center justify-between mb-6">
         <h3 className="text-lg font-bold text-gray-900 dark:text-white">Transcript</h3>
         <div className="flex items-center gap-2">
+          {onSegmentTextsRestore && (undoAvailable.length > 0 || redoAvailable.length > 0) && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => applyHistory('undo')}
+                disabled={undoAvailable.length === 0 || isRestoring}
+                className="p-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 transition-colors"
+                title={undoAvailable.length > 0 ? `Undo: ${undoAvailable[undoAvailable.length - 1].label}` : 'Nothing to undo'}
+              >
+                <Undo2 className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => applyHistory('redo')}
+                disabled={redoAvailable.length === 0 || isRestoring}
+                className="p-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 transition-colors"
+                title={redoAvailable.length > 0 ? `Redo: ${redoAvailable[redoAvailable.length - 1].label}` : 'Nothing to redo'}
+              >
+                <Redo2 className="w-4 h-4" />
+              </button>
+            </div>
+          )}
           {onFindReplace && (
             <button
               onClick={() => setShowFindReplace(!showFindReplace)}
@@ -425,16 +615,38 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
       {showFindReplace && onFindReplace && (
         <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600">
           <div className="flex flex-col sm:flex-row gap-2">
-            <div className="flex-1 relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-              <input
-                type="text"
-                value={findText}
-                onChange={(e) => setFindText(e.target.value)}
-                placeholder="Find..."
-                className="w-full pl-8 pr-3 py-1.5 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                onKeyDown={(e) => e.key === 'Enter' && handleFindReplace()}
-              />
+            <div className="flex-1 flex items-center gap-1">
+              <div className="flex-1 relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                <input
+                  ref={findInputRef}
+                  type="text"
+                  value={findText}
+                  onChange={(e) => { setFindText(e.target.value); setCurrentMatch(0); }}
+                  placeholder="Find..."
+                  className="w-full pl-8 pr-3 py-1.5 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                  onKeyDown={handleFindKeyDown}
+                  title="Enter: next match, Shift+Enter: previous"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => goToMatch(-1)}
+                disabled={matchCount === 0}
+                className="p-1.5 rounded text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-40"
+                title="Previous match (Shift+Enter)"
+              >
+                <ChevronUp className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => goToMatch(1)}
+                disabled={matchCount === 0}
+                className="p-1.5 rounded text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-40"
+                title="Next match (Enter)"
+              >
+                <ChevronDown className="w-4 h-4" />
+              </button>
             </div>
             <div className="flex-1 relative">
               <Replace className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
@@ -444,7 +656,8 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
                 onChange={(e) => setReplaceText(e.target.value)}
                 placeholder="Replace with..."
                 className="w-full pl-8 pr-3 py-1.5 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                onKeyDown={(e) => e.key === 'Enter' && handleFindReplace()}
+                onKeyDown={handleReplaceKeyDown}
+                title="Enter: replace the current match"
               />
             </div>
             <div className="flex items-center gap-2">
@@ -457,25 +670,39 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
                 />
                 Match case
               </label>
+              {onSegmentTextUpdate && (
+                <button
+                  onClick={handleReplaceOne}
+                  disabled={matchCount === 0 || isReplacing}
+                  className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 disabled:opacity-40 text-gray-900 dark:text-white rounded font-medium transition-colors whitespace-nowrap"
+                  title={replaceText ? 'Replace the current match only' : 'Delete the current match (the replacement is empty)'}
+                >
+                  Replace
+                </button>
+              )}
               <button
-                onClick={handleFindReplace}
-                disabled={!findText.trim()}
+                onClick={handleReplaceAll}
+                disabled={matchCount === 0 || isReplacing}
                 className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded font-medium transition-colors whitespace-nowrap"
+                title={replaceText ? `Replace every match (${matchCount})` : `Delete every match (${matchCount}); the replacement is empty`}
               >
                 Replace All
               </button>
             </div>
           </div>
           <div className="mt-2 flex items-center gap-2 text-xs">
-            {findText.trim() && (
+            {findText && (
               <span className={`${matchCount > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'}`}>
-                {matchCount} match{matchCount !== 1 ? 'es' : ''} found
+                {matchCount > 0 ? `${currentMatch + 1} of ${matchCount} match${matchCount !== 1 ? 'es' : ''}` : 'No match'}
               </span>
             )}
             {findReplaceStatus && (
-              <span className={`${findReplaceStatus.includes('success') ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
+              <span className={`${/applied/.test(findReplaceStatus) ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
                 {findReplaceStatus}
               </span>
+            )}
+            {onSegmentTextsRestore && (
+              <span className="text-gray-400 dark:text-gray-500">Changes can be undone with the arrows above.</span>
             )}
           </div>
         </div>
@@ -763,9 +990,13 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
                     onClick={() => { if (splittingIndex !== idx) startTextEditing(idx); }}
                     title={splittingIndex === idx ? 'Click a word to split before it' : onSegmentTextUpdate ? 'Click to edit text' : undefined}
                   >
-                    {splittingIndex === idx || (segment.words && segment.words.length > 0 && currentTime !== undefined)
+                    {splittingIndex === idx
                       ? renderWords(segment, idx)
-                      : segment.text}
+                      : searching
+                        ? renderHighlighted(segment, idx)
+                        : segment.words && segment.words.length > 0 && currentTime !== undefined
+                          ? renderWords(segment, idx)
+                          : segment.text}
                     {onSegmentTextUpdate && (
                       <Pencil className="w-3 h-3 inline-block ml-1 opacity-0 group-hover:opacity-40 transition-opacity" />
                     )}

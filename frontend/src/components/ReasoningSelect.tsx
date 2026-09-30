@@ -18,7 +18,7 @@ export function ReasoningSelect({ features, value, onChange, disabled, className
   return (
     <label
       className={`flex items-center gap-1.5 px-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-700 dark:text-gray-200 ${className}`}
-      title="How much the model thinks before writing. More thinking is slower, not always better for summaries."
+      title="How much the model thinks before writing. More thinking is slower, not always better."
     >
       <Brain className="w-4 h-4 shrink-0 text-gray-500 dark:text-gray-400" />
       <span className="sr-only">Thinking</span>

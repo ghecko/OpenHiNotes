@@ -165,6 +165,12 @@ class ReasoningSplitter:
         return "".join(self._reasoning) + (self._buf if self._state == "tag" else "")
 
     @property
+    def committed_reasoning(self) -> str:
+        """Reasoning that will not change any more (safe to stream as deltas):
+        excludes the tail kept back in case it starts the closing tag."""
+        return "".join(self._reasoning)
+
+    @property
     def phase(self) -> str:
         if self._answer and "".join(self._answer).strip():
             return "writing"
@@ -505,38 +511,90 @@ class LLMService:
         return LLMResult(answer, reasoning, state["model"], finish, warning, elapsed)
 
     @staticmethod
-    async def chat_completion(
+    async def chat_events(
         messages: List[ChatMessage],
         model: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        reasoning_level: Optional[str] = None,
         db: Optional[AsyncSession] = None,
-    ) -> AsyncGenerator[str, None]:
-        """Stream the answer of a chat completion (reasoning is dropped)."""
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream a chat completion as UI events.
+
+        Events (one dict each): ``{"phase": "waiting"|"thinking"|"writing"}``
+        when the phase changes, ``{"reasoning": piece}`` and
+        ``{"content": piece}`` deltas, ``{"final": {"content", "reasoning"}}``
+        when the settled split differs from what was streamed (implicit
+        ``</think>``: the reasoning went out as content), ``{"warning": text}``
+        and ``{"done": {"model", "finish_reason", "elapsed"}}``. Errors are
+        raised as LLMError.
+        """
         cfg = await LLMService._resolve_settings(db)
         message_dicts = [{"role": m.role, "content": m.content} for m in messages]
-        payload = LLMService._build_payload(cfg, message_dicts, model, temperature, max_tokens, None)
+        payload = LLMService._build_payload(
+            cfg, message_dicts, model, temperature, max_tokens, reasoning_level
+        )
         splitter = ReasoningSplitter()
         queue: asyncio.Queue = asyncio.Queue()
-        streamed = {"any": False}
+        state = {
+            "model": payload["model"], "finish": None,
+            "phase": "waiting", "content": "", "reasoning_len": 0,
+        }
+        t0 = time.monotonic()
 
-        async def on_chunk(piece: str, _model: Optional[str], _finish: Optional[str]) -> None:
+        async def emit(event: Dict[str, Any]) -> None:
+            await queue.put(event)
+
+        async def on_chunk(piece: str, chunk_model: Optional[str], finish: Optional[str]) -> None:
+            if chunk_model:
+                state["model"] = chunk_model
+            if finish:
+                state["finish"] = finish
+            committed = splitter.committed_reasoning
+            if len(committed) > state["reasoning_len"]:
+                await emit({"reasoning": committed[state["reasoning_len"]:]})
+                state["reasoning_len"] = len(committed)
             if piece:
-                streamed["any"] = True
-                await queue.put(piece)
+                state["content"] += piece
+                await emit({"content": piece})
+            phase = splitter.phase
+            if phase != state["phase"]:
+                state["phase"] = phase
+                await emit({"phase": phase})
 
         async def run() -> None:
             try:
+                await emit({"phase": "waiting"})
                 async with asyncio.timeout(cfg["max_duration"]):
                     await LLMService._stream(cfg, payload, splitter, on_chunk)
-                answer, _ = splitter.finish()
-                # Nothing streamed (e.g. answer only after an implicit </think>
-                # or a non-streaming server): send the settled answer.
-                if answer and not streamed["any"]:
-                    await queue.put(answer)
+                answer, reasoning = splitter.finish()
+                finish = state["finish"]
+                if not answer:
+                    if finish == "length":
+                        raise LLMError(
+                            "The model hit its output token limit while thinking and produced "
+                            "no answer. Lower the thinking level, or raise the server's max tokens."
+                        )
+                    if reasoning:
+                        raise LLMError("The model only produced reasoning and no answer.")
+                    raise LLMError("The model returned an empty answer.")
+                streamed_reasoning = splitter.committed_reasoning[:state["reasoning_len"]]
+                if answer != state["content"].strip() or reasoning != streamed_reasoning.strip():
+                    # Non-streaming server, or reasoning that leaked into the
+                    # answer channel (implicit </think>): send the settled split.
+                    await emit({"final": {"content": answer, "reasoning": reasoning}})
+                if finish == "length":
+                    await emit({"warning": "Output truncated: the model hit its output token limit."})
+                await emit({"done": {
+                    "model": state["model"], "finish_reason": finish,
+                    "elapsed": round(time.monotonic() - t0, 1),
+                }})
                 await queue.put(None)
             except TimeoutError:
-                await queue.put(LLMError(f"The LLM did not finish within {_fmt_duration(cfg['max_duration'])}."))
+                await queue.put(LLMError(
+                    f"The LLM did not finish within {_fmt_duration(cfg['max_duration'])} (max duration). "
+                    "Lower the thinking level or raise 'LLM max duration' in the admin settings."
+                ))
             except Exception as e:  # forwarded to the consumer
                 await queue.put(e)
 
@@ -552,3 +610,20 @@ class LLMService:
         finally:
             if not task.done():
                 task.cancel()
+
+    @staticmethod
+    async def chat_completion(
+        messages: List[ChatMessage],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        db: Optional[AsyncSession] = None,
+    ) -> AsyncGenerator[str, None]:
+        """Stream the answer text only (reasoning dropped). See ``chat_events``."""
+        async for event in LLMService.chat_events(
+            messages, model=model, temperature=temperature, max_tokens=max_tokens, db=db
+        ):
+            if "content" in event:
+                yield event["content"]
+            elif "final" in event:
+                yield event["final"]["content"]

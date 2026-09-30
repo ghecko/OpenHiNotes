@@ -30,6 +30,7 @@ from app.schemas.transcription import (
     TitleUpdate,
     SegmentSpeakerReassign,
     SegmentTextUpdate,
+    SegmentTextsUpdate,
     TranscriptFindReplace,
     SpeakerMerge,
     SpeakerMatchDecision,
@@ -1414,22 +1415,38 @@ async def split_segment(
     return transcription
 
 
-@router.patch("/{transcription_id}/segments/update-text", response_model=TranscriptionResponse)
-async def update_segment_text(
-    transcription_id: uuid.UUID,
-    update: SegmentTextUpdate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Update the text of a specific segment (e.g. to fix a mis-transcribed word)."""
-    transcription = await TranscriptionService.get_transcription(db, transcription_id)
+def _segment_with_text(seg: dict, text: str) -> dict:
+    """Copy of ``seg`` with a new text, per-word timestamps carried over.
 
+    Unchanged words keep their timing, replaced words inherit it, so an edit
+    (or its undo) does not drop the word alignment.
+    """
+    updated = {**seg, "text": text}
+    if text.strip() != (seg.get("text") or "").strip() and seg.get("words"):
+        words = realign_words(seg["words"], text, seg.get("start"), seg.get("end"))
+        if words:
+            updated["words"] = words
+            updated["confidence"] = segment_confidence(words, seg.get("confidence"))
+        else:
+            updated.pop("words", None)
+    return updated
+
+
+def _rebuild_full_text(segments: list) -> str:
+    return " ".join(
+        seg.get("text", "").strip() for seg in segments if seg.get("text", "").strip()
+    )
+
+
+async def _writable_transcription(
+    db: AsyncSession, transcription_id: uuid.UUID, current_user: User
+) -> Transcription:
+    transcription = await TranscriptionService.get_transcription(db, transcription_id)
     if not transcription:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Transcription not found",
         )
-
     has_access = await PermissionService.check_access(
         db, current_user, ResourceType.transcription, transcription_id, "write"
     )
@@ -1438,6 +1455,18 @@ async def update_segment_text(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this transcription",
         )
+    return transcription
+
+
+@router.patch("/{transcription_id}/segments/update-text", response_model=TranscriptionResponse)
+async def update_segment_text(
+    transcription_id: uuid.UUID,
+    update: SegmentTextUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the text of a specific segment (e.g. to fix a mis-transcribed word)."""
+    transcription = await _writable_transcription(db, transcription_id, current_user)
 
     segments = list(transcription.segments or [])
     if update.segment_index < 0 or update.segment_index >= len(segments):
@@ -1446,24 +1475,40 @@ async def update_segment_text(
             detail=f"Segment index {update.segment_index} out of range (0-{len(segments) - 1})",
         )
 
-    seg = segments[update.segment_index]
-    updated = {**seg, "text": update.text}
-    if update.text.strip() != (seg.get("text") or "").strip() and seg.get("words"):
-        # Carry the per-word timestamps over the edit (unchanged words keep
-        # their timing, replaced words inherit it) instead of dropping them.
-        words = realign_words(seg["words"], update.text, seg.get("start"), seg.get("end"))
-        if words:
-            updated["words"] = words
-            updated["confidence"] = segment_confidence(words, seg.get("confidence"))
-        else:
-            updated.pop("words", None)
-    segments[update.segment_index] = updated
+    segments[update.segment_index] = _segment_with_text(segments[update.segment_index], update.text)
     transcription.segments = segments
+    transcription.text = _rebuild_full_text(segments)
 
-    # Rebuild the full text from all segments
-    transcription.text = " ".join(
-        seg.get("text", "").strip() for seg in segments if seg.get("text", "").strip()
-    )
+    await db.commit()
+    await db.refresh(transcription)
+    return transcription
+
+
+@router.patch("/{transcription_id}/segments/texts", response_model=TranscriptionResponse)
+async def update_segment_texts(
+    transcription_id: uuid.UUID,
+    payload: SegmentTextsUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set the text of several segments in one go.
+
+    Used by the transcript editor to undo an edit or a find-and-replace
+    (it sends the previous text of every segment the operation touched).
+    """
+    transcription = await _writable_transcription(db, transcription_id, current_user)
+
+    segments = list(transcription.segments or [])
+    for item in payload.updates:
+        if item.segment_index < 0 or item.segment_index >= len(segments):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Segment index {item.segment_index} out of range (0-{len(segments) - 1})",
+            )
+    for item in payload.updates:
+        segments[item.segment_index] = _segment_with_text(segments[item.segment_index], item.text)
+    transcription.segments = segments
+    transcription.text = _rebuild_full_text(segments)
 
     await db.commit()
     await db.refresh(transcription)
@@ -1477,23 +1522,12 @@ async def find_and_replace(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Find and replace a word or pattern across all segments of a transcription."""
-    transcription = await TranscriptionService.get_transcription(db, transcription_id)
+    """Find and replace a word or pattern across all segments of a transcription.
 
-    if not transcription:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Transcription not found",
-        )
-
-    has_access = await PermissionService.check_access(
-        db, current_user, ResourceType.transcription, transcription_id, "write"
-    )
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to update this transcription",
-        )
+    ``segment_indices`` restricts the replacement to those segments (a single
+    "replace this one" from the editor sends one index).
+    """
+    transcription = await _writable_transcription(db, transcription_id, current_user)
 
     if not payload.find:
         raise HTTPException(
@@ -1502,9 +1536,12 @@ async def find_and_replace(
         )
 
     segments = list(transcription.segments or [])
+    only = set(payload.segment_indices) if payload.segment_indices is not None else None
     total_replacements = 0
 
     for i, seg in enumerate(segments):
+        if only is not None and i not in only:
+            continue
         text = seg.get("text", "")
         if payload.case_sensitive:
             count = text.count(payload.find)
@@ -1514,19 +1551,10 @@ async def find_and_replace(
             pattern = re.compile(re.escape(payload.find), re.IGNORECASE)
             matches = pattern.findall(text)
             count = len(matches)
-            new_text = pattern.sub(payload.replace, text)
+            new_text = pattern.sub(lambda _m: payload.replace, text)
 
         if count > 0:
-            updated = {**seg, "text": new_text}
-            if seg.get("words"):
-                # Carry per-word timestamps over the replacement
-                words = realign_words(seg["words"], new_text, seg.get("start"), seg.get("end"))
-                if words:
-                    updated["words"] = words
-                    updated["confidence"] = segment_confidence(words, seg.get("confidence"))
-                else:
-                    updated.pop("words", None)
-            segments[i] = updated
+            segments[i] = _segment_with_text(seg, new_text)
             total_replacements += count
 
     if total_replacements == 0:
@@ -1536,11 +1564,7 @@ async def find_and_replace(
         )
 
     transcription.segments = segments
-
-    # Rebuild the full text from all segments
-    transcription.text = " ".join(
-        seg.get("text", "").strip() for seg in segments if seg.get("text", "").strip()
-    )
+    transcription.text = _rebuild_full_text(segments)
 
     await db.commit()
     await db.refresh(transcription)

@@ -265,6 +265,31 @@ export interface ChatMessage {
   content: string;
 }
 
+/** What the model gets to see about a transcription in the chat. */
+export interface ChatContext {
+  /** Include the transcript (whole, or narrowed by speakers / time). */
+  transcript: boolean;
+  /** Speaker labels to keep; undefined = every speaker. */
+  speakers?: string[];
+  /** Time slice in seconds; undefined = whole recording. */
+  start?: number;
+  end?: number;
+  /** Completed summaries to include verbatim. */
+  summary_ids: string[];
+}
+
+export type ChatPhase = 'waiting' | 'thinking' | 'writing';
+
+/** One frame of the chat SSE stream (see backend routers/chat.py). */
+export type ChatEvent =
+  | { phase: ChatPhase }
+  | { reasoning: string }
+  | { content: string }
+  | { final: { content: string; reasoning: string } }
+  | { warning: string }
+  | { done: { model: string; finish_reason: string | null; elapsed: number } }
+  | { error: string };
+
 export interface HiDockDevice {
   id: string;
   name: string;

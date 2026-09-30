@@ -255,16 +255,26 @@ export const transcriptionsApi = {
     });
   },
 
+  /** Set the text of several segments at once (undo of an edit or a replace). */
+  async updateSegmentTexts(
+    id: string,
+    updates: { segment_index: number; text: string }[],
+  ): Promise<Transcription> {
+    return apiClient.patch<Transcription>(`/transcriptions/${id}/segments/texts`, { updates });
+  },
+
   async findAndReplace(
     id: string,
     find: string,
     replace: string,
     caseSensitive: boolean = false,
+    segmentIndices?: number[],
   ): Promise<Transcription> {
     return apiClient.patch<Transcription>(`/transcriptions/${id}/find-replace`, {
       find,
       replace,
       case_sensitive: caseSensitive,
+      segment_indices: segmentIndices ?? null,
     });
   },
 

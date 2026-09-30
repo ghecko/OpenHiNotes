@@ -119,7 +119,7 @@ class APIClient {
     return response.json();
   }
 
-  async streamPost(path: string, body?: unknown): Promise<ReadableStream<string>> {
+  async streamPost(path: string, body?: unknown, signal?: AbortSignal): Promise<ReadableStream<string>> {
     const url = `${this.baseURL}${path}`;
     const token = this.getToken();
 
@@ -135,6 +135,7 @@ class APIClient {
       method: 'POST',
       headers,
       body: body ? JSON.stringify(body) : undefined,
+      signal,
     });
 
     if (!response.ok) {
@@ -142,7 +143,14 @@ class APIClient {
         this.clearToken();
         localStorage.removeItem('auth-storage');
       }
-      throw new Error(`HTTP ${response.status}`);
+      let detail = '';
+      try {
+        const data = await response.json();
+        if (typeof data?.detail === 'string') detail = data.detail;
+      } catch {
+        // no JSON body
+      }
+      throw new Error(detail || `HTTP ${response.status}`);
     }
 
     if (!response.body) {
