@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useMemo } from 'react';
 import { formatMarkdown } from '@/utils/formatMarkdown';
 
 interface InteractiveMarkdownProps {
@@ -31,18 +31,29 @@ export function InteractiveMarkdown({ content, onContentChange, className }: Int
       });
       if (clickedIdx === -1) return;
 
-      // Toggle the Nth checkbox in the raw markdown
+      // Toggle the Nth task item of the raw markdown (any bullet or ordered
+      // marker, possibly quoted), skipping fenced code like the renderer does.
       let seen = 0;
-      const updated = content.replace(
-        /^([\s]*[-*]\s+)\[([ x])\]/gim,
-        (match, prefix, state) => {
-          if (seen++ === clickedIdx) {
-            const newState = state.trim().toLowerCase() === 'x' ? ' ' : 'x';
-            return `${prefix}[${newState}]`;
+      let fence: string | null = null;
+      const updated = content
+        .split('\n')
+        .map((line) => {
+          const fenceMatch = line.match(/^\s*(```|~~~)/);
+          if (fenceMatch) {
+            if (fence === null) fence = fenceMatch[1];
+            else if (fence === fenceMatch[1]) fence = null;
+            return line;
           }
-          return match;
-        },
-      );
+          if (fence !== null) return line;
+          return line.replace(
+            /^([\s>]*(?:[-*+]|\d+[.)])\s+)\[([ xX])\](?=\s|$)/,
+            (match, prefix, state) => {
+              if (seen++ !== clickedIdx) return match;
+              return `${prefix}[${state.toLowerCase() === 'x' ? ' ' : 'x'}]`;
+            },
+          );
+        })
+        .join('\n');
 
       if (updated !== content) {
         onContentChange(updated);
@@ -51,12 +62,14 @@ export function InteractiveMarkdown({ content, onContentChange, className }: Int
     [content, onContentChange],
   );
 
+  const html = useMemo(() => formatMarkdown(content), [content]);
+
   return (
     <div
       ref={containerRef}
-      className={className}
+      className={`markdown-content${className ? ` ${className}` : ''}`}
       onClick={handleClick}
-      dangerouslySetInnerHTML={{ __html: formatMarkdown(content) }}
+      dangerouslySetInnerHTML={{ __html: html }}
     />
   );
 }

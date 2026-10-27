@@ -12,6 +12,7 @@ import {
   ChatConversationListItem,
 } from '@/api/chatConversations';
 import { formatMarkdown } from '@/utils/formatMarkdown';
+import { CopyMarkdownButton } from '@/components/CopyMarkdownButton';
 
 interface ChatPanelProps {
   transcriptionId?: string;
@@ -113,11 +114,18 @@ function ReasoningBlock({ reasoning, live }: { reasoning: string; live: boolean 
   const [open, setOpen] = useState<boolean | null>(null);
   const isOpen = open ?? live;
   const preRef = useRef<HTMLPreElement>(null);
+  // Follow the reasoning as it streams, unless the user scrolled up to read it.
+  const followRef = useRef(true);
   useEffect(() => {
-    if (live && isOpen && preRef.current) {
+    if (live && isOpen && followRef.current && preRef.current) {
       preRef.current.scrollTop = preRef.current.scrollHeight;
     }
   }, [reasoning, live, isOpen]);
+  const handlePreScroll = () => {
+    const el = preRef.current;
+    if (!el) return;
+    followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 16;
+  };
   return (
     <div className="mb-2">
       <button
@@ -132,6 +140,7 @@ function ReasoningBlock({ reasoning, live }: { reasoning: string; live: boolean 
       {isOpen && (
         <pre
           ref={preRef}
+          onScroll={handlePreScroll}
           className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words p-2 text-xs font-mono bg-white/60 dark:bg-gray-900/60 text-gray-600 dark:text-gray-400 rounded border border-gray-200 dark:border-gray-600"
         >
           {reasoning}
@@ -289,25 +298,37 @@ export function ChatPanel({
       summary_ids: context.summaryIds,
     };
   };
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
-  // Smart auto-scroll
+  // Smart auto-scroll. Any upward scroll detaches from the bottom (so a light
+  // wheel flick is enough while tokens stream in); reaching the bottom again
+  // re-attaches. Our own scrolls only ever move down, so they never detach.
   const userHasScrolledUp = useRef(false);
+  const lastScrollTop = useRef(0);
 
   const handleScroll = useCallback(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
-    const threshold = 80;
-    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
-    userHasScrolledUp.current = !isNearBottom;
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    if (scrollTop < lastScrollTop.current - 1) {
+      userHasScrolledUp.current = true;
+    } else if (scrollHeight - scrollTop - clientHeight < 24) {
+      userHasScrolledUp.current = false;
+    }
+    lastScrollTop.current = scrollTop;
   }, []);
 
   useEffect(() => {
     // Do not scroll when there are no messages — this prevents the page from
     // jumping to the Chat section when first opening a transcription.
     if (!userHasScrolledUp.current && (messages.length > 0 || awaitingFirstChunk)) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      // Scroll the messages container only: scrollIntoView would also scroll
+      // every ancestor, dragging the whole transcript page to the bottom.
+      const container = messagesContainerRef.current;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+        lastScrollTop.current = container.scrollTop;
+      }
     }
   }, [messages, awaitingFirstChunk]);
 
@@ -1121,6 +1142,11 @@ ${m.content}
                     {message.stopped && (
                       <p className="mt-2 text-xs italic text-gray-500 dark:text-gray-400">Stopped before the end of the reply.</p>
                     )}
+                    {message.content && !isLive && (
+                      <div className="mt-1 -mb-1 flex justify-end">
+                        <CopyMarkdownButton content={message.content} />
+                      </div>
+                    )}
                   </>
                 ) : (
                   <p className="text-sm whitespace-pre-wrap">{message.content}</p>
@@ -1131,8 +1157,6 @@ ${m.content}
         })}
 
         {awaitingFirstChunk && <TypingIndicator />}
-
-        <div ref={messagesEndRef} />
       </div>
 
       {/* Input area */}

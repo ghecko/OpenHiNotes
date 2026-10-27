@@ -24,6 +24,7 @@ from app.models.summary import Summary, SummaryStatus
 from app.models.template import SummaryTemplate
 from app.models.transcription import Transcription
 from app.services.llm import LLMService, LLMError, LLMProgress
+from app.services import glossary
 from app.utils.date_extract import extract_meeting_date
 from app.utils.transcript_text import build_annotated_text
 
@@ -222,13 +223,17 @@ class SummaryQueue:
                     extract_meeting_date(transcription.original_filename),
                 )
                 reasoning_level = summary.reasoning_level
+                system_prompt = cfg["llm_system_prompt"]
+                vocabulary = glossary.prompt_block(await glossary.terms_for_transcription(db, transcription))
+                if vocabulary:
+                    system_prompt = f"{system_prompt}\n\n{vocabulary}"
                 await db.execute(
                     update(Summary).where(Summary.id == summary_id).values(model_used=cfg["llm_model"] or "")
                 )
                 await db.commit()
 
             messages = [
-                {"role": "system", "content": cfg["llm_system_prompt"]},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ]
 

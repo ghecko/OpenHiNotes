@@ -61,6 +61,7 @@ from app.dependencies import get_current_user
 from app.services.transcription import TranscriptionService
 from app.services.summary_queue import summary_queue
 from app.services.permissions import PermissionService
+from app.services import glossary
 from app.services.audio_concat import concat_audio_files, AudioConcatError
 from app.services.word_realign import realign_words, segment_confidence, synthesize_words
 
@@ -2013,6 +2014,7 @@ async def oneshot_transcribe(
             language=language,
             diarize=bool(diarize),
             db=db,
+            context_bias=glossary.bias_terms(await glossary.terms_for(db, current_user.id, None)),
         )
         parsed = TranscriptionService.parse_voxhub_response(voxhub_response)
         segments = parsed.get("segments") or []

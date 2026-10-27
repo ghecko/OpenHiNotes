@@ -11,6 +11,7 @@ from app.config import settings
 from app.models.transcription import Transcription, TranscriptionStatus, RecordingType
 from app.models.summary import Summary
 from app.models.chat_conversation import ChatConversation
+from app.services import glossary
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete as sa_delete
 import os
@@ -76,6 +77,7 @@ class TranscriptionService:
                 "job_mode": (await get_effective_setting(db, "voxhub_job_mode")).lower() == "true",
                 "vad_mode": (await get_effective_setting(db, "voxhub_vad_mode")).strip(),
                 "pipeline": (await get_effective_setting(db, "voxhub_pipeline")).strip(),
+                "context_bias": (await get_effective_setting(db, "voxhub_context_bias")).lower() == "true",
             }
         return {
             "api_url": settings.voxhub_api_url,
@@ -84,6 +86,7 @@ class TranscriptionService:
             "job_mode": settings.voxhub_job_mode.lower() == "true",
             "vad_mode": settings.voxhub_vad_mode.strip(),
             "pipeline": settings.voxhub_pipeline.strip(),
+            "context_bias": settings.voxhub_context_bias.lower() == "true",
         }
 
     @staticmethod
@@ -92,13 +95,16 @@ class TranscriptionService:
         language: Optional[str],
         diarize: bool,
         num_speakers: Optional[int],
-    ) -> Dict[str, str]:
+        context_bias: Optional[list[str]] = None,
+    ) -> Dict[str, Union[str, list[str]]]:
         """Form fields shared by the sync and job endpoints.
 
         ``vad_mode`` / ``pipeline`` are only sent when the admin set them, so
         VoxHub's own defaults apply otherwise (sending ``vad_mode=silero``
         with ``diarize=true`` yields a single SPEAKER_00 on the legacy
         pipeline). ``num_speakers`` is the user's hint from the upload form.
+        ``context_bias`` (vocabulary terms) goes out as one repeated form
+        field per term, as Mistral's API takes it, when the admin enabled it.
         """
         data = {
             "model": cfg["model"],
@@ -113,6 +119,8 @@ class TranscriptionService:
             data["language"] = language
         if num_speakers and diarize:
             data["num_speakers"] = str(int(num_speakers))
+        if context_bias and cfg.get("context_bias"):
+            data["context_bias"] = list(context_bias)
         return data
 
     @staticmethod
@@ -131,6 +139,7 @@ class TranscriptionService:
         on_progress: Optional[Callable[[str, float, Optional[str]], None]] = None,
         on_job_submitted: Optional[Callable[[str], Any]] = None,
         num_speakers: Optional[int] = None,
+        context_bias: Optional[list[str]] = None,
     ) -> Dict[str, Any]:
         """Call VoxHub/WhisperX API to transcribe audio file.
 
@@ -142,6 +151,7 @@ class TranscriptionService:
             diarize: whether to run speaker diarization (False for whisper memos).
             on_job_submitted: optional callback(job_id) called after job is submitted in job mode.
             num_speakers: optional exact speaker count hint forwarded to pyannote.
+            context_bias: vocabulary terms, sent only when voxhub_context_bias is on.
         """
         cfg = await TranscriptionService._resolve_transcription_settings(db)
         headers = TranscriptionService._build_auth_headers(cfg["api_key"])
@@ -149,12 +159,13 @@ class TranscriptionService:
         if cfg["job_mode"]:
             return await TranscriptionService._transcribe_job_mode(
                 file_path, language, cfg, headers,
-                diarize=diarize, num_speakers=num_speakers,
+                diarize=diarize, num_speakers=num_speakers, context_bias=context_bias,
                 on_progress=on_progress, on_job_submitted=on_job_submitted,
             )
         else:
             return await TranscriptionService._transcribe_normal_mode(
                 file_path, language, cfg, headers, diarize=diarize, num_speakers=num_speakers,
+                context_bias=context_bias,
             )
 
     @staticmethod
@@ -165,13 +176,14 @@ class TranscriptionService:
         headers: Dict[str, str],
         diarize: bool = True,
         num_speakers: Optional[int] = None,
+        context_bias: Optional[list[str]] = None,
     ) -> Dict[str, Any]:
         """Synchronous transcription — single POST, wait for response."""
         url = f"{cfg['api_url']}/v1/audio/transcriptions"
 
         with open(file_path, "rb") as f:
             files = {"file": (Path(file_path).name, f, "audio/mpeg")}
-            data = TranscriptionService._build_request_data(cfg, language, diarize, num_speakers)
+            data = TranscriptionService._build_request_data(cfg, language, diarize, num_speakers, context_bias)
             data["response_format"] = "verbose_json"
             # Word timestamps (wordalign pipeline): karaoke highlight + word-level
             # speaker splits in the UI. Harmless on the legacy pipeline.
@@ -195,6 +207,7 @@ class TranscriptionService:
         num_speakers: Optional[int] = None,
         on_progress: Optional[Callable[[str, float, Optional[str]], None]] = None,
         on_job_submitted: Optional[Callable[[str], Any]] = None,
+        context_bias: Optional[list[str]] = None,
     ) -> Dict[str, Any]:
         """Async VoxHub Job Mode — submit, poll, fetch result.
 
@@ -214,7 +227,7 @@ class TranscriptionService:
 
         with open(file_path, "rb") as f:
             files = {"file": (Path(file_path).name, f, "audio/mpeg")}
-            data = TranscriptionService._build_request_data(cfg, language, diarize, num_speakers)
+            data = TranscriptionService._build_request_data(cfg, language, diarize, num_speakers, context_bias)
 
             async with httpx.AsyncClient(timeout=60.0, verify=settings.voxhub_ssl_verify) as client:
                 response = await client.post(submit_url, files=files, data=data, headers=headers)
@@ -438,9 +451,10 @@ class TranscriptionService:
         # Transcribe asynchronously
         try:
             should_diarize = rec_type != RecordingType.whisper
+            context_bias = glossary.bias_terms(await glossary.terms_for_transcription(db, transcription))
             voxhub_response = await TranscriptionService.transcribe_with_voxhub(
                 file_path, language=language, diarize=should_diarize, db=db,
-                on_progress=on_progress, num_speakers=num_speakers,
+                on_progress=on_progress, num_speakers=num_speakers, context_bias=context_bias,
             )
             parsed = TranscriptionService.parse_voxhub_response(voxhub_response)
 

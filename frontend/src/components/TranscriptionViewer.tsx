@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Copy, Check, Pencil, ArrowRightLeft, X, Search, Replace, GitMerge, Scissors, UserCheck, AlertTriangle, ChevronUp, ChevronDown, Undo2, Redo2 } from 'lucide-react';
+import { Copy, Check, Pencil, ArrowRightLeft, X, Search, Replace, GitMerge, Scissors, UserCheck, AlertTriangle, ChevronUp, ChevronDown, Undo2, Redo2, BookA } from 'lucide-react';
 import { Transcription, TranscriptionSegment } from '@/types';
 import { FALLBACK_COLOR, getSpeakerColorByIndex } from '@/utils/speakerColors';
 
@@ -26,6 +26,8 @@ interface TranscriptionViewerProps {
   onFindReplace?: (find: string, replace: string, caseSensitive: boolean) => void | Promise<void>;
   /** Set the text of several segments at once (undo / redo of an edit or a replace) */
   onSegmentTextsRestore?: (updates: { segment_index: number; text: string }[]) => void | Promise<void>;
+  /** Save the current find → replace pair as a vocabulary term ("heard as" → correct spelling) */
+  onAddToVocabulary?: (heardAs: string, term: string) => void;
   /** Current audio playback time in seconds — used for highlight sync */
   currentTime?: number;
   /** Called when user clicks a segment timestamp to seek */
@@ -61,7 +63,7 @@ interface TextEdit {
 
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentReassign, onSpeakerMerge, onSegmentSplit, onMatchDecision, canEnroll, onSegmentTextUpdate, onFindReplace, onSegmentTextsRestore, currentTime, onSeek }: TranscriptionViewerProps) {
+export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentReassign, onSpeakerMerge, onSegmentSplit, onMatchDecision, canEnroll, onSegmentTextUpdate, onFindReplace, onSegmentTextsRestore, onAddToVocabulary, currentTime, onSeek }: TranscriptionViewerProps) {
   const [copied, setCopied] = useState(false);
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -579,13 +581,24 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
           )}
           {onFindReplace && (
             <button
-              onClick={() => setShowFindReplace(!showFindReplace)}
+              onClick={() => {
+                if (!showFindReplace) {
+                  // Text selected in the transcript becomes the search text.
+                  const selection = window.getSelection();
+                  const selected = selection?.toString().trim();
+                  if (selected && !selected.includes('\n') && scrollContainerRef.current?.contains(selection!.anchorNode)) {
+                    setFindText(selected);
+                    setCurrentMatch(0);
+                  }
+                }
+                setShowFindReplace(!showFindReplace);
+              }}
               className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
                 showFindReplace
                   ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
                   : 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white hover:bg-gray-300 dark:hover:bg-gray-600'
               }`}
-              title="Find & Replace"
+              title="Find & Replace (select a word in the transcript first to search for it)"
             >
               <Search className="w-4 h-4" />
               <span className="hidden sm:inline">Find &amp; Replace</span>
@@ -688,6 +701,16 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
               >
                 Replace All
               </button>
+              {onAddToVocabulary && (
+                <button
+                  onClick={() => onAddToVocabulary(findText.trim(), replaceText.trim())}
+                  disabled={!findText.trim() || !replaceText.trim()}
+                  className="p-1.5 rounded text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-40"
+                  title="Add to vocabulary: summaries and chat will use the replacement spelling"
+                >
+                  <BookA className="w-4 h-4" />
+                </button>
+              )}
             </div>
           </div>
           <div className="mt-2 flex items-center gap-2 text-xs">

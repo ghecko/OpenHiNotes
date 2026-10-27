@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { Layout } from '@/components/Layout';
 import { useAuthStore } from '@/store/useAuthStore';
 import { authApi } from '@/api/auth';
-import { Save, Loader, Fingerprint, Lock, CheckCircle, AlertCircle, Bell } from 'lucide-react';
+import { Save, Loader, Fingerprint, Lock, CheckCircle, AlertCircle, Bell, BookA } from 'lucide-react';
 import { VoiceProfileManager } from '@/components/VoiceProfileManager';
+import { VocabularyEditor } from '@/components/VocabularyEditor';
 import { settingsApi } from '@/api/settings';
 import { notificationsApi, NotificationPreferences } from '@/api/notifications';
 
@@ -419,6 +420,14 @@ export function Settings() {
         <ChangePasswordCard />
 
         <NotificationsCard />
+
+        <div className="bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
+          <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+            <BookA className="w-5 h-5" />
+            Vocabulary
+          </h2>
+          <VocabularyEditor />
+        </div>
 
         {/* Voice Fingerprinting */}
         {voiceFingerprintingEnabled && (

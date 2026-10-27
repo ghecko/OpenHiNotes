@@ -23,6 +23,8 @@ import { format } from 'date-fns';
 import { Save, Loader, Plus, Pencil, Trash2, X, FileText, Maximize2, Download, Play, Pause, Volume2, Disc3, Share2, Lock, Eye, ChevronDown, Pin, CloudUpload } from 'lucide-react';
 import { ShareModal } from '@/components/ShareModal';
 import { InteractiveMarkdown } from '@/components/InteractiveMarkdown';
+import { CopyMarkdownButton } from '@/components/CopyMarkdownButton';
+import { AddToVocabularyModal } from '@/components/AddToVocabularyModal';
 import { TemplateSelector } from '@/components/TemplateSelector';
 import { CustomPromptModal } from '@/components/CustomPromptModal';
 import { ReasoningSelect } from '@/components/ReasoningSelect';
@@ -74,6 +76,11 @@ function SummaryModal({
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <CopyMarkdownButton
+              content={summary.content}
+              label="Copy"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+            />
             <div className="relative" ref={exportRef}>
               <button
                 onClick={() => setShowExport((v) => !v)}
@@ -161,6 +168,7 @@ export function TranscriptionDetail() {
 
   // Collection assignment
   const [collections, setCollections] = useState<Collection[]>([]);
+  const [vocabularyDraft, setVocabularyDraft] = useState<{ heardAs: string; term: string } | null>(null);
 
   // Share modal
   const [showShareModal, setShowShareModal] = useState(false);
@@ -1607,6 +1615,7 @@ ${summary.content}
           /* ── Record: full speaker-aware transcript viewer ── */
           <TranscriptionViewer
             transcription={transcription}
+            onAddToVocabulary={(heardAs, term) => setVocabularyDraft({ heardAs, term })}
             currentTime={audioBlob ? playbackTime : undefined}
             onSeek={audioBlob ? handleSeekAudio : undefined}
             onSpeakerMerge={canEdit ? handleMergeSpeakers : undefined}
@@ -1743,6 +1752,11 @@ ${summary.content}
                         {doneSummaries[0].model_used}
                       </p>
                       <div className="flex items-center gap-2">
+                        <CopyMarkdownButton
+                          content={doneSummaries[0].content}
+                          label="Copy"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+                        />
                         <div className="relative" ref={activeExportSummaryId === doneSummaries[0].id ? inlineExportRef : null}>
                           <button
                             onClick={() => setActiveExportSummaryId(activeExportSummaryId === doneSummaries[0].id ? null : doneSummaries[0].id)}
@@ -1824,6 +1838,18 @@ ${summary.content}
               ) : null}
 
               {/* Summary modal */}
+              {vocabularyDraft && (() => {
+                const coll = collections.find((c) => c.id === transcription.collection_id);
+                const canEditColl = coll && (coll.permission_level === 'owner' || coll.permission_level === 'write' || !coll.permission_level);
+                return (
+                  <AddToVocabularyModal
+                    heardAs={vocabularyDraft.heardAs}
+                    term={vocabularyDraft.term}
+                    collection={canEditColl ? { id: coll.id, name: coll.name } : null}
+                    onClose={() => setVocabularyDraft(null)}
+                  />
+                );
+              })()}
               {openSummary && (
                 <SummaryModal
                   summary={openSummary}

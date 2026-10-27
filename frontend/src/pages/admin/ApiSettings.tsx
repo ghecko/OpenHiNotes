@@ -50,6 +50,11 @@ const SETTING_LABELS: Record<string, { label: string; placeholder: string; type:
     type: 'select',
     options: PIPELINE_OPTIONS,
   },
+  voxhub_context_bias: {
+    label: 'Send vocabulary as context_bias',
+    placeholder: 'false',
+    type: 'toggle',
+  },
   voxhub_vad_mode: {
     label: 'VAD Mode (legacy pipeline only)',
     placeholder: '',
@@ -516,6 +521,7 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
             'voxhub_job_mode',
             'voxhub_pipeline',
             'voxhub_vad_mode',
+            'voxhub_context_bias',
           ], 'voxhub')}
           {renderSettingGroup('LLM / Chat', [
             'llm_api_url',

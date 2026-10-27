@@ -10,6 +10,7 @@ from sqlalchemy import select, func, update
 from app.database import AsyncSessionLocal
 from app.models.transcription import Transcription, TranscriptionStatus
 from app.services.transcription import TranscriptionService
+from app.services import glossary
 from app.services.summary_queue import summary_queue
 from app.config import settings
 from app.services.notifications import notify_transcription_completed
@@ -341,6 +342,7 @@ class TranscriptionQueue:
 
                 transcription_id = transcription.id
                 user_id = transcription.user_id
+                context_bias = glossary.bias_terms(await glossary.terms_for_transcription(db, transcription))
                 stored_filename = transcription.filename
                 language = transcription.language
                 recording_type = transcription.recording_type
@@ -404,7 +406,7 @@ class TranscriptionQueue:
                     voxhub_response = await TranscriptionService.transcribe_with_voxhub(
                         file_path, language=language, diarize=should_diarize, db=db,
                         on_progress=on_progress, on_job_submitted=on_job_submitted,
-                        num_speakers=num_speakers,
+                        num_speakers=num_speakers, context_bias=context_bias,
                     )
 
                 parsed = TranscriptionService.parse_voxhub_response(voxhub_response)

@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { ChatPanel } from '@/components/ChatPanel';
+import { VocabularyEditor } from '@/components/VocabularyEditor';
 import { collectionsApi } from '@/api/collections';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { Collection, Transcription } from '@/types';
 import {
-  FolderOpen, Plus, Trash2, ArrowLeft, FileText, MessageSquare, X, Share2, Eye, Pencil,
+  FolderOpen, Plus, Trash2, ArrowLeft, FileText, MessageSquare, X, Share2, Eye, Pencil, BookA,
 } from 'lucide-react';
 import { ShareModal } from '@/components/ShareModal';
 
@@ -24,7 +25,7 @@ export function CollectionDetail() {
   const [isLoadingAll, setIsLoadingAll] = useState(false);
 
   // Tab view
-  const [activeTab, setActiveTab] = useState<'transcriptions' | 'chat'>('transcriptions');
+  const [activeTab, setActiveTab] = useState<'transcriptions' | 'chat' | 'vocabulary'>('transcriptions');
 
   // Share modal
   const [showShareModal, setShowShareModal] = useState(false);
@@ -183,6 +184,19 @@ export function CollectionDetail() {
               Chat
             </span>
           </button>
+          <button
+            onClick={() => setActiveTab('vocabulary')}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'vocabulary'
+                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+            }`}
+          >
+            <span className="flex items-center gap-2">
+              <BookA className="w-4 h-4" />
+              Vocabulary
+            </span>
+          </button>
         </div>
 
         {/* Tab content */}
@@ -258,6 +272,12 @@ export function CollectionDetail() {
                 transcriptions.map((t) => [t.id, t.title || t.original_filename])
               )}
             />
+          </div>
+        )}
+
+        {activeTab === 'vocabulary' && id && (
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
+            <VocabularyEditor collectionId={id} canEdit={canEdit} />
           </div>
         )}
 
