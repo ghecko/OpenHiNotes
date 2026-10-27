@@ -2,15 +2,31 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { transcriptionsApi } from '@/api/transcriptions';
+import { collectionsApi } from '@/api/collections';
 import { searchApi, SearchHit } from '@/api/search';
 import { useAppStore } from '@/store/useAppStore';
-import { Transcription, RecordingType } from '@/types';
+import { Transcription, RecordingType, Collection } from '@/types';
 import { format } from 'date-fns';
 import {
   Trash2, CheckCircle, AlertCircle, Loader, Search, RefreshCw, FileText,
   Inbox, Clock, Unplug, ArrowUpDown, Pin, PinOff, X, CheckSquare, Square,
-  Mic, MessageSquare, Download,
+  Mic, MessageSquare, Download, FolderOpen, FolderInput, ChevronDown,
 } from 'lucide-react';
+
+/** Pseudo collection id for transcriptions that are in no collection. */
+const NO_COLLECTION = 'none';
+
+/** Close a popover on a click outside of `ref`. */
+function useClickOutside(ref: React.RefObject<HTMLElement>, open: boolean, onClose: () => void) {
+  useEffect(() => {
+    if (!open) return;
+    const handle = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [ref, open, onClose]);
+}
 
 export function Transcriptions() {
   const navigate = useNavigate();
@@ -22,6 +38,17 @@ export function Transcriptions() {
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
   const [ownershipFilter, setOwnershipFilter] = useState<'all' | 'mine' | 'shared'>('all');
   const [typeFilter, setTypeFilter] = useState<'all' | RecordingType>('all');
+  // Collection ids (or NO_COLLECTION) to show; empty = no filter.
+  const [collectionFilter, setCollectionFilter] = useState<string[]>([]);
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [showCollectionFilter, setShowCollectionFilter] = useState(false);
+  const [showMoveMenu, setShowMoveMenu] = useState(false);
+  const collectionFilterRef = useRef<HTMLDivElement>(null);
+  const moveMenuRef = useRef<HTMLDivElement>(null);
+  const closeCollectionFilter = useCallback(() => setShowCollectionFilter(false), []);
+  const closeMoveMenu = useCallback(() => setShowMoveMenu(false), []);
+  useClickOutside(collectionFilterRef, showCollectionFilter, closeCollectionFilter);
+  useClickOutside(moveMenuRef, showMoveMenu, closeMoveMenu);
 
   // Phase 6.1 — server-side full-text search.
   const [serverHits, setServerHits] = useState<SearchHit[] | null>(null);
@@ -37,9 +64,25 @@ export function Transcriptions() {
   );
 
   useEffect(() => {
+    collectionsApi.list().then(setCollections).catch((err) => console.error('Failed to load collections:', err));
+  }, []);
+
+  const collectionById = useMemo(() => new Map(collections.map((c) => [c.id, c])), [collections]);
+  // Collections the user may add transcriptions to.
+  const writableCollections = useMemo(
+    () => collections.filter((c) => !c.permission_level || c.permission_level === 'owner' || c.permission_level === 'write'),
+    [collections],
+  );
+
+  const toggleCollectionFilter = (id: string) => {
+    setCollectionFilter((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
+  };
+
+  const collectionFilterKey = collectionFilter.join(',');
+  useEffect(() => {
     loadTranscriptions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortOrder, ownershipFilter, typeFilter]);
+  }, [sortOrder, ownershipFilter, typeFilter, collectionFilterKey]);
 
   const loadTranscriptions = async () => {
     setIsLoading(true);
@@ -47,6 +90,7 @@ export function Transcriptions() {
       const response = await transcriptionsApi.getTranscriptions(
         0, 100, sortOrder, ownershipFilter,
         typeFilter === 'all' ? undefined : typeFilter,
+        collectionFilter.length ? collectionFilter : undefined,
       );
       setTranscriptions(response.items);
     } catch (error) {
@@ -198,6 +242,25 @@ export function Transcriptions() {
     }
   };
 
+  const handleBatchMove = async (collectionId: string | null) => {
+    const ids = Array.from(selectedIds);
+    setShowMoveMenu(false);
+    if (!ids.length) return;
+    try {
+      const result = await transcriptionsApi.batchSetCollection(ids, collectionId);
+      if (result.skipped > 0) {
+        alert(`${result.affected} moved, ${result.skipped} skipped (no permission).`);
+      }
+      // Reload: moved items may no longer match the collection filter.
+      await loadTranscriptions();
+    } catch (err: any) {
+      console.error('Batch move failed:', err);
+      alert(err?.message || 'Could not move the transcriptions');
+    } finally {
+      exitSelectionMode();
+    }
+  };
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed': return <CheckCircle className="w-3.5 h-3.5" />;
@@ -286,6 +349,62 @@ export function Transcriptions() {
             ))}
           </div>
 
+          <div className="relative" ref={collectionFilterRef}>
+            <button
+              onClick={() => setShowCollectionFilter((v) => !v)}
+              className={`inline-flex items-center gap-2 px-4 py-2.5 backdrop-blur-sm border rounded-xl transition-all duration-200 ${
+                collectionFilter.length
+                  ? 'bg-primary-500 text-white border-primary-500'
+                  : 'bg-white/80 dark:bg-gray-800/80 text-gray-700 dark:text-gray-300 border-gray-200/60 dark:border-gray-700/40 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+              title="Filter by collection (several can be selected)"
+            >
+              <FolderOpen className="w-4 h-4" />
+              <span className="text-sm whitespace-nowrap">
+                {collectionFilter.length === 0
+                  ? 'Collections'
+                  : collectionFilter.length === 1
+                    ? (collectionFilter[0] === NO_COLLECTION ? 'No collection' : collectionById.get(collectionFilter[0])?.name || '1 collection')
+                    : `${collectionFilter.length} collections`}
+              </span>
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+            {showCollectionFilter && (
+              <div className="absolute right-0 md:left-0 md:right-auto mt-1 w-64 max-h-80 overflow-y-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg z-30 py-1">
+                {[{ id: NO_COLLECTION, name: 'No collection', color: null as string | null }, ...collections].map((c) => (
+                  <label
+                    key={c.id}
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={collectionFilter.includes(c.id)}
+                      onChange={() => toggleCollectionFilter(c.id)}
+                      className="rounded border-gray-300 dark:border-gray-600"
+                    />
+                    {c.id === NO_COLLECTION ? (
+                      <span className="w-2.5 h-2.5 rounded-full border border-dashed border-gray-400 flex-shrink-0" />
+                    ) : (
+                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: c.color || '#9ca3af' }} />
+                    )}
+                    <span className={`truncate ${c.id === NO_COLLECTION ? 'italic' : ''}`}>{c.name}</span>
+                  </label>
+                ))}
+                {collections.length === 0 && (
+                  <p className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No collections yet.</p>
+                )}
+                {collectionFilter.length > 0 && (
+                  <button
+                    onClick={() => setCollectionFilter([])}
+                    className="w-full text-left px-3 py-2 text-xs text-primary-600 dark:text-primary-400 hover:bg-gray-50 dark:hover:bg-gray-700 border-t border-gray-100 dark:border-gray-700"
+                  >
+                    Clear filter
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
           <button
             onClick={() => setSortOrder(sortOrder === 'newest' ? 'oldest' : 'newest')}
             className="inline-flex items-center gap-2 px-4 py-2.5 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm text-gray-700 dark:text-gray-300 border border-gray-200/60 dark:border-gray-700/40 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200"
@@ -325,6 +444,39 @@ export function Transcriptions() {
               Select all visible
             </button>
             <span className="flex-1" />
+            <div className="relative" ref={moveMenuRef}>
+              <button
+                onClick={() => setShowMoveMenu((v) => !v)}
+                disabled={!selectedIds.size}
+                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+              >
+                <FolderInput className="w-3.5 h-3.5" /> Move to collection
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {showMoveMenu && (
+                <div className="absolute right-0 mt-1 w-60 max-h-80 overflow-y-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg z-30 py-1">
+                  {writableCollections.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => handleBatchMove(c.id)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+                    >
+                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: c.color || '#9ca3af' }} />
+                      <span className="truncate">{c.name}</span>
+                    </button>
+                  ))}
+                  {writableCollections.length === 0 && (
+                    <p className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No collection you can add to.</p>
+                  )}
+                  <button
+                    onClick={() => handleBatchMove(null)}
+                    className="w-full text-left px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 border-t border-gray-100 dark:border-gray-700"
+                  >
+                    Remove from their collection
+                  </button>
+                </div>
+              )}
+            </div>
             <button onClick={() => handleBatchPin(true)} disabled={!selectedIds.size} className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50">
               <Pin className="w-3.5 h-3.5" /> Pin
             </button>
@@ -371,6 +523,7 @@ export function Transcriptions() {
                   <tr>
                     {selectionMode && <th className="px-3 py-3.5 w-10"></th>}
                     <th className="px-6 py-3.5 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Name</th>
+                    <th className="px-6 py-3.5 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Collection</th>
                     <th className="px-6 py-3.5 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Language</th>
                     <th className="px-6 py-3.5 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Duration</th>
                     <th className="px-6 py-3.5 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Date</th>
@@ -436,6 +589,22 @@ export function Transcriptions() {
                               )}
                             </div>
                           </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm">
+                          {t.collection_id && (() => {
+                            const coll = collectionById.get(t.collection_id);
+                            if (!coll) return <span className="text-xs text-gray-400 italic" title="This transcription was shared with you, its collection was not">Private collection</span>;
+                            return (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setCollectionFilter([coll.id]); }}
+                                className="inline-flex items-center gap-1.5 max-w-[12rem] px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700/60 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
+                                title={`Show only “${coll.name}”`}
+                              >
+                                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: coll.color || '#9ca3af' }} />
+                                <span className="truncate">{coll.name}</span>
+                              </button>
+                            );
+                          })()}
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400 uppercase">{t.language}</td>
                         <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{t.audio_duration ? `${Math.ceil(t.audio_duration / 60)} min` : '-'}</td>

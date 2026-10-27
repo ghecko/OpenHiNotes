@@ -4,7 +4,7 @@ import logging
 import os
 import re
 import uuid
-from typing import Optional
+from typing import List, Optional
 from pathlib import Path
 
 from fastapi import (
@@ -19,7 +19,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from app.database import get_db
 from app.config import settings
 from app.schemas.transcription import (
@@ -290,11 +290,15 @@ async def list_transcriptions(
     sort: str = Query("newest", regex="^(newest|oldest)$"),
     filter: str = Query("all", regex="^(all|mine|shared)$"),
     recording_type: Optional[str] = Query(None, regex="^(record|whisper)$"),
+    collection_id: Optional[List[str]] = Query(
+        None, description="Repeatable; a collection id, or 'none' for transcriptions in no collection"
+    ),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List transcriptions. Supports filter: all (mine + shared), mine, shared.
     Optional recording_type filter: record, whisper.
+    Optional collection_id filter (repeatable, any of them matches).
 
     Pinned items (per-user) always float to the top, regardless of the
     chosen sort order. Phase 6.2 → per-user pins in Phase 6 follow-up.
@@ -375,6 +379,21 @@ async def list_transcriptions(
         type_condition = Transcription.recording_type == recording_type
         query = query.where(type_condition)
         count_query = count_query.where(type_condition)
+
+    if collection_id:
+        include_none = "none" in collection_id
+        try:
+            ids = [uuid.UUID(c) for c in collection_id if c != "none"]
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid collection_id")
+        conditions = []
+        if ids:
+            conditions.append(Transcription.collection_id.in_(ids))
+        if include_none:
+            conditions.append(Transcription.collection_id.is_(None))
+        collection_condition = or_(*conditions)
+        query = query.where(collection_condition)
+        count_query = count_query.where(collection_condition)
 
     # Execute queries
     total = await db.scalar(count_query)

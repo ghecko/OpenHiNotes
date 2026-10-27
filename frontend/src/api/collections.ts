@@ -3,7 +3,7 @@ import { Collection, Transcription } from '@/types';
 
 export const collectionsApi = {
   async list(): Promise<Collection[]> {
-    return apiClient.get<Collection[]>('/collections');
+    return apiClient.get<Collection[]>('/collections?limit=100');
   },
 
   async get(id: string): Promise<Collection> {
