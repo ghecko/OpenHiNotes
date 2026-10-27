@@ -76,13 +76,34 @@
   animation: slide-in-left 0.2s ease-out;
 }
 
-/* Markdown content styles — code blocks, checkboxes */
-.markdown-content pre {
-  margin-top: 0.5rem;
-  margin-bottom: 0.5rem;
-}
-
-.markdown-content code {
-  overflow-wrap: break-word;
-  word-break: break-word;
+/* Markdown content (utils/formatMarkdown.ts): Tailwind's preflight strips
+   element styles, so they are restored here for rendered LLM output. */
+@layer components {
+  .markdown-content > :first-child { margin-top: 0; }
+  .markdown-content > :last-child { margin-bottom: 0; }
+  .markdown-content p { @apply my-2; }
+  .markdown-content h1 { @apply text-lg font-bold mt-4 mb-2; }
+  .markdown-content h2 { @apply text-base font-bold mt-4 mb-2; }
+  .markdown-content h3 { @apply text-sm font-bold mt-3 mb-1; }
+  .markdown-content h4,
+  .markdown-content h5,
+  .markdown-content h6 { @apply text-sm font-semibold mt-3 mb-1; }
+  .markdown-content ul { @apply list-disc pl-5 my-2 space-y-0.5; }
+  .markdown-content ol { @apply list-decimal pl-5 my-2 space-y-0.5; }
+  .markdown-content li > ul,
+  .markdown-content li > ol { @apply my-0.5; }
+  .markdown-content li > p { @apply my-0.5; }
+  .markdown-content li.task-item { @apply list-none -ml-5; }
+  .markdown-content li.task-item > input,
+  .markdown-content li.task-item > p > input { @apply mr-1.5 rounded border-gray-300 text-primary-600 cursor-pointer align-middle; }
+  .markdown-content li.task-done { @apply text-gray-500 dark:text-gray-400 line-through; }
+  .markdown-content blockquote { @apply border-l-4 border-gray-300 dark:border-gray-600 pl-4 my-2 italic text-gray-600 dark:text-gray-400; }
+  .markdown-content hr { @apply border-gray-300 dark:border-gray-600 my-3; }
+  .markdown-content a { @apply text-primary-600 dark:text-primary-400 hover:underline break-words; }
+  .markdown-content code { @apply bg-gray-200 dark:bg-gray-600 px-1.5 py-0.5 rounded text-xs font-mono; overflow-wrap: break-word; word-break: break-word; }
+  .markdown-content pre { @apply bg-gray-900 dark:bg-gray-950 text-gray-100 rounded-lg p-3 my-2 overflow-x-auto text-xs font-mono; }
+  .markdown-content pre code { @apply bg-transparent p-0 text-inherit; word-break: normal; overflow-wrap: normal; white-space: pre; }
+  .markdown-content table { @apply block max-w-full overflow-x-auto my-3 text-xs md:text-sm border-collapse; }
+  .markdown-content th { @apply bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white font-semibold text-left px-3 py-2 border border-gray-200 dark:border-gray-700; }
+  .markdown-content td { @apply px-3 py-2 border border-gray-200 dark:border-gray-700 align-top; }
 }

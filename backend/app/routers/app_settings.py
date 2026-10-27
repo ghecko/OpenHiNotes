@@ -49,6 +49,10 @@ CONFIGURABLE_KEYS = {
         "description": "VoxHub pipeline: empty = server default, wordalign (chunks + CTC word alignment + per-word speakers), legacy (diarize then transcribe turns)",
         "default_from_env": "voxhub_pipeline",
     },
+    "voxhub_context_bias": {
+        "description": "Send the vocabulary terms (general + collection) to VoxHub as context_bias (true/false). Only transcription backends that support biasing use them",
+        "default_from_env": "voxhub_context_bias",
+    },
     "llm_api_url": {
         "description": "LLM API base URL (OpenAI-compatible endpoint)",
         "default_from_env": "llm_api_url",

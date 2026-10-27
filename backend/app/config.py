@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     voxhub_vad_mode: str = ""
     # VoxHub pipeline: "" (server default), "wordalign" or "legacy".
     voxhub_pipeline: str = ""
+    # Send the vocabulary (glossary terms) as `context_bias` form fields.
+    # Only useful with a VoxHub backend that supports biasing; others ignore it.
+    voxhub_context_bias: str = "false"
 
     # LLM API (OpenAI-compatible)
     llm_api_url: str = "http://localhost:11434/v1"

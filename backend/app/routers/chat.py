@@ -13,6 +13,7 @@ from app.dependencies import get_current_user
 from app.services.llm import LLMService, LLMError, reasoning_levels_for
 from app.services.permissions import PermissionService
 from app.utils.transcript_text import build_annotated_text
+from app.services import glossary
 import json
 import logging
 from typing import Optional
@@ -150,6 +151,18 @@ async def _summary_messages(
     ]
 
 
+async def _vocabulary_message(db: AsyncSession, transcriptions: list[Transcription]) -> Optional[ChatMessage]:
+    """Vocabulary of the transcripts in context (their owners' general terms + their collections')."""
+    terms, seen = [], set()
+    for owner_id, collection_id in dict.fromkeys((t.user_id, t.collection_id) for t in transcriptions):
+        for term in await glossary.terms_for(db, owner_id, collection_id):
+            if term.term.casefold() not in seen:
+                seen.add(term.term.casefold())
+                terms.append(term)
+    block = glossary.prompt_block(terms)
+    return ChatMessage(role="system", content=block) if block else None
+
+
 def _fmt_time(seconds: float) -> str:
     seconds = max(0, int(seconds))
     h, rem = divmod(seconds, 3600)
@@ -199,6 +212,10 @@ async def chat(
                 ),
             )
             messages.insert(0, transcript_message)
+
+    vocabulary = await _vocabulary_message(db, transcriptions)
+    if vocabulary:
+        messages.insert(0, vocabulary)
 
     cfg = await LLMService.resolve_settings(db)
     level = chat_request.reasoning_level
