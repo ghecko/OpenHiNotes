@@ -7,6 +7,7 @@ from app.schemas.chat import ChatRequest, ChatMessage, ChatContext
 from app.models.transcription import Transcription
 from app.models.summary import Summary, SummaryStatus
 from app.models.collection import Collection
+from app.models.collection_transcription import CollectionTranscription
 from app.models.user import User, UserRole
 from app.models.resource_share import ResourceType
 from app.dependencies import get_current_user
@@ -33,6 +34,9 @@ async def _resolve_transcriptions(
 ) -> list[Transcription]:
     """Resolve the set of transcriptions referenced by the chat request."""
     transcription_ids: list = []
+    # From the collection: the ones the user cannot read are left out
+    # instead of failing (others may have filed theirs in it).
+    from_collection: set = set()
 
     # Option 1: single transcription_id (backwards compatible)
     if chat_request.transcription_id:
@@ -59,13 +63,15 @@ async def _resolve_transcriptions(
             raise HTTPException(status_code=403, detail="Not authorized")
 
         result = await db.execute(
-            select(Transcription)
-            .where(Transcription.collection_id == chat_request.collection_id)
+            select(Transcription.id)
+            .join(CollectionTranscription, CollectionTranscription.transcription_id == Transcription.id)
+            .where(CollectionTranscription.collection_id == chat_request.collection_id)
             .order_by(Transcription.created_at)
         )
-        for t in result.scalars().all():
-            if t.id not in transcription_ids:
-                transcription_ids.append(t.id)
+        for tid in result.scalars().all():
+            if tid not in transcription_ids:
+                transcription_ids.append(tid)
+                from_collection.add(tid)
 
     if not transcription_ids:
         return []
@@ -77,17 +83,20 @@ async def _resolve_transcriptions(
     transcriptions = list(result.scalars().all())
 
     # Check authorization via PermissionService
+    readable = []
     for t in transcriptions:
         has_access = await PermissionService.check_access(
             db, current_user, ResourceType.transcription, t.id, "read"
         )
-        if not has_access:
+        if has_access:
+            readable.append(t)
+        elif t.id not in from_collection:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Not authorized to chat with transcription {t.id}",
             )
 
-    return transcriptions
+    return readable
 
 
 def _transcript_message(transcription: Transcription, ctx: ChatContext) -> Optional[ChatMessage]:
@@ -151,14 +160,20 @@ async def _summary_messages(
     ]
 
 
-async def _vocabulary_message(db: AsyncSession, transcriptions: list[Transcription]) -> Optional[ChatMessage]:
-    """Vocabulary of the transcripts in context (their owners' general terms + their collections')."""
-    terms, seen = [], set()
-    for owner_id, collection_id in dict.fromkeys((t.user_id, t.collection_id) for t in transcriptions):
-        for term in await glossary.terms_for(db, owner_id, collection_id):
-            if term.term.casefold() not in seen:
-                seen.add(term.term.casefold())
-                terms.append(term)
+async def _vocabulary_message(
+    db: AsyncSession, user: User, transcriptions: list[Transcription], collection_id=None,
+) -> Optional[ChatMessage]:
+    """Vocabulary of the transcripts in context: their owners' general terms
+    and the terms of the collections they are in that the user can see (plus
+    the chatted collection)."""
+    if not transcriptions:
+        return None
+    collection_ids = {cid for t in transcriptions for cid in t.collection_ids}
+    if user.role != UserRole.admin:
+        collection_ids &= set(await PermissionService.list_accessible_ids(db, user, ResourceType.collection))
+    if collection_id:
+        collection_ids.add(collection_id)
+    terms = await glossary.terms_for(db, {t.user_id for t in transcriptions}, collection_ids)
     block = glossary.prompt_block(terms)
     return ChatMessage(role="system", content=block) if block else None
 
@@ -213,7 +228,7 @@ async def chat(
             )
             messages.insert(0, transcript_message)
 
-    vocabulary = await _vocabulary_message(db, transcriptions)
+    vocabulary = await _vocabulary_message(db, current_user, transcriptions, chat_request.collection_id)
     if vocabulary:
         messages.insert(0, vocabulary)
 

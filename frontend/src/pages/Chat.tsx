@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Layout } from '@/components/Layout';
+import { CollectionBadge, knownCollections } from '@/components/CollectionBadge';
 import { ChatPanel } from '@/components/ChatPanel';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { collectionsApi } from '@/api/collections';
 import { Transcription, Collection } from '@/types';
-import { FolderOpen } from 'lucide-react';
 
 export function Chat() {
   const [transcriptions, setTranscriptions] = useState<Transcription[]>([]);
@@ -80,22 +80,9 @@ export function Chat() {
                     </p>
                   )}
                   <div className="flex items-center gap-2 mt-1">
-                    {t.collection_id && collectionMap.has(t.collection_id) && (
-                      <span
-                        className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-600 text-gray-600 dark:text-gray-300"
-                      >
-                        {collectionMap.get(t.collection_id)!.color && (
-                          <span
-                            className="w-2 h-2 rounded-full flex-shrink-0"
-                            style={{ backgroundColor: collectionMap.get(t.collection_id)!.color! }}
-                          />
-                        )}
-                        {!collectionMap.get(t.collection_id)!.color && (
-                          <FolderOpen className="w-2.5 h-2.5 flex-shrink-0" />
-                        )}
-                        {collectionMap.get(t.collection_id)!.name}
-                      </span>
-                    )}
+                    {knownCollections(t.collection_ids, collectionMap).map((c) => (
+                      <CollectionBadge key={c.id} collection={c} />
+                    ))}
                     <span className="text-xs text-gray-600 dark:text-gray-400">
                       Ready
                     </span>

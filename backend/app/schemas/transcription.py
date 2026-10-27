@@ -149,7 +149,9 @@ class TranscriptionResponse(BaseModel):
     original_filename: str
     recording_type: str = "record"
     title: Optional[str] = None
-    collection_id: Optional[uuid.UUID] = None
+    # Every collection the transcription is in, whoever added it; clients
+    # show the ones they know (GET /collections).
+    collection_ids: List[uuid.UUID] = []
     audio_duration: Optional[float] = None
     language: Optional[str] = None
     text: Optional[str] = None

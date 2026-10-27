@@ -100,7 +100,8 @@ export interface Transcription {
   original_filename: string;
   recording_type: RecordingType;
   title: string | null;
-  collection_id: string | null;
+  /** Every collection it is in, whoever filed it; show the ones in GET /collections */
+  collection_ids: string[];
   audio_duration: number | null;
   language: string;
   text: string;

@@ -93,8 +93,8 @@ def test_terms_for_merges_general_and_collection(db_session):
             ])
             await db.commit()
 
-            in_pentest = await glossary.terms_for(db, alice.id, pentest.id)
-            general_only = await glossary.terms_for(db, alice.id, None)
+            in_pentest = await glossary.terms_for(db, [alice.id], [pentest.id])
+            general_only = await glossary.terms_for(db, [alice.id])
             return [t.term for t in in_pentest], [t.term for t in general_only]
 
     in_pentest, general_only = asyncio.run(scenario())

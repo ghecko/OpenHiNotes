@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { collectionsApi } from '@/api/collections';
+import { CollectionBadge, knownCollections } from '@/components/CollectionBadge';
 import { searchApi, SearchHit } from '@/api/search';
 import { useAppStore } from '@/store/useAppStore';
 import { Transcription, RecordingType, Collection } from '@/types';
@@ -10,7 +11,7 @@ import { format } from 'date-fns';
 import {
   Trash2, CheckCircle, AlertCircle, Loader, Search, RefreshCw, FileText,
   Inbox, Clock, Unplug, ArrowUpDown, Pin, PinOff, X, CheckSquare, Square,
-  Mic, MessageSquare, Download, FolderOpen, FolderInput, ChevronDown,
+  Mic, MessageSquare, Download, FolderOpen, FolderPlus, FolderMinus, ChevronDown,
 } from 'lucide-react';
 
 /** Pseudo collection id for transcriptions that are in no collection. */
@@ -42,13 +43,14 @@ export function Transcriptions() {
   const [collectionFilter, setCollectionFilter] = useState<string[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [showCollectionFilter, setShowCollectionFilter] = useState(false);
-  const [showMoveMenu, setShowMoveMenu] = useState(false);
+  // Which batch collection menu is open
+  const [showMoveMenu, setShowMoveMenu] = useState<'add' | 'remove' | null>(null);
   const collectionFilterRef = useRef<HTMLDivElement>(null);
   const moveMenuRef = useRef<HTMLDivElement>(null);
   const closeCollectionFilter = useCallback(() => setShowCollectionFilter(false), []);
-  const closeMoveMenu = useCallback(() => setShowMoveMenu(false), []);
+  const closeMoveMenu = useCallback(() => setShowMoveMenu(null), []);
   useClickOutside(collectionFilterRef, showCollectionFilter, closeCollectionFilter);
-  useClickOutside(moveMenuRef, showMoveMenu, closeMoveMenu);
+  useClickOutside(moveMenuRef, showMoveMenu !== null, closeMoveMenu);
 
   // Phase 6.1 — server-side full-text search.
   const [serverHits, setServerHits] = useState<SearchHit[] | null>(null);
@@ -242,24 +244,32 @@ export function Transcriptions() {
     }
   };
 
-  const handleBatchMove = async (collectionId: string | null) => {
+  const handleBatchCollection = async (collectionId: string, remove: boolean) => {
     const ids = Array.from(selectedIds);
-    setShowMoveMenu(false);
+    setShowMoveMenu(null);
     if (!ids.length) return;
     try {
-      const result = await transcriptionsApi.batchSetCollection(ids, collectionId);
+      const result = await transcriptionsApi.batchSetCollection(ids, collectionId, remove);
       if (result.skipped > 0) {
-        alert(`${result.affected} moved, ${result.skipped} skipped (no permission).`);
+        alert(remove
+          ? `${result.affected} removed, ${result.skipped} skipped (not in it, or no permission).`
+          : `${result.affected} added, ${result.skipped} skipped (no permission).`);
       }
-      // Reload: moved items may no longer match the collection filter.
+      // Reload: the items may no longer match the collection filter.
       await loadTranscriptions();
     } catch (err: any) {
-      console.error('Batch move failed:', err);
-      alert(err?.message || 'Could not move the transcriptions');
+      console.error('Batch collection change failed:', err);
+      alert(err?.message || 'Could not update the collection');
     } finally {
       exitSelectionMode();
     }
   };
+
+  // Collections the selection is in (candidates for "Remove from").
+  const selectionCollections = useMemo(() => {
+    const ids = new Set(transcriptions.filter((t) => selectedIds.has(t.id)).flatMap((t) => t.collection_ids || []));
+    return collections.filter((c) => ids.has(c.id));
+  }, [transcriptions, selectedIds, collections]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -444,36 +454,39 @@ export function Transcriptions() {
               Select all visible
             </button>
             <span className="flex-1" />
-            <div className="relative" ref={moveMenuRef}>
-              <button
-                onClick={() => setShowMoveMenu((v) => !v)}
-                disabled={!selectedIds.size}
-                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
-              >
-                <FolderInput className="w-3.5 h-3.5" /> Move to collection
-                <ChevronDown className="w-3 h-3" />
-              </button>
+            <div className="relative flex items-center gap-2" ref={moveMenuRef}>
+              {(['add', 'remove'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setShowMoveMenu((m) => (m === mode ? null : mode))}
+                  disabled={!selectedIds.size || (mode === 'remove' && selectionCollections.length === 0)}
+                  className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+                >
+                  {mode === 'add' ? <FolderPlus className="w-3.5 h-3.5" /> : <FolderMinus className="w-3.5 h-3.5" />}
+                  {mode === 'add' ? 'Add to collection' : 'Remove from collection'}
+                  <ChevronDown className="w-3 h-3" />
+                </button>
+              ))}
               {showMoveMenu && (
-                <div className="absolute right-0 mt-1 w-60 max-h-80 overflow-y-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg z-30 py-1">
-                  {writableCollections.map((c) => (
+                <div className="absolute right-0 top-full mt-1 w-60 max-h-80 overflow-y-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg z-30 py-1">
+                  {(showMoveMenu === 'add' ? writableCollections : selectionCollections).map((c) => (
                     <button
                       key={c.id}
-                      onClick={() => handleBatchMove(c.id)}
+                      onClick={() => handleBatchCollection(c.id, showMoveMenu === 'remove')}
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
                     >
                       <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: c.color || '#9ca3af' }} />
                       <span className="truncate">{c.name}</span>
                     </button>
                   ))}
-                  {writableCollections.length === 0 && (
+                  {showMoveMenu === 'add' && writableCollections.length === 0 && (
                     <p className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No collection you can add to.</p>
                   )}
-                  <button
-                    onClick={() => handleBatchMove(null)}
-                    className="w-full text-left px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 border-t border-gray-100 dark:border-gray-700"
-                  >
-                    Remove from their collection
-                  </button>
+                  {showMoveMenu === 'add' && (
+                    <p className="px-3 py-2 text-[11px] text-gray-400 dark:text-gray-500 border-t border-gray-100 dark:border-gray-700">
+                      They stay in their other collections.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -591,20 +604,16 @@ export function Transcriptions() {
                           </div>
                         </td>
                         <td className="px-6 py-4 text-sm">
-                          {t.collection_id && (() => {
-                            const coll = collectionById.get(t.collection_id);
-                            if (!coll) return <span className="text-xs text-gray-400 italic" title="This transcription was shared with you, its collection was not">Private collection</span>;
-                            return (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); setCollectionFilter([coll.id]); }}
-                                className="inline-flex items-center gap-1.5 max-w-[12rem] px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700/60 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
-                                title={`Show only “${coll.name}”`}
-                              >
-                                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: coll.color || '#9ca3af' }} />
-                                <span className="truncate">{coll.name}</span>
-                              </button>
-                            );
-                          })()}
+                          <div className="flex flex-wrap gap-1">
+                            {knownCollections(t.collection_ids, collectionById).map((c) => (
+                              <CollectionBadge
+                                key={c.id}
+                                collection={c}
+                                onClick={() => setCollectionFilter([c.id])}
+                                title={`Show only “${c.name}”`}
+                              />
+                            ))}
+                          </div>
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400 uppercase">{t.language}</td>
                         <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">{t.audio_duration ? `${Math.ceil(t.audio_duration / 60)} min` : '-'}</td>

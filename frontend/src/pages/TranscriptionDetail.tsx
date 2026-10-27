@@ -25,6 +25,7 @@ import { ShareModal } from '@/components/ShareModal';
 import { InteractiveMarkdown } from '@/components/InteractiveMarkdown';
 import { CopyMarkdownButton } from '@/components/CopyMarkdownButton';
 import { AddToVocabularyModal } from '@/components/AddToVocabularyModal';
+import { CollectionBadge, knownCollections } from '@/components/CollectionBadge';
 import { TemplateSelector } from '@/components/TemplateSelector';
 import { CustomPromptModal } from '@/components/CustomPromptModal';
 import { ReasoningSelect } from '@/components/ReasoningSelect';
@@ -354,17 +355,23 @@ export function TranscriptionDetail() {
     });
   }, [showAllTemplates]);
 
-  const handleCollectionChange = async (collectionId: string) => {
+  const handleAddToCollection = async (collectionId: string) => {
+    if (!transcription || !collectionId) return;
+    try {
+      await collectionsApi.assignTranscription(collectionId, transcription.id);
+      setTranscription({ ...transcription, collection_ids: [...transcription.collection_ids, collectionId] });
+    } catch (err: any) {
+      alert(err?.message || 'Could not add to the collection');
+    }
+  };
+
+  const handleRemoveFromCollection = async (collectionId: string) => {
     if (!transcription) return;
     try {
-      if (collectionId) {
-        await collectionsApi.assignTranscription(collectionId, transcription.id);
-      } else if (transcription.collection_id) {
-        await collectionsApi.removeTranscription(transcription.collection_id, transcription.id);
-      }
-      setTranscription({ ...transcription, collection_id: collectionId || null });
-    } catch (err) {
-      console.error('Failed to update collection:', err);
+      await collectionsApi.removeTranscription(collectionId, transcription.id);
+      setTranscription({ ...transcription, collection_ids: transcription.collection_ids.filter((c) => c !== collectionId) });
+    } catch (err: any) {
+      alert(err?.message || 'Could not remove from the collection');
     }
   };
 
@@ -1358,17 +1365,43 @@ ${summary.content}
             </p>
           </div>
           <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-            <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">Collection</p>
-            <select
-              value={transcription.collection_id || ''}
-              onChange={(e) => handleCollectionChange(e.target.value)}
-              className="w-full text-sm font-semibold text-gray-900 dark:text-white bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer appearance-auto"
-            >
-              <option value="">— None —</option>
-              {collections.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
+            <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">Collections</p>
+            {(() => {
+              const byId = new Map(collections.map((c) => [c.id, c]));
+              const current = knownCollections(transcription.collection_ids, byId);
+              const isOwner = transcription.permission_level === 'owner' || !transcription.permission_level;
+              const canEditColl = (c: Collection) => !c.permission_level || c.permission_level === 'owner' || c.permission_level === 'write';
+              const addable = collections.filter((c) => canEditColl(c) && !transcription.collection_ids.includes(c.id));
+              return (
+                <div className="flex flex-wrap items-center gap-1">
+                  {current.map((c) => (
+                    <CollectionBadge
+                      key={c.id}
+                      collection={c}
+                      onClick={() => navigate(`/collections/${c.id}`)}
+                      title="Open the collection"
+                      onRemove={canEditColl(c) || isOwner ? () => handleRemoveFromCollection(c.id) : undefined}
+                    />
+                  ))}
+                  {addable.length > 0 && (
+                    <select
+                      value=""
+                      onChange={(e) => handleAddToCollection(e.target.value)}
+                      className="text-xs text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-full px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer"
+                      title="Add to one of your collections (it stays in the others)"
+                    >
+                      <option value="">+ Add…</option>
+                      {addable.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  )}
+                  {current.length === 0 && addable.length === 0 && (
+                    <span className="text-sm text-gray-400">—</span>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </div>
 
@@ -1838,18 +1871,16 @@ ${summary.content}
               ) : null}
 
               {/* Summary modal */}
-              {vocabularyDraft && (() => {
-                const coll = collections.find((c) => c.id === transcription.collection_id);
-                const canEditColl = coll && (coll.permission_level === 'owner' || coll.permission_level === 'write' || !coll.permission_level);
-                return (
-                  <AddToVocabularyModal
-                    heardAs={vocabularyDraft.heardAs}
-                    term={vocabularyDraft.term}
-                    collection={canEditColl ? { id: coll.id, name: coll.name } : null}
-                    onClose={() => setVocabularyDraft(null)}
-                  />
-                );
-              })()}
+              {vocabularyDraft && (
+                <AddToVocabularyModal
+                  heardAs={vocabularyDraft.heardAs}
+                  term={vocabularyDraft.term}
+                  collections={collections.filter((c) =>
+                    transcription.collection_ids.includes(c.id)
+                    && (!c.permission_level || c.permission_level === 'owner' || c.permission_level === 'write'))}
+                  onClose={() => setVocabularyDraft(null)}
+                />
+              )}
               {openSummary && (
                 <SummaryModal
                   summary={openSummary}

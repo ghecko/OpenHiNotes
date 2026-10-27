@@ -305,15 +305,18 @@ export const transcriptionsApi = {
     );
   },
 
+  /** Add the transcriptions to a collection, or remove them from it (`remove`). */
   async batchSetCollection(
     ids: string[],
-    collectionId: string | null,
+    collectionId: string,
+    remove = false,
   ): Promise<{ affected: number; skipped: number }> {
     return apiClient.post<{ affected: number; skipped: number }>(
       '/transcriptions/batch/collection',
-      { ids, collection_id: collectionId },
+      { ids, collection_id: collectionId, remove },
     );
   },
+
 
   async batchShare(
     ids: string[],

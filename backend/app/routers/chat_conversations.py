@@ -10,6 +10,7 @@ from app.schemas.chat_conversation import (
 )
 from app.models.chat_conversation import ChatConversation
 from app.models.transcription import Transcription
+from app.models.collection_transcription import CollectionTranscription
 from app.models.user import User, UserRole
 from app.models.resource_share import ResourceType
 from app.dependencies import get_current_user
@@ -73,7 +74,8 @@ async def list_conversations(
     elif collection_id:
         # Filter to conversations linked to transcriptions in this collection
         t_result = await db.execute(
-            select(Transcription.id).where(Transcription.collection_id == collection_id)
+            select(CollectionTranscription.transcription_id)
+            .where(CollectionTranscription.collection_id == collection_id)
         )
         collection_transcription_ids = [row[0] for row in t_result.all()]
         if collection_transcription_ids:

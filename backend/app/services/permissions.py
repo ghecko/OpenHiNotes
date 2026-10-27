@@ -5,7 +5,10 @@ Resolves access by checking (in order):
 2. Resource ownership
 3. Direct user share
 4. Group share (best level across all user's groups)
-5. Collection inheritance (for transcriptions in shared collections)
+5. Collection inheritance (for transcriptions in shared collections),
+   only through memberships the transcription owner created: anyone else
+   adding it to a collection organises it for themselves, it does not
+   re-share it with that collection's audience.
 """
 
 import uuid
@@ -17,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.user import User, UserRole
 from app.models.transcription import Transcription
 from app.models.collection import Collection
+from app.models.collection_transcription import CollectionTranscription
 from app.models.resource_share import (
     ResourceShare,
     ResourceType,
@@ -50,13 +54,12 @@ class PermissionService:
         # 2. Check ownership
         if resource_type == ResourceType.transcription:
             result = await db.execute(
-                select(Transcription.user_id, Transcription.collection_id)
-                .where(Transcription.id == resource_id)
+                select(Transcription.user_id).where(Transcription.id == resource_id)
             )
             row = result.first()
             if not row:
                 return None
-            owner_id, collection_id = row[0], row[1]
+            owner_id = row[0]
         else:  # collection
             result = await db.execute(
                 select(Collection.user_id).where(Collection.id == resource_id)
@@ -65,7 +68,6 @@ class PermissionService:
             if not row:
                 return None
             owner_id = row[0]
-            collection_id = None
 
         if owner_id == user.id:
             return "owner"
@@ -82,16 +84,24 @@ class PermissionService:
             db, resource_type, resource_id, user.id, user_group_ids
         )
 
-        # 5. For transcriptions, also check collection-level shares
-        if resource_type == ResourceType.transcription and collection_id:
-            collection_level = await PermissionService._best_share_level(
-                db, ResourceType.collection, collection_id, user.id, user_group_ids
+        # 5. For transcriptions, also check shares of the collections its
+        # owner put it in
+        if resource_type == ResourceType.transcription and best_level != "write":
+            owner_collections = await db.execute(
+                select(CollectionTranscription.collection_id).where(
+                    CollectionTranscription.transcription_id == resource_id,
+                    CollectionTranscription.added_by_id == owner_id,
+                )
             )
-            if collection_level:
-                if not best_level:
-                    best_level = collection_level
-                elif collection_level == "write":
+            for (collection_id,) in owner_collections:
+                collection_level = await PermissionService._best_share_level(
+                    db, ResourceType.collection, collection_id, user.id, user_group_ids
+                )
+                if collection_level == "write":
                     best_level = "write"
+                    break
+                if collection_level and not best_level:
+                    best_level = collection_level
 
         return best_level
 
@@ -233,8 +243,12 @@ class PermissionService:
 
             if shared_coll_ids:
                 trans_in_colls = await db.execute(
-                    select(Transcription.id)
-                    .where(Transcription.collection_id.in_(shared_coll_ids))
+                    select(CollectionTranscription.transcription_id)
+                    .join(Transcription, Transcription.id == CollectionTranscription.transcription_id)
+                    .where(
+                        CollectionTranscription.collection_id.in_(shared_coll_ids),
+                        CollectionTranscription.added_by_id == Transcription.user_id,
+                    )
                 )
                 accessible.update(r[0] for r in trans_in_colls)
 
