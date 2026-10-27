@@ -53,6 +53,10 @@ CONFIGURABLE_KEYS = {
         "description": "Send the vocabulary terms (general + collection) to VoxHub as context_bias (true/false). Only transcription backends that support biasing use them",
         "default_from_env": "voxhub_context_bias",
     },
+    "voxhub_free_after_queue": {
+        "description": "Once the transcription queue is empty, ask VoxHub to free its GPU memory (pyannote, aligner, language detector; POST /models/free). They reload on the next job. Requires a VoxHub with /models/free (otherwise ignored)",
+        "default_from_env": "voxhub_free_after_queue",
+    },
     "llm_api_url": {
         "description": "LLM API base URL (OpenAI-compatible endpoint)",
         "default_from_env": "llm_api_url",
@@ -134,6 +138,11 @@ def _validate_setting(key: str, value: str) -> None:
 
 class SettingUpdate(BaseModel):
     value: str
+
+
+class SettingsBulkUpdate(BaseModel):
+    """Several settings saved at once (all validated first, one transaction)."""
+    values: dict[str, str]
 
 
 class SettingResponse(BaseModel):
@@ -479,6 +488,34 @@ async def test_service_connection(
 
 
 # ── Generic key/value settings ─────────────────────────────────────────
+
+
+@router.put("")
+async def update_settings_bulk(
+    body: SettingsBulkUpdate,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save several settings in one request (admin only).
+
+    Everything is validated before anything is written, so a bad value rejects
+    the whole batch instead of leaving it half applied.
+    """
+    unknown = [k for k in body.values if k not in CONFIGURABLE_KEYS]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown setting: {', '.join(unknown)}")
+    for key, value in body.values.items():
+        _validate_setting(key, value)
+
+    result = await db.execute(select(AppSetting).where(AppSetting.key.in_(list(body.values))))
+    existing = {s.key: s for s in result.scalars().all()}
+    for key, value in body.values.items():
+        if key in existing:
+            existing[key].value = value
+        else:
+            db.add(AppSetting(key=key, value=value, description=CONFIGURABLE_KEYS[key]["description"]))
+    await db.commit()
+    return {"status": "updated", "keys": list(body.values)}
 
 
 @router.put("/{key}")

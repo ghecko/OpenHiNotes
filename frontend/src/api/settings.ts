@@ -54,6 +54,11 @@ export const settingsApi = {
     await apiClient.put(`/settings/${key}`, { value });
   },
 
+  /** Save several settings in one request; the whole batch is rejected if one value is invalid. */
+  async updateSettings(values: Record<string, string>): Promise<void> {
+    await apiClient.put('/settings', { values });
+  },
+
   async resetSetting(key: string): Promise<void> {
     await apiClient.delete(`/settings/${key}`);
   },

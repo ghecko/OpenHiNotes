@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     # Send the vocabulary (glossary terms) as `context_bias` form fields.
     # Only useful with a VoxHub backend that supports biasing; others ignore it.
     voxhub_context_bias: str = "false"
+    # Ask VoxHub to release its auxiliary models (pyannote, aligner, ...) and
+    # empty its CUDA cache (POST /models/free) once the transcription queue is
+    # empty. Useful on unified-memory machines shared with a large LLM.
+    voxhub_free_after_queue: str = "false"
 
     # LLM API (OpenAI-compatible)
     llm_api_url: str = "http://localhost:11434/v1"

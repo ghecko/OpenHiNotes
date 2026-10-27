@@ -198,6 +198,7 @@ All configuration is through environment variables. See [`.env.example`](.env.ex
 | `VOXHUB_API_URL` | VoxHub transcription API URL | `http://voxhub:8000` |
 | `VOXHUB_MODEL` | Whisper model name | `large-v3` |
 | `VOXHUB_JOB_MODE` | Enable async Job Mode (`true`/`false`) | `false` |
+| `VOXHUB_FREE_AFTER_QUEUE` | Once the queue is empty, ask VoxHub to free its GPU memory (`POST /models/free`). Also an admin toggle | `false` |
 | `VOXHUB_VAD_MODE` | VAD strategy: `silero`, `pyannote`, `hybrid`, `none` | `silero` |
 | `VOXHUB_VERIFY_SSL` | SSL verification for VoxHub (`true`/`false`/path) | `true` |
 | `LLM_API_URL` | OpenAI-compatible LLM endpoint | `http://host.docker.internal:11434/v1` |
