@@ -78,6 +78,7 @@ class TranscriptionService:
                 "vad_mode": (await get_effective_setting(db, "voxhub_vad_mode")).strip(),
                 "pipeline": (await get_effective_setting(db, "voxhub_pipeline")).strip(),
                 "context_bias": (await get_effective_setting(db, "voxhub_context_bias")).lower() == "true",
+                "free_after_queue": (await get_effective_setting(db, "voxhub_free_after_queue")).lower() == "true",
             }
         return {
             "api_url": settings.voxhub_api_url,
@@ -87,6 +88,7 @@ class TranscriptionService:
             "vad_mode": settings.voxhub_vad_mode.strip(),
             "pipeline": settings.voxhub_pipeline.strip(),
             "context_bias": settings.voxhub_context_bias.lower() == "true",
+            "free_after_queue": settings.voxhub_free_after_queue.lower() == "true",
         }
 
     @staticmethod
@@ -339,6 +341,34 @@ class TranscriptionService:
         except Exception as e:
             logger.error("Failed to cancel VoxHub job %s: %s", job_id, e)
             return False
+
+    @staticmethod
+    async def free_voxhub_resources(db: Optional[AsyncSession] = None, force: bool = False) -> Optional[Dict[str, Any]]:
+        """Ask VoxHub to free its auxiliary models and CUDA cache (POST /models/free).
+
+        Only when the ``voxhub_free_after_queue`` setting is on (or ``force``).
+        Best-effort: never raises. A VoxHub without the endpoint (404) or busy
+        (409) is not an error. Returns VoxHub's answer, or None if skipped.
+        """
+        cfg = await TranscriptionService._resolve_transcription_settings(db)
+        if not (force or cfg.get("free_after_queue")):
+            return None
+        headers = TranscriptionService._build_auth_headers(cfg["api_key"])
+        url = f"{cfg['api_url']}/models/free"
+        try:
+            async with httpx.AsyncClient(timeout=30.0, verify=settings.voxhub_ssl_verify) as client:
+                resp = await client.post(url, headers=headers)
+            if resp.status_code == 200:
+                info = resp.json()
+                logger.info(
+                    "VoxHub memory freed: %s (CUDA %s -> %s GiB)",
+                    info.get("freed"), info.get("cuda_reserved_gib_before"), info.get("cuda_reserved_gib_after"),
+                )
+                return info
+            logger.info("VoxHub /models/free returned %s (ignored)", resp.status_code)
+        except Exception as e:
+            logger.warning("Could not ask VoxHub to free its memory: %s", e)
+        return None
 
     @staticmethod
     async def get_voxhub_queue_info(db: Optional[AsyncSession] = None) -> Dict[str, Any]:

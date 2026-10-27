@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Layout } from '@/components/Layout';
 import {
   settingsApi,
@@ -52,6 +52,11 @@ const SETTING_LABELS: Record<string, { label: string; placeholder: string; type:
   },
   voxhub_context_bias: {
     label: 'Send vocabulary as context_bias',
+    placeholder: 'false',
+    type: 'toggle',
+  },
+  voxhub_free_after_queue: {
+    label: 'Free VoxHub GPU memory when the queue is empty',
     placeholder: 'false',
     type: 'toggle',
   },
@@ -118,6 +123,9 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
+  const [savingAll, setSavingAll] = useState(false);
+  /** Sensitive keys the admin asked to empty (applied on Save). */
+  const [clearedKeys, setClearedKeys] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [testing, setTesting] = useState<ConnectionService | null>(null);
   const [testResults, setTestResults] = useState<Partial<Record<ConnectionService, ConnectionTestResult>>>({});
@@ -151,7 +159,7 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
     loadSettings();
   }, []);
 
-  const loadSettings = async () => {
+  const loadSettings = async (keepEdits: string[] = []) => {
     setIsLoading(true);
     try {
       const data = await settingsApi.getSettings();
@@ -162,7 +170,13 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
         const isSensitive = SETTING_LABELS[s.key]?.type === 'password';
         values[s.key] = isSensitive ? '' : s.value;
       });
-      setEditValues(values);
+      // Keep unsaved edits of other fields (e.g. after resetting one field).
+      setEditValues((prev) => {
+        keepEdits.forEach((k) => {
+          if (k in prev) values[k] = prev[k];
+        });
+        return values;
+      });
     } catch (error) {
       console.error('Failed to load settings:', error);
       setMessage({ type: 'error', text: 'Failed to load settings' });
@@ -171,19 +185,64 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
     }
   };
 
-  const handleSave = async (key: string) => {
-    setSaving(key);
+  const isSensitiveKey = (key: string) => SETTING_LABELS[key]?.type === 'password';
+
+  /** Keys whose form value differs from what is stored. */
+  const dirtyKeys = useMemo(
+    () =>
+      settings
+        .filter((s) =>
+          isSensitiveKey(s.key)
+            ? (editValues[s.key] ?? '') !== '' || clearedKeys.has(s.key)
+            : (editValues[s.key] ?? '') !== s.value,
+        )
+        .map((s) => s.key),
+    [settings, editValues, clearedKeys],
+  );
+
+  // Warn before leaving the page with unsaved changes.
+  useEffect(() => {
+    if (dirtyKeys.length === 0) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirtyKeys.length]);
+
+  const handleSaveAll = async () => {
+    if (dirtyKeys.length === 0) return;
+    setSavingAll(true);
     setMessage(null);
     try {
-      await settingsApi.updateSetting(key, editValues[key]);
-      setMessage({ type: 'success', text: `${SETTING_LABELS[key]?.label || key} updated` });
+      const values: Record<string, string> = {};
+      dirtyKeys.forEach((key) => {
+        values[key] = isSensitiveKey(key) && clearedKeys.has(key) && !editValues[key] ? '' : editValues[key] ?? '';
+      });
+      await settingsApi.updateSettings(values);
+      setClearedKeys(new Set());
+      setMessage({
+        type: 'success',
+        text: `${dirtyKeys.length} setting${dirtyKeys.length > 1 ? 's' : ''} saved`,
+      });
       await loadSettings();
     } catch (error) {
       const detail = error instanceof Error ? error.message : '';
-      setMessage({ type: 'error', text: `Failed to update ${key}${detail ? `: ${detail}` : ''}` });
+      setMessage({ type: 'error', text: `Failed to save settings${detail ? `: ${detail}` : ''}` });
     } finally {
-      setSaving(null);
+      setSavingAll(false);
     }
+  };
+
+  const handleDiscard = () => {
+    const values: Record<string, string> = {};
+    settings.forEach((s) => {
+      values[s.key] = isSensitiveKey(s.key) ? '' : s.value;
+    });
+    setEditValues(values);
+    setClearedKeys(new Set());
+    setMessage(null);
   };
 
   const handleReset = async (key: string) => {
@@ -194,8 +253,13 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
     setMessage(null);
     try {
       await settingsApi.resetSetting(key);
+      setClearedKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
       setMessage({ type: 'success', text: `${SETTING_LABELS[key]?.label || key} reset to default` });
-      await loadSettings();
+      await loadSettings(dirtyKeys.filter((k) => k !== key));
     } catch (error) {
       setMessage({ type: 'error', text: `Failed to reset ${key}` });
     } finally {
@@ -338,10 +402,9 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
             const isSensitive = meta?.type === 'password';
             // For sensitive fields: modified if user typed something OR
             // if they explicitly want to clear it (empty value when DB has one)
-            const isModified = isSensitive
-              ? editValues[setting.key] !== ''
-              : editValues[setting.key] !== setting.value;
-            const isSaving = saving === setting.key;
+            const isModified = dirtyKeys.includes(setting.key);
+            const isSaving = saving === setting.key || savingAll;
+            const isCleared = clearedKeys.has(setting.key);
 
             return (
               <div key={setting.key}>
@@ -349,6 +412,12 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
                   <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
                     {meta?.label || setting.key}
                   </label>
+                  <span className="flex items-center gap-2">
+                  {isModified && (
+                    <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                      Unsaved
+                    </span>
+                  )}
                   <span
                     className={`text-xs px-2 py-0.5 rounded ${
                       setting.source === 'database'
@@ -357,6 +426,7 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
                     }`}
                   >
                     {setting.source === 'database' ? 'Custom' : 'Default'}
+                  </span>
                   </span>
                 </div>
                 {setting.description && (
@@ -418,11 +488,20 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
                           : undefined
                       }
                       value={editValues[setting.key] || ''}
-                      onChange={(e) =>
-                        setEditValues((prev) => ({ ...prev, [setting.key]: e.target.value }))
-                      }
+                      onChange={(e) => {
+                        setEditValues((prev) => ({ ...prev, [setting.key]: e.target.value }));
+                        if (e.target.value && clearedKeys.has(setting.key)) {
+                          setClearedKeys((prev) => {
+                            const next = new Set(prev);
+                            next.delete(setting.key);
+                            return next;
+                          });
+                        }
+                      }}
                       placeholder={
-                        isSensitive && setting.source === 'database'
+                        isCleared
+                          ? 'Will be emptied on save'
+                          : isSensitive && setting.source === 'database'
                           ? 'Enter new value to update (current value is set)'
                           : meta?.placeholder
                       }
@@ -436,18 +515,6 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
                       ))}
                     </datalist>
                   ) : null}
-                  <button
-                    onClick={() => handleSave(setting.key)}
-                    disabled={isSaving || !isModified}
-                    className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1 text-sm"
-                    title="Save"
-                  >
-                    {isSaving ? (
-                      <Loader className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Save className="w-4 h-4" />
-                    )}
-                  </button>
                   {setting.source === 'database' && (
                     <button
                       onClick={() => handleReset(setting.key)}
@@ -460,24 +527,23 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
                   )}
                   {isSensitive && setting.source === 'database' && (
                     <button
-                      onClick={async () => {
-                        if (!window.confirm(`Clear "${meta?.label || setting.key}"? This will set it to empty.`)) return;
-                        setSaving(setting.key);
-                        try {
-                          await settingsApi.updateSetting(setting.key, '');
-                          setMessage({ type: 'success', text: `${meta?.label || setting.key} cleared` });
-                          await loadSettings();
-                        } catch {
-                          setMessage({ type: 'error', text: `Failed to clear ${setting.key}` });
-                        } finally {
-                          setSaving(null);
-                        }
-                      }}
+                      onClick={() =>
+                        setClearedKeys((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(setting.key)) {
+                            next.delete(setting.key);
+                          } else {
+                            next.add(setting.key);
+                            setEditValues((v) => ({ ...v, [setting.key]: '' }));
+                          }
+                          return next;
+                        })
+                      }
                       disabled={isSaving}
                       className="px-3 py-2 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 rounded-lg transition-colors disabled:opacity-50 text-sm"
-                      title="Clear this key (set to empty)"
+                      title={isCleared ? 'Keep the current key' : 'Empty this key (applied on Save)'}
                     >
-                      Clear
+                      {isCleared ? 'Undo clear' : 'Clear'}
                     </button>
                   )}
                 </div>
@@ -522,6 +588,7 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
             'voxhub_pipeline',
             'voxhub_vad_mode',
             'voxhub_context_bias',
+            'voxhub_free_after_queue',
           ], 'voxhub')}
           {renderSettingGroup('LLM / Chat', [
             'llm_api_url',
@@ -537,6 +604,39 @@ export function ApiSettings({ embedded }: { embedded?: boolean }) {
             'llm_max_duration',
             'llm_summary_concurrency',
           ])}
+
+          <div
+            className={`sticky bottom-4 z-10 flex items-center justify-between gap-3 rounded-lg border p-3 shadow-lg transition-colors ${
+              dirtyKeys.length > 0
+                ? 'bg-amber-50 dark:bg-amber-900/30 border-amber-300 dark:border-amber-700'
+                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+            }`}
+          >
+            <span className="text-sm text-gray-700 dark:text-gray-300">
+              {dirtyKeys.length > 0
+                ? `${dirtyKeys.length} unsaved change${dirtyKeys.length > 1 ? 's' : ''}`
+                : 'All changes saved'}
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleDiscard}
+                disabled={dirtyKeys.length === 0 || savingAll}
+                className="px-3 py-2 bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-200 rounded-lg transition-colors disabled:opacity-50 text-sm"
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveAll}
+                disabled={dirtyKeys.length === 0 || savingAll}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2 text-sm"
+              >
+                {savingAll ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Save changes
+              </button>
+            </div>
+          </div>
 
           <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
             <p className="text-sm text-gray-600 dark:text-gray-400">

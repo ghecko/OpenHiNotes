@@ -32,6 +32,8 @@ class TranscriptionQueue:
         self._worker_task: Optional[asyncio.Task] = None
         self._cleanup_task: Optional[asyncio.Task] = None
         self._running = False
+        # True once a job ran since VoxHub was last asked to free its memory
+        self._free_voxhub_pending = False
         # Event subscribers: transcription_id -> list of asyncio.Queue
         self._subscribers: Dict[uuid.UUID, List[asyncio.Queue]] = {}
 
@@ -332,7 +334,14 @@ class TranscriptionQueue:
                 transcription = result.scalars().first()
 
                 if not transcription:
+                    # Queue drained since the last job: let VoxHub release its GPU
+                    # memory (no-op unless the admin enabled voxhub_free_after_queue).
+                    if self._free_voxhub_pending:
+                        self._free_voxhub_pending = False
+                        await TranscriptionService.free_voxhub_resources(db)
                     return  # Nothing to process
+
+                self._free_voxhub_pending = True
 
                 # Mark as processing
                 transcription.status = TranscriptionStatus.processing
