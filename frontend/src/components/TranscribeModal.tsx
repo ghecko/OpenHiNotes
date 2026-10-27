@@ -155,7 +155,7 @@ export function TranscribeModal({
       if (collectionId && transcription.id) {
         try {
           await collectionsApi.assignTranscription(collectionId, transcription.id);
-          transcription.collection_id = collectionId;
+          transcription.collection_ids = [...(transcription.collection_ids || []), collectionId];
         } catch {
           console.warn('Could not assign to collection');
         }

@@ -143,9 +143,12 @@ export const transcriptionsApi = {
     sort: 'newest' | 'oldest' = 'newest',
     filter: 'all' | 'mine' | 'shared' = 'all',
     recordingType?: 'record' | 'whisper',
+    /** Collection ids, or 'none' for transcriptions in no collection; any of them matches */
+    collectionIds?: string[],
   ): Promise<PaginatedResponse<Transcription>> {
     let url = `/transcriptions?skip=${skip}&limit=${limit}&sort=${sort}&filter=${filter}`;
     if (recordingType) url += `&recording_type=${recordingType}`;
+    collectionIds?.forEach((id) => { url += `&collection_id=${encodeURIComponent(id)}`; });
     return apiClient.get<PaginatedResponse<Transcription>>(url);
   },
 
@@ -302,15 +305,18 @@ export const transcriptionsApi = {
     );
   },
 
+  /** Add the transcriptions to a collection, or remove them from it (`remove`). */
   async batchSetCollection(
     ids: string[],
-    collectionId: string | null,
+    collectionId: string,
+    remove = false,
   ): Promise<{ affected: number; skipped: number }> {
     return apiClient.post<{ affected: number; skipped: number }>(
       '/transcriptions/batch/collection',
-      { ids, collection_id: collectionId },
+      { ids, collection_id: collectionId, remove },
     );
   },
+
 
   async batchShare(
     ids: string[],

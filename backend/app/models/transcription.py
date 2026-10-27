@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 from enum import Enum
 from app.database import Base
+from app.models.collection_transcription import CollectionTranscription
 
 
 class RecordingType(str, Enum):
@@ -35,9 +36,6 @@ class Transcription(Base):
         SQLEnum(RecordingType), default=RecordingType.record, nullable=False, server_default="record"
     )
     title: Mapped[str] = mapped_column(String(255), nullable=True)
-    collection_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("collections.id", ondelete="SET NULL"), nullable=True, index=True
-    )
     audio_duration: Mapped[float] = mapped_column(Float, nullable=True)
     language: Mapped[str] = mapped_column(String(10), nullable=True)
     text: Mapped[str] = mapped_column(Text, nullable=True)
@@ -88,6 +86,15 @@ class Transcription(Base):
 
     # Relationships
     user: Mapped["User"] = relationship(foreign_keys=[user_id])
+    # Collections this transcription is in (see CollectionTranscription).
+    # selectin: loaded with every query, so responses can list collection_ids.
+    memberships: Mapped[list["CollectionTranscription"]] = relationship(
+        lazy="selectin", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    @property
+    def collection_ids(self) -> list[uuid.UUID]:
+        return [m.collection_id for m in self.memberships]
 
     def __repr__(self) -> str:
         return f"<Transcription(id={self.id}, user_id={self.user_id}, status={self.status})>"

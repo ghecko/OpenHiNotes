@@ -10,6 +10,8 @@ from app.schemas.collection import (
 )
 from app.models.collection import Collection
 from app.models.transcription import Transcription
+from app.models.collection_transcription import CollectionTranscription
+from app.schemas.transcription import TranscriptionResponse
 from app.models.user import User, UserRole
 from app.models.resource_share import ResourceType
 from app.dependencies import get_current_user
@@ -19,22 +21,35 @@ import uuid
 router = APIRouter(prefix="/collections", tags=["collections"])
 
 
+async def _visible_transcription_filter(db: AsyncSession, user: User):
+    """WHERE clause on CollectionTranscription.transcription_id limiting it to
+    what ``user`` can read, or None for admins (no limit)."""
+    if user.role == UserRole.admin:
+        return None
+    accessible = await PermissionService.list_accessible_ids(db, user, ResourceType.transcription)
+    return CollectionTranscription.transcription_id.in_(accessible)
+
+
 async def _enrich_with_count(
-    collections: list[Collection], db: AsyncSession
+    collections: list[Collection], db: AsyncSession, user: User
 ) -> list[dict]:
-    """Add transcription_count to each collection."""
+    """Add transcription_count (transcriptions ``user`` can read) to each collection."""
     if not collections:
         return []
 
     coll_ids = [c.id for c in collections]
-    count_result = await db.execute(
+    count_query = (
         select(
-            Transcription.collection_id,
-            func.count(Transcription.id).label("cnt"),
+            CollectionTranscription.collection_id,
+            func.count(CollectionTranscription.transcription_id).label("cnt"),
         )
-        .where(Transcription.collection_id.in_(coll_ids))
-        .group_by(Transcription.collection_id)
+        .where(CollectionTranscription.collection_id.in_(coll_ids))
+        .group_by(CollectionTranscription.collection_id)
     )
+    visible = await _visible_transcription_filter(db, user)
+    if visible is not None:
+        count_query = count_query.where(visible)
+    count_result = await db.execute(count_query)
     counts = {row[0]: row[1] for row in count_result}
 
     result = []
@@ -57,7 +72,7 @@ async def _enrich_with_count_and_permissions(
     collections: list[Collection], user: User, db: AsyncSession
 ) -> list[dict]:
     """Add transcription_count and permission_level to each collection."""
-    enriched = await _enrich_with_count(collections, db)
+    enriched = await _enrich_with_count(collections, db, user)
     for i, c in enumerate(collections):
         level = await PermissionService.get_permission_level(
             db, user, ResourceType.collection, c.id
@@ -110,7 +125,7 @@ async def create_collection(
     db.add(collection)
     await db.commit()
     await db.refresh(collection)
-    enriched = await _enrich_with_count([collection], db)
+    enriched = await _enrich_with_count([collection], db, current_user)
     enriched[0]["permission_level"] = "owner"
     return enriched[0]
 
@@ -218,13 +233,13 @@ async def delete_collection(
     await db.commit()
 
 
-@router.get("/{collection_id}/transcriptions")
+@router.get("/{collection_id}/transcriptions", response_model=list[TranscriptionResponse])
 async def list_collection_transcriptions(
     collection_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all transcriptions in a collection."""
+    """List the transcriptions of a collection that the user can read."""
     # Verify collection access
     has_access = await PermissionService.check_access(
         db, current_user, ResourceType.collection, collection_id, "read"
@@ -244,11 +259,16 @@ async def list_collection_transcriptions(
             detail="Not authorized",
         )
 
-    result = await db.execute(
+    query = (
         select(Transcription)
-        .where(Transcription.collection_id == collection_id)
+        .join(CollectionTranscription, CollectionTranscription.transcription_id == Transcription.id)
+        .where(CollectionTranscription.collection_id == collection_id)
         .order_by(Transcription.created_at.desc())
     )
+    visible = await _visible_transcription_filter(db, current_user)
+    if visible is not None:
+        query = query.where(visible)
+    result = await db.execute(query)
     return result.scalars().all()
 
 
@@ -259,7 +279,11 @@ async def assign_transcription(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Add a transcription to a collection. Requires write on collection and ownership of transcription."""
+    """Add a transcription to a collection (it stays in its other collections).
+
+    Requires write on the collection and read on the transcription: a
+    transcription shared with you can go into your own collections.
+    """
     # Verify write access on collection
     has_coll_access = await PermissionService.check_access(
         db, current_user, ResourceType.collection, collection_id, "write"
@@ -267,22 +291,17 @@ async def assign_transcription(
     if not has_coll_access:
         raise HTTPException(status_code=403, detail="Not authorized to modify this collection")
 
-    # Verify transcription access (at least write)
+    # Verify transcription exists and can be read
+    exists = (await db.execute(select(Transcription.id).where(Transcription.id == transcription_id))).first()
+    if not exists:
+        raise HTTPException(status_code=404, detail="Transcription not found")
     has_trans_access = await PermissionService.check_access(
-        db, current_user, ResourceType.transcription, transcription_id, "write"
+        db, current_user, ResourceType.transcription, transcription_id, "read"
     )
     if not has_trans_access:
-        raise HTTPException(status_code=403, detail="Not authorized to move this transcription")
+        raise HTTPException(status_code=403, detail="Not authorized to access this transcription")
 
-    # Verify transcription exists
-    result = await db.execute(
-        select(Transcription).where(Transcription.id == transcription_id)
-    )
-    transcription = result.scalars().first()
-    if not transcription:
-        raise HTTPException(status_code=404, detail="Transcription not found")
-
-    transcription.collection_id = collection_id
+    await add_to_collection(db, collection_id, [transcription_id], current_user.id)
     await db.commit()
     return {"status": "ok"}
 
@@ -294,23 +313,50 @@ async def remove_transcription_from_collection(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Remove a transcription from a collection (sets collection_id to null)."""
-    result = await db.execute(
-        select(Transcription).where(
-            Transcription.id == transcription_id,
-            Transcription.collection_id == collection_id,
+    """Remove a transcription from a collection (not from its other collections)."""
+    membership = (await db.execute(
+        select(CollectionTranscription).where(
+            CollectionTranscription.collection_id == collection_id,
+            CollectionTranscription.transcription_id == transcription_id,
         )
-    )
-    transcription = result.scalars().first()
-    if not transcription:
+    )).scalars().first()
+    if not membership:
         raise HTTPException(status_code=404, detail="Transcription not found in this collection")
 
-    has_access = await PermissionService.check_access(
-        db, current_user, ResourceType.collection, collection_id, "write"
-    )
-    if not has_access:
+    if not await can_remove_membership(db, current_user, membership):
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    transcription.collection_id = None
+    await db.delete(membership)
     await db.commit()
     return {"status": "ok"}
+
+
+async def add_to_collection(
+    db: AsyncSession, collection_id: uuid.UUID, transcription_ids: list[uuid.UUID], added_by_id: uuid.UUID
+) -> int:
+    """Add memberships that do not exist yet (no commit). Returns how many were added."""
+    existing = set((await db.execute(
+        select(CollectionTranscription.transcription_id).where(
+            CollectionTranscription.collection_id == collection_id,
+            CollectionTranscription.transcription_id.in_(transcription_ids),
+        )
+    )).scalars().all())
+    new_ids = [tid for tid in dict.fromkeys(transcription_ids) if tid not in existing]
+    db.add_all(
+        CollectionTranscription(collection_id=collection_id, transcription_id=tid, added_by_id=added_by_id)
+        for tid in new_ids
+    )
+    return len(new_ids)
+
+
+async def can_remove_membership(db: AsyncSession, user: User, membership: CollectionTranscription) -> bool:
+    """Whoever can edit the collection, whoever added the transcription to it,
+    or the transcription's owner (it is their data) may take it out."""
+    if membership.added_by_id == user.id:
+        return True
+    if await PermissionService.check_access(db, user, ResourceType.collection, membership.collection_id, "write"):
+        return True
+    level = await PermissionService.get_permission_level(
+        db, user, ResourceType.transcription, membership.transcription_id
+    )
+    return level == "owner"

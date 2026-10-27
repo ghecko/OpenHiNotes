@@ -42,8 +42,9 @@ class BatchPinRequest(BatchIdsRequest):
 
 
 class BatchCollectionRequest(BatchIdsRequest):
-    # ``None`` removes the items from any collection.
-    collection_id: Optional[uuid.UUID] = None
+    collection_id: uuid.UUID
+    # False: add the items to the collection; True: remove them from it.
+    remove: bool = False
 
 
 class BatchShareRequest(BatchIdsRequest):

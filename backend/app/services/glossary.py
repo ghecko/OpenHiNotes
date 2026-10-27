@@ -1,7 +1,7 @@
 """Vocabulary (glossary) of terms the speech recognizer tends to get wrong.
 
 The vocabulary of a transcription is the general one of its owner plus the
-one of its collection. It is used two ways:
+ones of its collections. It is used two ways:
 
 * LLM prompts (summaries, chat): the model is told the correct spellings and
   the mis-transcriptions seen so far, and restores the right term even for
@@ -13,12 +13,13 @@ one of its collection. It is used two ways:
 """
 
 import uuid
-from typing import Optional
+from typing import Iterable, Optional
 
 from sqlalchemy import select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.glossary import GlossaryTerm
+from app.models.collection_transcription import CollectionTranscription
 
 # Bounds so a large vocabulary cannot crowd out the transcript in the
 # context window. Collection terms come first: they are the most specific.
@@ -43,17 +44,18 @@ def normalize_aliases(term: str, aliases: list[str]) -> list[str]:
 
 async def terms_for(
     db: AsyncSession,
-    owner_id: uuid.UUID,
-    collection_id: Optional[uuid.UUID],
+    owner_ids: Iterable[uuid.UUID],
+    collection_ids: Iterable[uuid.UUID] = (),
 ) -> list[GlossaryTerm]:
-    """General terms of ``owner_id`` plus the terms of ``collection_id``.
+    """General terms of ``owner_ids`` plus the terms of ``collection_ids``.
 
-    Collection terms come first; a general term spelled like a collection
-    term is dropped (the collection one is the more specific).
+    Collection terms come first; a term spelled like an earlier one is
+    dropped (the collection one is the more specific).
     """
-    scope = and_(GlossaryTerm.user_id == owner_id, GlossaryTerm.collection_id.is_(None))
-    if collection_id:
-        scope = or_(scope, GlossaryTerm.collection_id == collection_id)
+    owner_ids, collection_ids = list(owner_ids), list(collection_ids)
+    scope = and_(GlossaryTerm.user_id.in_(owner_ids), GlossaryTerm.collection_id.is_(None))
+    if collection_ids:
+        scope = or_(scope, GlossaryTerm.collection_id.in_(collection_ids))
     rows = (await db.execute(select(GlossaryTerm).where(scope).order_by(GlossaryTerm.term))).scalars().all()
     ordered = [t for t in rows if t.collection_id] + [t for t in rows if not t.collection_id]
     seen: set[str] = set()
@@ -67,7 +69,19 @@ async def terms_for(
 
 
 async def terms_for_transcription(db: AsyncSession, transcription) -> list[GlossaryTerm]:
-    return await terms_for(db, transcription.user_id, transcription.collection_id)
+    """Owner's general terms + the collections the owner filed it in.
+
+    For what everyone shares (summaries, transcription biasing); someone it
+    was shared with may have filed it in collections of their own, whose
+    vocabulary only applies to their own chats.
+    """
+    owner_collections = (await db.execute(
+        select(CollectionTranscription.collection_id).where(
+            CollectionTranscription.transcription_id == transcription.id,
+            CollectionTranscription.added_by_id == transcription.user_id,
+        )
+    )).scalars().all()
+    return await terms_for(db, [transcription.user_id], owner_collections)
 
 
 def prompt_block(terms: list[GlossaryTerm]) -> Optional[str]:

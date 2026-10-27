@@ -4,7 +4,7 @@ import logging
 import os
 import re
 import uuid
-from typing import Optional
+from typing import List, Optional
 from pathlib import Path
 
 from fastapi import (
@@ -19,7 +19,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_, false
 from app.database import get_db
 from app.config import settings
 from app.schemas.transcription import (
@@ -47,6 +47,7 @@ from app.schemas.search import (
     BatchResultResponse,
 )
 from app.models.collection import Collection
+from app.models.collection_transcription import CollectionTranscription
 from app.models.resource_share import (
     ResourceShare,
     GranteeType,
@@ -290,11 +291,15 @@ async def list_transcriptions(
     sort: str = Query("newest", regex="^(newest|oldest)$"),
     filter: str = Query("all", regex="^(all|mine|shared)$"),
     recording_type: Optional[str] = Query(None, regex="^(record|whisper)$"),
+    collection_id: Optional[List[str]] = Query(
+        None, description="Repeatable; a collection id, or 'none' for transcriptions in none of your collections"
+    ),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List transcriptions. Supports filter: all (mine + shared), mine, shared.
     Optional recording_type filter: record, whisper.
+    Optional collection_id filter (repeatable, any of them matches).
 
     Pinned items (per-user) always float to the top, regardless of the
     chosen sort order. Phase 6.2 → per-user pins in Phase 6 follow-up.
@@ -375,6 +380,42 @@ async def list_transcriptions(
         type_condition = Transcription.recording_type == recording_type
         query = query.where(type_condition)
         count_query = count_query.where(type_condition)
+
+    if collection_id:
+        include_none = "none" in collection_id
+        try:
+            ids = [uuid.UUID(c) for c in collection_id if c != "none"]
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid collection_id")
+
+        def in_collections(coll_ids):
+            return (
+                select(CollectionTranscription.transcription_id)
+                .where(CollectionTranscription.collection_id.in_(coll_ids))
+            )
+
+        # Only the collections the user can see count, from both sides:
+        # others may have filed the same transcription elsewhere.
+        visible_collections = None
+        if current_user.role != UserRole.admin:
+            visible_collections = set(await PermissionService.list_accessible_ids(
+                db, current_user, ResourceType.collection
+            ))
+            ids = [c for c in ids if c in visible_collections]
+        conditions = []
+        if ids:
+            conditions.append(Transcription.id.in_(in_collections(ids)))
+        if include_none:
+            if visible_collections is None:
+                filed = select(CollectionTranscription.transcription_id)
+            else:
+                filed = in_collections(visible_collections)
+            conditions.append(Transcription.id.not_in(filed))
+        if not conditions:  # only collections the user cannot see
+            conditions.append(false())
+        collection_condition = or_(*conditions)
+        query = query.where(collection_condition)
+        count_query = count_query.where(collection_condition)
 
     # Execute queries
     total = await db.scalar(count_query)
@@ -1746,36 +1787,48 @@ async def batch_set_collection(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Move multiple transcriptions into a collection (or out of any)."""
+    """Add several transcriptions to a collection, or remove them from it.
+
+    Adding needs write on the collection and read on each transcription
+    (shared ones included; they stay in their other collections). Removing
+    follows the rules of DELETE /collections/{id}/transcriptions/{id}.
+    """
+    from app.routers.collections import add_to_collection, can_remove_membership
+
     if not payload.ids:
         return BatchResultResponse(affected=0, message="No ids provided")
 
-    if payload.collection_id is not None:
-        coll_result = await db.execute(
-            select(Collection).where(Collection.id == payload.collection_id)
-        )
-        target_collection = coll_result.scalars().first()
-        if not target_collection:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found"
-            )
-        can_use_collection = await PermissionService.check_access(
-            db, current_user, ResourceType.collection, payload.collection_id, "write"
-        )
-        if not can_use_collection:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to add to this collection",
-            )
+    collection = (await db.execute(
+        select(Collection).where(Collection.id == payload.collection_id)
+    )).scalars().first()
+    if not collection:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
 
-    allowed, skipped = await _filter_ids_by_permission(db, current_user, payload.ids, "write")
-    if allowed:
-        from sqlalchemy import update as sa_update
-        await db.execute(
-            sa_update(Transcription)
-            .where(Transcription.id.in_(allowed))
-            .values(collection_id=payload.collection_id)
+    if payload.remove:
+        memberships = (await db.execute(
+            select(CollectionTranscription).where(
+                CollectionTranscription.collection_id == payload.collection_id,
+                CollectionTranscription.transcription_id.in_(payload.ids),
+            )
+        )).scalars().all()
+        removed = 0
+        for membership in memberships:
+            if await can_remove_membership(db, current_user, membership):
+                await db.delete(membership)
+                removed += 1
+        await db.commit()
+        return BatchResultResponse(affected=removed, skipped=len(payload.ids) - removed)
+
+    if not await PermissionService.check_access(
+        db, current_user, ResourceType.collection, payload.collection_id, "write"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to add to this collection",
         )
+    allowed, skipped = await _filter_ids_by_permission(db, current_user, payload.ids, "read")
+    if allowed:
+        await add_to_collection(db, payload.collection_id, allowed, current_user.id)
         await db.commit()
     return BatchResultResponse(affected=len(allowed), skipped=skipped)
 
@@ -2014,7 +2067,7 @@ async def oneshot_transcribe(
             language=language,
             diarize=bool(diarize),
             db=db,
-            context_bias=glossary.bias_terms(await glossary.terms_for(db, current_user.id, None)),
+            context_bias=glossary.bias_terms(await glossary.terms_for(db, [current_user.id])),
         )
         parsed = TranscriptionService.parse_voxhub_response(voxhub_response)
         segments = parsed.get("segments") or []

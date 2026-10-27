@@ -8,17 +8,18 @@ interface AddToVocabularyModalProps {
   heardAs: string;
   /** The correct spelling, e.g. "VoxHub" */
   term: string;
-  /** Collection of the transcription, offered as the scope when the user can edit it */
-  collection?: { id: string; name: string } | null;
+  /** Collections of the transcription the user can edit, offered as scopes */
+  collections?: { id: string; name: string }[];
   onClose: () => void;
   onAdded?: (scope: string) => void;
 }
 
 /** Save a correction made in a transcript to the general or the collection vocabulary. */
-export function AddToVocabularyModal({ heardAs, term: initialTerm, collection, onClose, onAdded }: AddToVocabularyModalProps) {
+export function AddToVocabularyModal({ heardAs, term: initialTerm, collections = [], onClose, onAdded }: AddToVocabularyModalProps) {
   const [term, setTerm] = useState(initialTerm);
   const [aliases, setAliases] = useState(heardAs);
-  const [scope, setScope] = useState<'general' | 'collection'>(collection ? 'collection' : 'general');
+  /** A collection id, or 'general' */
+  const [scope, setScope] = useState<string>(collections[0]?.id ?? 'general');
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -27,12 +28,13 @@ export function AddToVocabularyModal({ heardAs, term: initialTerm, collection, o
     setIsSaving(true);
     setError(null);
     try {
+      const collection = collections.find((c) => c.id === scope);
       await glossaryApi.add({
         term,
         aliases: parseAliases(aliases),
-        collection_id: scope === 'collection' && collection ? collection.id : null,
+        collection_id: collection ? collection.id : null,
       });
-      onAdded?.(scope === 'collection' && collection ? collection.name : 'general vocabulary');
+      onAdded?.(collection ? collection.name : 'general vocabulary');
       onClose();
     } catch (err: any) {
       setError(err?.message || 'Could not add the term');
@@ -72,12 +74,12 @@ export function AddToVocabularyModal({ heardAs, term: initialTerm, collection, o
 
         <fieldset className="space-y-1.5">
           <legend className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Use it for</legend>
-          {collection && (
-            <label className="flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200">
-              <input type="radio" checked={scope === 'collection'} onChange={() => setScope('collection')} />
-              Transcriptions of the collection “{collection.name}”
+          {collections.map((c) => (
+            <label key={c.id} className="flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200">
+              <input type="radio" checked={scope === c.id} onChange={() => setScope(c.id)} />
+              Transcriptions of the collection “{c.name}”
             </label>
-          )}
+          ))}
           <label className="flex items-center gap-2 text-sm text-gray-800 dark:text-gray-200">
             <input type="radio" checked={scope === 'general'} onChange={() => setScope('general')} />
             All my transcriptions (general)
