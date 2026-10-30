@@ -69,6 +69,21 @@ const MODEL_LABELS: Record<DeviceModel, string> = {
 const P1_FW_RECORDING_QUALITY = 0x010400;
 const P1_FW_RECORD_ON_VIBE = 0x010404;
 const P1_FW_OPUS_STANDARD = 0x010406;
+/** H1/H1E: GET/SET_SETTINGS from 5.0.34, card info / format from 5.0.53. */
+const H1_FW_SETTINGS = 0x050022;
+const H1_FW_CARD_INFO = 0x050035;
+const H1_FW_BLUETOOTH_TONE = 0x050104;
+const H1E_FW_NOTIFY_RECORDING = 0x060002;
+const H1E_FW_BLUETOOTH_TONE = 0x060104;
+
+/** GET/SET_SETTINGS byte index of each toggle (value 1 = on, 2 = off). */
+const SETTING_INDEX: Record<keyof DeviceSettings, number> = {
+  autoRecord: 3,
+  notifyAboutRecording: 7, // jensen.js "autoPlay"
+  usbPopup: 11,            // jensen.js "notification"
+  bluetoothTone: 15,       // inverted: 1 = off, 2 = on
+  recordOnVibe: 19,
+};
 
 /** Short commands answer quickly; a missing reply means the firmware lacks the command. */
 const SETTINGS_TIMEOUT_MS = 3000;
@@ -529,7 +544,8 @@ class DeviceService {
         await device.claimInterface(INTERFACE_NUMBER);
 
         const info = await this.getDeviceInfo();
-        const storage = await this.getStorageInfo();
+        // Old H1/H1E firmware has no card-info command and would time out
+        const storage = this.getCapabilities().storage ? await this.getStorageInfo() : undefined;
 
         return {
           id: `${device.vendorId}-${device.productId}-${info.serialNumber}`,
@@ -824,6 +840,7 @@ class DeviceService {
   formatStorage(): Promise<void> {
     return this.exclusive(async () => {
       // jensen.js sends a fixed 1,2,3,4 confirmation body
+      if (!this.getCapabilities().storage) throw new Error('Formatting needs a newer device firmware');
       const seqId = await this.sendCommand(COMMANDS.FORMAT_CARD, new Uint8Array([1, 2, 3, 4]));
       await this.receiveResponse(seqId, 60000);
     });
@@ -849,14 +866,24 @@ class DeviceService {
 
   /** Which configuration features the connected model/firmware supports. */
   getCapabilities() {
+    const v = this.versionNumber;
     const p1 = this.model === 'hidock-p1';
+    const h1 = this.model === 'hidock-h1';
+    const h1e = this.model === 'hidock-h1e';
     const bluetooth = p1 || this.model === 'hidock-p1:mini' || this.model === 'hidock-h1:lite';
+    const settings = this.model !== 'unknown' && !((h1 || h1e) && v < H1_FW_SETTINGS);
     return {
-      autoRecord: this.model !== 'unknown',
-      recordOnVibe: p1 && this.versionNumber >= P1_FW_RECORD_ON_VIBE,
-      recordingQuality: p1 && this.versionNumber >= P1_FW_RECORDING_QUALITY,
+      /** GET/SET_SETTINGS (all toggles below depend on it). */
+      settings,
+      autoRecord: settings,
+      usbPopup: settings,
+      notifyAboutRecording: (h1 && v >= H1_FW_SETTINGS) || (h1e && v >= H1E_FW_NOTIFY_RECORDING),
+      bluetoothTone: (h1 && v >= H1_FW_BLUETOOTH_TONE) || (h1e && v >= H1E_FW_BLUETOOTH_TONE),
+      recordOnVibe: p1 && v >= P1_FW_RECORD_ON_VIBE,
+      recordingQuality: p1 && v >= P1_FW_RECORDING_QUALITY,
       /** Standard quality records 16 kbps Opus instead of 96 kbps. */
-      opusStandardQuality: p1 && this.versionNumber >= P1_FW_OPUS_STANDARD,
+      opusStandardQuality: p1 && v >= P1_FW_OPUS_STANDARD,
+      storage: !((h1 || h1e) && v < H1_FW_CARD_INFO),
       battery: p1,
       bluetooth,
       audioInput: bluetooth,
@@ -867,18 +894,27 @@ class DeviceService {
     return this.exclusive(async () => {
       const body = await this.request(COMMANDS.GET_SETTINGS);
       if (!body) return null;
+      const flag = (key: keyof DeviceSettings) => {
+        const i = SETTING_INDEX[key];
+        if (i >= body.length) return undefined;
+        return key === 'bluetoothTone' ? body[i] !== 1 : body[i] === 1;
+      };
       return {
         autoRecord: body[3] === 1,
-        recordOnVibe: body.length > 19 ? body[19] === 1 : undefined,
+        notifyAboutRecording: flag('notifyAboutRecording'),
+        usbPopup: flag('usbPopup'),
+        bluetoothTone: flag('bluetoothTone'),
+        recordOnVibe: flag('recordOnVibe'),
       };
     });
   }
 
   /** SET_SETTINGS takes a sparse body: only the targeted byte is set, 1 = on, 2 = off. */
   setSetting(key: keyof DeviceSettings, enabled: boolean): Promise<void> {
-    const index = { autoRecord: 3, recordOnVibe: 19 }[key];
+    const index = SETTING_INDEX[key];
+    const on = key === 'bluetoothTone' ? !enabled : enabled;
     const body = new Uint8Array(index + 1);
-    body[index] = enabled ? 1 : 2;
+    body[index] = on ? 1 : 2;
     return this.exclusive(() => this.command(COMMANDS.SET_SETTINGS, body));
   }
 

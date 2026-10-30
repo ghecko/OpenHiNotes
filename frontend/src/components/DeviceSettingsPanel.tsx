@@ -70,7 +70,7 @@ export function DeviceSettingsPanel({ device }: Props) {
     setLoading(true);
     setError(null);
     try {
-      setSettings(await deviceService.getSettings());
+      if (caps.settings) setSettings(await deviceService.getSettings());
       if (caps.recordingQuality) setQuality(await deviceService.getRecordingQuality());
       if (caps.battery) setBattery(await deviceService.getBatteryStatus());
       if (caps.bluetooth) {
@@ -82,7 +82,7 @@ export function DeviceSettingsPanel({ device }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [caps.recordingQuality, caps.battery, caps.bluetooth]);
+  }, [caps.settings, caps.recordingQuality, caps.battery, caps.bluetooth]);
 
   useEffect(() => {
     if (open) load();
@@ -214,7 +214,7 @@ export function DeviceSettingsPanel({ device }: Props) {
               )}
 
               {settings && caps.autoRecord && (
-                <Row title="Auto Record" description="Record all phone calls automatically.">
+                <Row title="Auto Record" description="Record calls automatically.">
                   <Toggle checked={settings.autoRecord} disabled={busy} onChange={(v) => toggleSetting('autoRecord', v)} />
                 </Row>
               )}
@@ -225,7 +225,31 @@ export function DeviceSettingsPanel({ device }: Props) {
                 </Row>
               )}
 
-              {!settings && !quality && !btStatus && (
+              {settings && caps.notifyAboutRecording && settings.notifyAboutRecording !== undefined && (
+                <Row title="Notify About Recording" description='Play a "Recording Started" alert for all participants.'>
+                  <Toggle checked={settings.notifyAboutRecording} disabled={busy} onChange={(v) => toggleSetting('notifyAboutRecording', v)} />
+                </Row>
+              )}
+
+              {settings && caps.bluetoothTone && settings.bluetoothTone !== undefined && (
+                <Row title="Bluetooth Prompt Tone" description="Play voice prompts on Bluetooth pairing and connection events.">
+                  <Toggle checked={settings.bluetoothTone} disabled={busy} onChange={(v) => toggleSetting('bluetoothTone', v)} />
+                </Row>
+              )}
+
+              {settings && caps.usbPopup && settings.usbPopup !== undefined && (
+                <Row title="Browser Popup on Connect" description="Let Chrome show the HiDock web app popup when the device is plugged in.">
+                  <Toggle checked={settings.usbPopup} disabled={busy} onChange={(v) => toggleSetting('usbPopup', v)} />
+                </Row>
+              )}
+
+              {!caps.settings && (
+                <p className="py-4 text-sm text-gray-500 dark:text-gray-400">
+                  Update the device firmware to change its settings from here.
+                </p>
+              )}
+
+              {caps.settings && !settings && !quality && !btStatus && (
                 <p className="py-4 text-sm text-gray-500 dark:text-gray-400">
                   This device did not report any configurable settings.
                 </p>

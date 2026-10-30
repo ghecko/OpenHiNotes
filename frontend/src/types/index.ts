@@ -310,8 +310,14 @@ export interface HiDockDevice {
 
 /** Device-side toggles read with GET_SETTINGS. */
 export interface DeviceSettings {
-  /** Record phone calls automatically. */
+  /** Record calls automatically. */
   autoRecord: boolean;
+  /** Play a "Recording started" alert for all participants (H1 ≥ 5.0.34, H1E ≥ 6.0.2). */
+  notifyAboutRecording?: boolean;
+  /** Chrome's WebUSB landing-page popup when the device is plugged in. */
+  usbPopup?: boolean;
+  /** Voice prompts on Bluetooth events (H1 ≥ 5.1.4, H1E ≥ 6.1.4). */
+  bluetoothTone?: boolean;
   /** Keep Vibe-mic (Whisper) recordings on the device (P1 ≥ 1.4.4). */
   recordOnVibe?: boolean;
 }
