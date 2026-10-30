@@ -108,7 +108,8 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
   const [copied, setCopied] = useState(false);
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [editValue, setEditValue] = useState('');
+  /** Set once an inline edit is saved or cancelled, so the blur that follows does not save it again. */
+  const editDoneRef = useRef(false);
   const editInputRef = useRef<HTMLInputElement>(null);
   const [reassigningIndex, setReassigningIndex] = useState<number | null>(null);
   const [mergingIndex, setMergingIndex] = useState<number | null>(null);
@@ -120,7 +121,7 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
   const [newSpeakerIndex, setNewSpeakerIndex] = useState<number | null>(null);
   const [newSpeakerName, setNewSpeakerName] = useState('');
   const [editingTextIndex, setEditingTextIndex] = useState<number | null>(null);
-  const [editTextValue, setEditTextValue] = useState('');
+  const textEditDoneRef = useRef(false);
   const editTextRef = useRef<HTMLTextAreaElement>(null);
   const activeSegmentRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -352,22 +353,25 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
     if (!onSpeakerUpdate) return;
     setEditingSpeaker(speakerId);
     setEditingIndex(segmentIndex);
-    setEditValue(getSpeakerName(speakerId));
+    editDoneRef.current = false;
   };
 
+  // Inline inputs are uncontrolled: a keystroke must not re-render the whole transcript
   const saveEdit = () => {
-    if (editingSpeaker && onSpeakerUpdate && editValue.trim()) {
-      onSpeakerUpdate(editingSpeaker, editValue.trim());
+    if (editDoneRef.current) return;
+    editDoneRef.current = true;
+    const value = editInputRef.current?.value.trim() ?? '';
+    if (editingSpeaker && onSpeakerUpdate && value) {
+      onSpeakerUpdate(editingSpeaker, value);
     }
     setEditingSpeaker(null);
     setEditingIndex(null);
-    setEditValue('');
   };
 
   const cancelEdit = () => {
+    editDoneRef.current = true;
     setEditingSpeaker(null);
     setEditingIndex(null);
-    setEditValue('');
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -384,24 +388,26 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
   const startTextEditing = (segmentIndex: number) => {
     if (!onSegmentTextUpdate) return;
     setEditingTextIndex(segmentIndex);
-    setEditTextValue(transcription.segments[segmentIndex].text);
+    textEditDoneRef.current = false;
   };
 
   const saveTextEdit = () => {
-    if (editingTextIndex !== null && onSegmentTextUpdate && editTextValue.trim()) {
+    if (textEditDoneRef.current) return;
+    textEditDoneRef.current = true;
+    const value = editTextRef.current?.value.trim() ?? '';
+    if (editingTextIndex !== null && onSegmentTextUpdate && value) {
       const originalText = transcription.segments[editingTextIndex].text;
-      if (editTextValue.trim() !== originalText.trim()) {
+      if (value !== originalText.trim()) {
         recordEdit('Edit text', [editingTextIndex]);
-        onSegmentTextUpdate(editingTextIndex, editTextValue.trim());
+        onSegmentTextUpdate(editingTextIndex, value);
       }
     }
     setEditingTextIndex(null);
-    setEditTextValue('');
   };
 
   const cancelTextEdit = () => {
+    textEditDoneRef.current = true;
     setEditingTextIndex(null);
-    setEditTextValue('');
   };
 
   const handleTextKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -800,8 +806,7 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
                   <input
                     ref={editInputRef}
                     type="text"
-                    value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
+                    defaultValue={getSpeakerName(segment.speaker)}
                     onBlur={saveEdit}
                     onKeyDown={handleKeyDown}
                     className={`inline-block px-2 py-1 rounded text-xs font-semibold mb-1 border-2 border-blue-500 outline-none ${color.badge}`}
@@ -1029,9 +1034,8 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
                 {editingTextIndex === idx ? (
                   <textarea
                     ref={editTextRef}
-                    value={editTextValue}
+                    defaultValue={segment.text}
                     onChange={(e) => {
-                      setEditTextValue(e.target.value);
                       e.target.style.height = 'auto';
                       e.target.style.height = e.target.scrollHeight + 'px';
                     }}

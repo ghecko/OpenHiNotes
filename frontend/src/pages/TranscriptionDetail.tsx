@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, startTransition } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { TranscriptionViewer } from '@/components/TranscriptionViewer';
@@ -1410,7 +1410,11 @@ ${summary.content}
           <audio
             ref={audioRef}
             src={audioSrc}
-            onTimeUpdate={(e) => setPlaybackTime(e.currentTarget.currentTime)}
+            onTimeUpdate={(e) => {
+              // Low priority: typing in the transcript must not wait for playback re-renders
+              const t = e.currentTarget.currentTime;
+              startTransition(() => setPlaybackTime(t));
+            }}
             onLoadedMetadata={(e) => {
               const d = e.currentTarget.duration;
               if (isFinite(d) && d > 0) setAudioDuration(d);
