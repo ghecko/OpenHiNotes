@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useAppStore } from '@/store/useAppStore';
+import { useDeviceHotplug } from '@/hooks/useDeviceConnection';
 
 // Auth Pages
 import { Login } from '@/pages/Login';
@@ -13,6 +14,7 @@ import { ForcePasswordChange } from '@/pages/ForcePasswordChange';
 // Protected Pages
 import { Dashboard } from '@/pages/Dashboard';
 import { Recordings } from '@/pages/Recordings';
+import { Device } from '@/pages/Device';
 import { Upload as UploadPage } from '@/pages/Upload';
 import { Transcriptions } from '@/pages/Transcriptions';
 import { TranscriptionDetail } from '@/pages/TranscriptionDetail';
@@ -30,6 +32,8 @@ import { ProtectedRoute } from '@/components/ProtectedRoute';
 function App() {
   const initialize = useAuthStore((s) => s.initialize);
   const theme = useAppStore((s) => s.theme);
+
+  useDeviceHotplug();
 
   useEffect(() => {
     initialize();
@@ -72,6 +76,15 @@ function App() {
         element={
           <ProtectedRoute>
             <Recordings />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/device"
+        element={
+          <ProtectedRoute>
+            <Device />
           </ProtectedRoute>
         }
       />

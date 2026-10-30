@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { useAppStore } from '@/store/useAppStore';
 import { useAuthStore } from '@/store/useAuthStore';
@@ -109,7 +110,7 @@ export function Dashboard() {
                 <div>
                   <p className="text-2xl font-bold text-green-600 dark:text-green-400">{device.model}</p>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Connected
+                    Connected · <Link to="/device" className="text-primary-600 dark:text-primary-400 hover:underline">Configure</Link>
                   </p>
                 </div>
               ) : (

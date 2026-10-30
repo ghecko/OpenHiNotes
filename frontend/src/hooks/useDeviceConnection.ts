@@ -3,6 +3,47 @@ import { useAppStore } from '@/store/useAppStore';
 import { deviceService } from '@/services/deviceService';
 import { AudioRecording } from '@/types';
 
+/**
+ * Follow USB hot-plug once for the whole app: drop the device when it is
+ * unplugged, and reconnect when a HiDock is plugged back in (unless the user
+ * disconnected it on purpose). Mount a single time, in App.
+ */
+export function useDeviceHotplug() {
+  const setDevice = useAppStore((s) => s.setDevice);
+
+  useEffect(() => {
+    const usb = navigator.usb;
+    if (!usb) return;
+
+    const onDisconnect = (e: USBConnectionEvent) => {
+      if (deviceService.handleUnplug(e.device)) setDevice(null);
+    };
+
+    const onConnect = async (e: USBConnectionEvent) => {
+      if (!deviceService.isHiDock(e.device) || deviceService.isConnected()) return;
+      if (localStorage.getItem('device_connected') !== 'true') return;
+      // The device can need a moment after enumeration before it accepts commands
+      for (const delay of [300, 1500]) {
+        await new Promise((r) => setTimeout(r, delay));
+        if (deviceService.isConnected()) return;
+        try {
+          setDevice(await deviceService.connectDevice(e.device));
+          return;
+        } catch (err) {
+          console.warn('[OpenHiNotes] Reconnect after replug failed:', err);
+        }
+      }
+    };
+
+    usb.addEventListener('disconnect', onDisconnect);
+    usb.addEventListener('connect', onConnect);
+    return () => {
+      usb.removeEventListener('disconnect', onDisconnect);
+      usb.removeEventListener('connect', onConnect);
+    };
+  }, [setDevice]);
+}
+
 export function useDeviceConnection() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
