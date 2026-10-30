@@ -13,6 +13,7 @@ import { ForcePasswordChange } from '@/pages/ForcePasswordChange';
 // Protected Pages
 import { Dashboard } from '@/pages/Dashboard';
 import { Recordings } from '@/pages/Recordings';
+import { Device } from '@/pages/Device';
 import { Upload as UploadPage } from '@/pages/Upload';
 import { Transcriptions } from '@/pages/Transcriptions';
 import { TranscriptionDetail } from '@/pages/TranscriptionDetail';
@@ -72,6 +73,15 @@ function App() {
         element={
           <ProtectedRoute>
             <Recordings />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/device"
+        element={
+          <ProtectedRoute>
+            <Device />
           </ProtectedRoute>
         }
       />

@@ -5,7 +5,6 @@ import { useAppStore } from '@/store/useAppStore';
 import { useQueueStore } from '@/store/useQueueStore';
 import { TranscribeModal } from '@/components/TranscribeModal';
 import { AudioPlayer } from '@/components/AudioPlayer';
-import { DeviceSettingsPanel } from '@/components/DeviceSettingsPanel';
 import { AudioRecording, Collection, Transcription } from '@/types';
 import { deviceService } from '@/services/deviceService';
 import { transcriptionsApi } from '@/api/transcriptions';
@@ -793,8 +792,6 @@ export function Recordings() {
           )}
         </div>
       </div>
-
-      <DeviceSettingsPanel device={device} />
 
       {/* Recording type filter tabs */}
       <div className="mb-4 flex items-center gap-3 flex-wrap">

@@ -12,6 +12,7 @@ import {
   ChevronRight,
   X,
   BookTemplate,
+  Usb,
 } from 'lucide-react';
 import { useEffect } from 'react';
 import { useAuthStore } from '@/store/useAuthStore';
@@ -55,6 +56,7 @@ export function Sidebar() {
   const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: Home },
     { path: '/recordings', label: 'Recordings', icon: HardDrive },
+    { path: '/device', label: 'Device', icon: Usb },
     { path: '/upload', label: 'Upload', icon: Upload },
     { path: '/transcriptions', label: 'Transcriptions', icon: FileText },
     { path: '/collections', label: 'Collections', icon: FolderOpen },

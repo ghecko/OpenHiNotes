@@ -1,12 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Settings2, ChevronDown, ChevronRight, Bluetooth, BluetoothConnected, Battery, BatteryCharging,
-  Loader, X, RefreshCw, Headphones,
+  Settings2, Bluetooth, BluetoothConnected, Loader, X, RefreshCw, Headphones,
 } from 'lucide-react';
 import { deviceService } from '@/services/deviceService';
 import {
-  HiDockDevice, DeviceSettings, RecordingQuality, AudioInputSource, BatteryStatus,
-  BluetoothStatus, BluetoothDevice,
+  HiDockDevice, DeviceSettings, RecordingQuality, AudioInputSource, BluetoothStatus, BluetoothDevice,
 } from '@/types';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -54,15 +52,13 @@ interface Props {
 
 export function DeviceSettingsPanel({ device }: Props) {
   const caps = deviceService.getCapabilities();
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [settings, setSettings] = useState<DeviceSettings | null>(null);
   const [quality, setQuality] = useState<RecordingQuality | null>(null);
   const [audioInput, setAudioInput] = useState<AudioInputSource | null>(null);
-  const [battery, setBattery] = useState<BatteryStatus | null>(null);
   const [btStatus, setBtStatus] = useState<BluetoothStatus | null>(null);
   const [showBlueCatch, setShowBlueCatch] = useState(false);
 
@@ -72,7 +68,6 @@ export function DeviceSettingsPanel({ device }: Props) {
     try {
       if (caps.settings) setSettings(await deviceService.getSettings());
       if (caps.recordingQuality) setQuality(await deviceService.getRecordingQuality());
-      if (caps.battery) setBattery(await deviceService.getBatteryStatus());
       if (caps.bluetooth) {
         setBtStatus(await deviceService.getBluetoothStatus());
         setAudioInput(await deviceService.getAudioInput());
@@ -82,16 +77,11 @@ export function DeviceSettingsPanel({ device }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [caps.settings, caps.recordingQuality, caps.battery, caps.bluetooth]);
+  }, [caps.settings, caps.recordingQuality, caps.bluetooth]);
 
   useEffect(() => {
-    if (open) load();
-  }, [open, load]);
-
-  // Battery is shown in the collapsed header too
-  useEffect(() => {
-    if (caps.battery) deviceService.getBatteryStatus().then(setBattery).catch(() => undefined);
-  }, [caps.battery, device.id]);
+    load();
+  }, [load, device.id]);
 
   /** Apply a change on the device, then update local state only if it succeeded. */
   const apply = async (change: () => Promise<void>, onSuccess: () => void) => {
@@ -113,151 +103,136 @@ export function DeviceSettingsPanel({ device }: Props) {
   const btConnected = btStatus?.state === 'connected';
 
   return (
-    <div className="mb-8 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between gap-4 p-6 text-left"
-      >
-        <div className="flex items-center gap-3">
-          <Settings2 className="w-5 h-5 text-gray-500 dark:text-gray-400" />
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Device configuration</h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              {device.name} · firmware {device.firmwareVersion}
-              {device.serialNumber && ` · SN ${device.serialNumber}`}
-            </p>
+    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+      <div className="flex items-center justify-between gap-4 px-6 pt-6 pb-2">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
+          <Settings2 className="w-5 h-5 text-gray-500 dark:text-gray-400" /> Configuration
+        </h3>
+        <button
+          onClick={load}
+          disabled={loading || busy}
+          className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg disabled:opacity-50"
+          title="Re-read settings from the device"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
+      <div className="px-6 pb-4">
+        {error && (
+          <div className="mb-3 p-3 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 rounded-lg text-sm">
+            {error}
           </div>
-        </div>
-        <div className="flex items-center gap-3 text-sm text-gray-600 dark:text-gray-400">
-          {battery && (
-            <span className="flex items-center gap-1" title={`Battery ${battery.state}`}>
-              {battery.state === 'charging'
-                ? <BatteryCharging className="w-4 h-4 text-green-500" />
-                : <Battery className="w-4 h-4" />}
-              {battery.percent}%
-            </span>
-          )}
-          {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-        </div>
-      </button>
+        )}
 
-      {open && (
-        <div className="px-6 pb-4">
-          {error && (
-            <div className="mb-3 p-3 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 rounded-lg text-sm">
-              {error}
-            </div>
-          )}
-
-          {loading ? (
-            <div className="flex items-center gap-2 py-4 text-sm text-gray-500 dark:text-gray-400">
-              <Loader className="w-4 h-4 animate-spin" /> Reading device configuration...
-            </div>
-          ) : (
-            <div>
-              {caps.recordingQuality && quality && (
-                <Row
-                  title="Recording quality"
-                  description={quality === 'high'
-                    ? 'High bitrate, up to 1 hour per recording. Larger files, slower transfer.'
-                    : 'Recommended for calls and most recordings. Smaller files, faster transfer.'}
+        {loading ? (
+          <div className="flex items-center gap-2 py-4 text-sm text-gray-500 dark:text-gray-400">
+            <Loader className="w-4 h-4 animate-spin" /> Reading device configuration...
+          </div>
+        ) : (
+          <div>
+            {caps.recordingQuality && quality && (
+              <Row
+                title="Recording quality"
+                description={quality === 'high'
+                  ? 'High bitrate, up to 1 hour per recording. Larger files, slower transfer.'
+                  : 'Recommended for calls and most recordings. Smaller files, faster transfer.'}
+              >
+                <select
+                  value={quality}
+                  disabled={busy}
+                  onChange={(e) => {
+                    const q = e.target.value as RecordingQuality;
+                    apply(() => deviceService.setRecordingQuality(q), () => setQuality(q));
+                  }}
+                  className="px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg text-sm disabled:opacity-50"
                 >
-                  <select
-                    value={quality}
-                    disabled={busy}
-                    onChange={(e) => {
-                      const q = e.target.value as RecordingQuality;
-                      apply(() => deviceService.setRecordingQuality(q), () => setQuality(q));
-                    }}
-                    className="px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg text-sm disabled:opacity-50"
-                  >
-                    <option value="standard">
-                      {caps.opusStandardQuality ? 'Standard (16 kbps)' : 'Standard (96 kbps)'}
-                    </option>
-                    <option value="high">High (768 kbps)</option>
-                  </select>
-                </Row>
-              )}
+                  <option value="standard">
+                    {caps.opusStandardQuality ? 'Standard (16 kbps)' : 'Standard (96 kbps)'}
+                  </option>
+                  <option value="high">High (768 kbps)</option>
+                </select>
+              </Row>
+            )}
 
-              {caps.bluetooth && (
-                <Row
-                  title="BlueCatch"
-                  description={btConnected
-                    ? `Connected to ${btStatus?.device?.name || btStatus?.device?.mac}`
-                      + (btStatus?.battery !== undefined ? ` (${btStatus.battery}% battery)` : '')
-                    : 'Scan and connect to Bluetooth earphones.'}
+            {caps.bluetooth && (
+              <Row
+                title="BlueCatch"
+                description={btConnected
+                  ? `Connected to ${btStatus?.device?.name || btStatus?.device?.mac}`
+                    + (btStatus?.battery !== undefined ? ` (${btStatus.battery}% battery)` : '')
+                  : 'Scan and connect to Bluetooth earphones.'}
+              >
+                <button
+                  onClick={() => setShowBlueCatch(true)}
+                  className="px-4 py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-900 dark:text-white rounded-lg text-sm font-medium transition-colors"
                 >
-                  <button
-                    onClick={() => setShowBlueCatch(true)}
-                    className="px-4 py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-900 dark:text-white rounded-lg text-sm font-medium transition-colors"
-                  >
-                    View Devices
-                  </button>
-                </Row>
-              )}
+                  View Devices
+                </button>
+              </Row>
+            )}
 
-              {caps.audioInput && btConnected && audioInput && (
-                <Row title="Audio input" description="Microphone used when recording.">
-                  <select
-                    value={audioInput}
-                    disabled={busy}
-                    onChange={(e) => {
-                      const src = e.target.value as AudioInputSource;
-                      apply(() => deviceService.setAudioInput(src), () => setAudioInput(src));
-                    }}
-                    className="px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg text-sm disabled:opacity-50"
-                  >
-                    <option value="device">{device.name} microphone</option>
-                    <option value="bluetooth">{btStatus?.device?.name || 'Bluetooth headset'}</option>
-                  </select>
-                </Row>
-              )}
+            {caps.audioInput && btConnected && audioInput && (
+              <Row title="Audio input" description="Microphone used when recording.">
+                <select
+                  value={audioInput}
+                  disabled={busy}
+                  onChange={(e) => {
+                    const src = e.target.value as AudioInputSource;
+                    apply(() => deviceService.setAudioInput(src), () => setAudioInput(src));
+                  }}
+                  className="px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg text-sm disabled:opacity-50"
+                >
+                  <option value="device">{device.name} microphone</option>
+                  <option value="bluetooth">{btStatus?.device?.name || 'Bluetooth headset'}</option>
+                </select>
+              </Row>
+            )}
 
-              {settings && caps.autoRecord && (
-                <Row title="Auto Record" description="Record calls automatically.">
-                  <Toggle checked={settings.autoRecord} disabled={busy} onChange={(v) => toggleSetting('autoRecord', v)} />
-                </Row>
-              )}
+            {settings && caps.autoRecord && (
+              <Row title="Auto Record" description="Record calls automatically.">
+                <Toggle checked={settings.autoRecord} disabled={busy} onChange={(v) => toggleSetting('autoRecord', v)} />
+              </Row>
+            )}
 
-              {settings && caps.recordOnVibe && settings.recordOnVibe !== undefined && (
-                <Row title="Save Vibe-mic Recordings" description="Once transferred, they will appear in Whispers.">
-                  <Toggle checked={settings.recordOnVibe} disabled={busy} onChange={(v) => toggleSetting('recordOnVibe', v)} />
-                </Row>
-              )}
+            {settings && caps.recordOnVibe && settings.recordOnVibe !== undefined && (
+              <Row title="Save Vibe-mic Recordings" description="Once transferred, they will appear in Whispers.">
+                <Toggle checked={settings.recordOnVibe} disabled={busy} onChange={(v) => toggleSetting('recordOnVibe', v)} />
+              </Row>
+            )}
 
-              {settings && caps.notifyAboutRecording && settings.notifyAboutRecording !== undefined && (
-                <Row title="Notify About Recording" description='Play a "Recording Started" alert for all participants.'>
-                  <Toggle checked={settings.notifyAboutRecording} disabled={busy} onChange={(v) => toggleSetting('notifyAboutRecording', v)} />
-                </Row>
-              )}
+            {settings && caps.notifyAboutRecording && settings.notifyAboutRecording !== undefined && (
+              <Row title="Notify About Recording" description='Play a "Recording Started" alert for all participants.'>
+                <Toggle checked={settings.notifyAboutRecording} disabled={busy} onChange={(v) => toggleSetting('notifyAboutRecording', v)} />
+              </Row>
+            )}
 
-              {settings && caps.bluetoothTone && settings.bluetoothTone !== undefined && (
-                <Row title="Bluetooth Prompt Tone" description="Play voice prompts on Bluetooth pairing and connection events.">
-                  <Toggle checked={settings.bluetoothTone} disabled={busy} onChange={(v) => toggleSetting('bluetoothTone', v)} />
-                </Row>
-              )}
+            {settings && caps.bluetoothTone && settings.bluetoothTone !== undefined && (
+              <Row title="Bluetooth Prompt Tone" description="Play voice prompts on Bluetooth pairing and connection events.">
+                <Toggle checked={settings.bluetoothTone} disabled={busy} onChange={(v) => toggleSetting('bluetoothTone', v)} />
+              </Row>
+            )}
 
-              {settings && caps.usbPopup && settings.usbPopup !== undefined && (
-                <Row title="Browser Popup on Connect" description="Let Chrome show the HiDock web app popup when the device is plugged in.">
-                  <Toggle checked={settings.usbPopup} disabled={busy} onChange={(v) => toggleSetting('usbPopup', v)} />
-                </Row>
-              )}
+            {settings && caps.usbPopup && settings.usbPopup !== undefined && (
+              <Row title="Browser Popup on Connect" description="Let Chrome show the HiDock web app popup when the device is plugged in.">
+                <Toggle checked={settings.usbPopup} disabled={busy} onChange={(v) => toggleSetting('usbPopup', v)} />
+              </Row>
+            )}
 
-              {!caps.settings && (
-                <p className="py-4 text-sm text-gray-500 dark:text-gray-400">
-                  Update the device firmware to change its settings from here.
-                </p>
-              )}
+            {!caps.settings && (
+              <p className="py-4 text-sm text-gray-500 dark:text-gray-400">
+                Update the device firmware to change its settings from here.
+              </p>
+            )}
 
-              {caps.settings && !settings && !quality && !btStatus && (
-                <p className="py-4 text-sm text-gray-500 dark:text-gray-400">
-                  This device did not report any configurable settings.
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+            {caps.settings && !settings && !quality && !btStatus && (
+              <p className="py-4 text-sm text-gray-500 dark:text-gray-400">
+                This device did not report any configurable settings.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
 
       {showBlueCatch && (
         <BlueCatchModal
