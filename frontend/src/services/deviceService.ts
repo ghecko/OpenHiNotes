@@ -1,4 +1,7 @@
-import { HiDockDevice, StorageInfo, AudioRecording } from '@/types';
+import {
+  HiDockDevice, StorageInfo, AudioRecording, DeviceModel, DeviceSettings, RecordingQuality,
+  AudioInputSource, BatteryStatus, BluetoothStatus, BluetoothDevice,
+} from '@/types';
 
 const VENDOR_ID = 0x10d6;
 const ALTERNATE_VENDOR_ID = 0x3887;
@@ -37,12 +40,43 @@ const COMMANDS = {
   GET_FILE_BLOCK: 13,
   GET_CARD_INFO: 16,
   FORMAT_CARD: 17,
+  SET_RECORDING_QUALITY: 30,
+  GET_RECORDING_QUALITY: 31,
+  BLUETOOTH_CMD: 4098,
+  BLUETOOTH_STATUS: 4099,
+  GET_BATTERY_STATUS: 4100,
+  BT_SCAN: 4101,
+  BT_DEV_LIST: 4102,
+  BT_GET_PAIRED_DEV_LIST: 4103,
+  BT_REMOVE_PAIRED_DEV: 4104,
+  SET_AUDIO_INPUT_DEV: 4105,
+  GET_AUDIO_INPUT_DEV: 4106,
 };
 
+/** USB product id → model, as in the official jensen.js. */
+const MODELS_BY_PRODUCT_ID: Record<number, DeviceModel> = {
+  0xb00c: 'hidock-h1', 0xb00d: 'hidock-h1e', 0xb00e: 'hidock-p1', 0xb00f: 'hidock-p1:mini',
+  0x0100: 'hidock-h1', 0x0101: 'hidock-h1e', 0x0102: 'hidock-h1', 0x0103: 'hidock-h1e',
+  0x2040: 'hidock-p1', 0x2041: 'hidock-p1:mini', 0x0104: 'hidock-h1:lite',
+};
+
+const MODEL_LABELS: Record<DeviceModel, string> = {
+  'hidock-h1': 'H1', 'hidock-h1e': 'H1E', 'hidock-p1': 'P1',
+  'hidock-p1:mini': 'P1 mini', 'hidock-h1:lite': 'H1 lite', 'unknown': 'Unknown',
+};
+
+/** Firmware version numbers are 0x00MMmmpp (1.4.6 = 0x010406 = 66566). */
+const P1_FW_RECORDING_QUALITY = 0x010400;
+const P1_FW_RECORD_ON_VIBE = 0x010404;
+const P1_FW_OPUS_STANDARD = 0x010406;
+
+/** Short commands answer quickly; a missing reply means the firmware lacks the command. */
+const SETTINGS_TIMEOUT_MS = 3000;
+
 interface DeviceInfo {
-  model: string;
   serialNumber: string;
   firmwareVersion: string;
+  versionNumber: number;
 }
 
 // ---- Unsigned integer helpers (JS bitwise ops are 32-bit signed) ----
@@ -200,12 +234,17 @@ function parseFilenameDate(filename: string): Date {
  * Detect audio format from the first bytes of downloaded data.
  * HiDock .hda files can be WAV (RIFF header), MPEG audio, or raw PCM.
  */
-function detectAudioFormat(firstChunk: Uint8Array): 'wav' | 'mpeg' | 'pcm' {
+function detectAudioFormat(firstChunk: Uint8Array): 'wav' | 'ogg' | 'mpeg' | 'pcm' {
   if (firstChunk.length >= 4) {
     // WAV: starts with "RIFF"
     if (firstChunk[0] === 0x52 && firstChunk[1] === 0x49 &&
         firstChunk[2] === 0x46 && firstChunk[3] === 0x46) {
       return 'wav';
+    }
+    // Ogg/Opus: starts with "OggS" (P1 standard quality from firmware 1.4.6)
+    if (firstChunk[0] === 0x4f && firstChunk[1] === 0x67 &&
+        firstChunk[2] === 0x67 && firstChunk[3] === 0x53) {
+      return 'ogg';
     }
     // MPEG frame sync: 0xFF followed by 0xE0+ (11 sync bits)
     if (firstChunk[0] === 0xFF && (firstChunk[1] & 0xE0) === 0xE0) {
@@ -250,6 +289,65 @@ function createWavHeader(
   view.setUint32(40, dataSize, true);
 
   return new Uint8Array(header);
+}
+
+/**
+ * Recording duration in seconds from file version and size, mirroring the
+ * official jensen.js file-list handler. Versions 2/3/8/9 are WAV (44-byte
+ * header), 5/6/7 constant-bitrate compressed, 10 Opus.
+ */
+function estimateDuration(version: number, size: number, fileName: string): number {
+  const base = /^\d{14}REC\d+\.wav$/i.test(fileName) ? size / 32 : (size / 32) * 4;
+  let ms: number;
+  switch (version) {
+    case 1: ms = base * 2; break;
+    case 2: ms = (size - 44) / 48 / 2; break;      // 48 kHz 16-bit mono (High 768 kbps)
+    case 3: ms = (size - 44) / 48 / 2 / 2; break;  // 48 kHz 16-bit stereo
+    case 5: ms = size / 12; break;                 // 96 kbps
+    case 6: ms = size / 16; break;                 // 128 kbps
+    case 7: ms = size / 10; break;                 // 80 kbps
+    case 8: ms = (size - 44) / 16 / 2; break;      // 16 kHz 16-bit mono
+    case 9: ms = (size - 44) / 16 / 2 / 2; break;  // 16 kHz 16-bit stereo
+    case 10: ms = ((size - 126) / 2077) * 1000; break; // Opus 16 kbps
+    default: ms = base;
+  }
+  return Math.max(0, ms / 1000);
+}
+
+// ---- Bluetooth helpers ----
+
+function formatMac(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).toUpperCase().padStart(2, '0')).join('-');
+}
+
+function parseMac(mac: string): number[] {
+  const parts = mac.split(/[-:]/);
+  if (parts.length !== 6) throw new Error(`Invalid MAC address: ${mac}`);
+  return parts.map((p) => parseInt(p, 16));
+}
+
+/**
+ * Parse a device list reply: [0..1] count, then per device a u16 name length,
+ * the UTF-8 name, a 6-byte MAC and `extraLen` command-specific bytes.
+ */
+function parseBluetoothList(body: Uint8Array, extraLen: number): { device: BluetoothDevice; extra: Uint8Array }[] {
+  if (body.length < 2) return [];
+  const count = readU16BE(body, 0);
+  const result: { device: BluetoothDevice; extra: Uint8Array }[] = [];
+  const decoder = new TextDecoder();
+  let o = 2;
+  for (let i = 0; i < count && o + 2 <= body.length; i++) {
+    const nameLen = readU16BE(body, o);
+    o += 2;
+    const name = decoder.decode(body.slice(o, o + nameLen)).trim();
+    o += nameLen;
+    const mac = formatMac(body.slice(o, o + 6));
+    o += 6;
+    const extra = body.slice(o, o + extraLen);
+    o += extraLen;
+    if (nameLen > 0) result.push({ device: { name, mac }, extra });
+  }
+  return result;
 }
 
 // ---- File record parsing ----
@@ -301,9 +399,6 @@ function parseFileRecord(
   const filenameStart = offset + 4;
   const sizeOffset = filenameStart + filenameLen;
   const size = readU32BE(data, sizeOffset);
-  
-  // Calculate duration (Hz heuristic)
-  const duration = version === 2 ? size / 32000 : size / 16000;
 
   const rawFilename = data.slice(filenameStart, filenameStart + filenameLen);
   
@@ -343,7 +438,7 @@ function parseFileRecord(
       id: `${fileName}_${offset}`,
       fileName,
       size,
-      duration,
+      duration: estimateDuration(version, size, fileName),
       dateCreated: parseFilenameDate(fileName),
       fileVersion: version,
       signature,
@@ -379,6 +474,22 @@ class DeviceService {
    */
   private blobCache = new Map<string, Blob>();
 
+  private model: DeviceModel = 'unknown';
+  private versionNumber = 0;
+
+  /**
+   * Tail of the operation chain. The protocol is strictly request/response
+   * and sendCommand() drops buffered bytes, so two operations interleaving
+   * (e.g. a Bluetooth status poll during a download) would corrupt both.
+   */
+  private opQueue: Promise<unknown> = Promise.resolve();
+
+  private exclusive<T>(op: () => Promise<T>): Promise<T> {
+    const run = this.opQueue.then(op, op);
+    this.opQueue = run.catch(() => undefined);
+    return run;
+  }
+
   // ---- Public API ----
 
   async requestDevice(): Promise<USBDevice> {
@@ -408,6 +519,8 @@ class DeviceService {
         this.receiveBuffer.clear();
         this.pendingReads = [];
         this.usbReadErrors = 0;
+        this.model = MODELS_BY_PRODUCT_ID[device.productId] ?? 'unknown';
+        this.versionNumber = 0;
 
         if (!device.opened) {
           await device.open();
@@ -420,10 +533,12 @@ class DeviceService {
 
         return {
           id: `${device.vendorId}-${device.productId}-${info.serialNumber}`,
-          name: `HiDock ${info.model}`,
-          model: info.model,
+          name: `HiDock ${MODEL_LABELS[this.model]}`,
+          model: MODEL_LABELS[this.model],
+          deviceModel: this.model,
           serialNumber: info.serialNumber,
           firmwareVersion: info.firmwareVersion,
+          versionNumber: info.versionNumber,
           connected: true,
           storageInfo: storage,
         };
@@ -462,23 +577,14 @@ class DeviceService {
     const seqId = await this.sendCommand(COMMANDS.GET_DEVICE_INFO);
     const { body } = await this.receiveResponse(seqId);
 
-    let offset = 0;
-    const read = (len: number) => {
-      const s = new TextDecoder().decode(body.slice(offset, offset + len));
-      offset += len;
-      return s;
-    };
+    // jensen.js: [0..3] version (u32 BE, 0x00MMmmpp), [4..19] serial number (ASCII, NUL-padded)
+    const versionNumber = body.length >= 4 ? readU32BE(body, 0) : 0;
+    const firmwareVersion = `${body[1] ?? 0}.${body[2] ?? 0}.${body[3] ?? 0}`;
+    const serialNumber = new TextDecoder()
+      .decode(body.slice(4, 20).filter((b) => b > 0));
 
-    const modelLen = readU16BE(body, offset); offset += 2;
-    const model = read(modelLen);
-
-    const serialLen = readU16BE(body, offset); offset += 2;
-    const serialNumber = read(serialLen);
-
-    const fwLen = readU16BE(body, offset); offset += 2;
-    const firmwareVersion = read(fwLen);
-
-    return { model, serialNumber, firmwareVersion };
+    this.versionNumber = versionNumber;
+    return { serialNumber, firmwareVersion, versionNumber };
   }
 
   async getStorageInfo(): Promise<StorageInfo> {
@@ -524,15 +630,26 @@ class DeviceService {
     };
   }
 
-  async getFileList(onProgress?: (files: AudioRecording[]) => void): Promise<AudioRecording[]> {
-    // Send index 0 as parameter to some firmware versions
-    const body = new Uint8Array(4);
-    writeU32BE(body, 0, 0);
-    const seqId = await this.sendCommand(COMMANDS.GET_FILE_LIST, body);
-    return this.receiveStreamingFileList(seqId, onProgress);
+  getFileList(onProgress?: (files: AudioRecording[]) => void): Promise<AudioRecording[]> {
+    return this.exclusive(async () => {
+      // Send index 0 as parameter to some firmware versions
+      const body = new Uint8Array(4);
+      writeU32BE(body, 0, 0);
+      const seqId = await this.sendCommand(COMMANDS.GET_FILE_LIST, body);
+      return this.receiveStreamingFileList(seqId, onProgress);
+    });
   }
 
-  async downloadFile(
+  downloadFile(
+    fileName: string,
+    fileSize: number,
+    onProgress?: (percent: number) => void,
+    fileVersion?: number,
+  ): Promise<Blob> {
+    return this.exclusive(() => this.streamFile(fileName, fileSize, onProgress, fileVersion));
+  }
+
+  private async streamFile(
     fileName: string,
     fileSize: number,
     onProgress?: (percent: number) => void,
@@ -677,6 +794,10 @@ class DeviceService {
       return new Blob(chunks, { type: 'audio/wav' });
     }
 
+    if (format === 'ogg') {
+      return new Blob(chunks, { type: 'audio/ogg' });
+    }
+
     if (format === 'mpeg') {
       // MPEG Layer 1/2 audio — browser can play this natively
       return new Blob(chunks, { type: 'audio/mpeg' });
@@ -687,28 +808,198 @@ class DeviceService {
     return new Blob([wavHeader, ...chunks], { type: 'audio/wav' });
   }
 
-  async deleteFile(fileName: string): Promise<void> {
-    const fileNameBytes = new TextEncoder().encode(fileName);
-    const seqId = await this.sendCommand(COMMANDS.DELETE_FILE, fileNameBytes);
-    const { body } = await this.receiveResponse(seqId, 10000, COMMANDS.DELETE_FILE);
-    // jensen.js: body[0] = 0 success, 1 file does not exist, 2 failed
-    const status = body.length > 0 ? body[0] : 0;
-    if (status === 1) throw new Error(`Device says ${fileName} does not exist`);
-    if (status === 2) throw new Error(`Device failed to delete ${fileName}`);
-    if (status !== 0) console.warn('[OpenHiNotes] DELETE_FILE: unexpected status %d for %s', status, fileName);
+  deleteFile(fileName: string): Promise<void> {
+    return this.exclusive(async () => {
+      const fileNameBytes = new TextEncoder().encode(fileName);
+      const seqId = await this.sendCommand(COMMANDS.DELETE_FILE, fileNameBytes);
+      const { body } = await this.receiveResponse(seqId, 10000, COMMANDS.DELETE_FILE);
+      // jensen.js: body[0] = 0 success, 1 file does not exist, 2 failed
+      const status = body.length > 0 ? body[0] : 0;
+      if (status === 1) throw new Error(`Device says ${fileName} does not exist`);
+      if (status === 2) throw new Error(`Device failed to delete ${fileName}`);
+      if (status !== 0) console.warn('[OpenHiNotes] DELETE_FILE: unexpected status %d for %s', status, fileName);
+    });
   }
 
-  async formatStorage(): Promise<void> {
-    const seqId = await this.sendCommand(COMMANDS.FORMAT_CARD);
-    await this.receiveResponse(seqId, 60000);
+  formatStorage(): Promise<void> {
+    return this.exclusive(async () => {
+      // jensen.js sends a fixed 1,2,3,4 confirmation body
+      const seqId = await this.sendCommand(COMMANDS.FORMAT_CARD, new Uint8Array([1, 2, 3, 4]));
+      await this.receiveResponse(seqId, 60000);
+    });
   }
 
-  async syncTime(): Promise<void> {
-    const timestamp = Math.floor(Date.now() / 1000);
-    const body = new Uint8Array(4);
-    writeU32BE(body, 0, timestamp);
-    const seqId = await this.sendCommand(COMMANDS.SET_DEVICE_TIME, body);
-    await this.receiveResponse(seqId);
+  syncTime(): Promise<void> {
+    return this.exclusive(async () => {
+      // jensen.js: local time as 7 BCD bytes, YYYYMMDDHHMMSS
+      const d = new Date();
+      const p = (n: number) => String(n).padStart(2, '0');
+      const digits = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
+        `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+      const body = new Uint8Array(7);
+      for (let i = 0; i < 7; i++) {
+        body[i] = (Number(digits[i * 2]) << 4) | Number(digits[i * 2 + 1]);
+      }
+      const seqId = await this.sendCommand(COMMANDS.SET_DEVICE_TIME, body);
+      await this.receiveResponse(seqId);
+    });
+  }
+
+  // ---- Device configuration (protocol from the official jensen.js) ----
+
+  /** Which configuration features the connected model/firmware supports. */
+  getCapabilities() {
+    const p1 = this.model === 'hidock-p1';
+    const bluetooth = p1 || this.model === 'hidock-p1:mini' || this.model === 'hidock-h1:lite';
+    return {
+      autoRecord: this.model !== 'unknown',
+      recordOnVibe: p1 && this.versionNumber >= P1_FW_RECORD_ON_VIBE,
+      recordingQuality: p1 && this.versionNumber >= P1_FW_RECORDING_QUALITY,
+      /** Standard quality records 16 kbps Opus instead of 96 kbps. */
+      opusStandardQuality: p1 && this.versionNumber >= P1_FW_OPUS_STANDARD,
+      battery: p1,
+      bluetooth,
+      audioInput: bluetooth,
+    };
+  }
+
+  getSettings(): Promise<DeviceSettings | null> {
+    return this.exclusive(async () => {
+      const body = await this.request(COMMANDS.GET_SETTINGS);
+      if (!body) return null;
+      return {
+        autoRecord: body[3] === 1,
+        recordOnVibe: body.length > 19 ? body[19] === 1 : undefined,
+      };
+    });
+  }
+
+  /** SET_SETTINGS takes a sparse body: only the targeted byte is set, 1 = on, 2 = off. */
+  setSetting(key: keyof DeviceSettings, enabled: boolean): Promise<void> {
+    const index = { autoRecord: 3, recordOnVibe: 19 }[key];
+    const body = new Uint8Array(index + 1);
+    body[index] = enabled ? 1 : 2;
+    return this.exclusive(() => this.command(COMMANDS.SET_SETTINGS, body));
+  }
+
+  getRecordingQuality(): Promise<RecordingQuality | null> {
+    return this.exclusive(async () => {
+      const body = await this.request(COMMANDS.GET_RECORDING_QUALITY);
+      if (!body || body.length < 4) return null;
+      // 0 (Opus firmware) or 2 (older firmware) = standard, 1 = high
+      return readU32BE(body, 0) === 1 ? 'high' : 'standard';
+    });
+  }
+
+  setRecordingQuality(quality: RecordingQuality): Promise<void> {
+    const value = quality === 'high' ? 1 : this.getCapabilities().opusStandardQuality ? 0 : 2;
+    return this.exclusive(() => this.command(COMMANDS.SET_RECORDING_QUALITY, new Uint8Array([0, 0, 0, value])));
+  }
+
+  getAudioInput(): Promise<AudioInputSource | null> {
+    return this.exclusive(async () => {
+      const body = await this.request(COMMANDS.GET_AUDIO_INPUT_DEV);
+      if (!body || body.length < 4) return null;
+      return readU32BE(body, 0) === 0 ? 'bluetooth' : 'device';
+    });
+  }
+
+  setAudioInput(source: AudioInputSource): Promise<void> {
+    const body = new Uint8Array([0, 0, 0, source === 'bluetooth' ? 0 : 1]);
+    return this.exclusive(() => this.command(COMMANDS.SET_AUDIO_INPUT_DEV, body));
+  }
+
+  getBatteryStatus(): Promise<BatteryStatus | null> {
+    return this.exclusive(async () => {
+      const body = await this.request(COMMANDS.GET_BATTERY_STATUS);
+      if (!body || body.length < 2) return null;
+      return {
+        state: body[0] === 0 ? 'idle' : body[0] === 1 ? 'charging' : 'full',
+        percent: body[1],
+      };
+    });
+  }
+
+  getBluetoothStatus(): Promise<BluetoothStatus | null> {
+    return this.exclusive(async () => {
+      const body = await this.request(COMMANDS.BLUETOOTH_STATUS);
+      if (!body) return null;
+      if (body.length === 0 || body[0] === 1) return { state: 'disconnected' };
+      if (body[0] === 2) return { state: 'scanning' };
+      if (body[0] === 3) return { state: 'connecting' };
+      // [0] state, [1..2] name length, name, MAC (6), a2dp, hfp, avrcp, battery (0-255)
+      const nameLen = readU16BE(body, 1);
+      let o = 3;
+      const name = new TextDecoder().decode(body.slice(o, o + nameLen));
+      o += nameLen;
+      const mac = formatMac(body.slice(o, o + 6));
+      o += 6;
+      return {
+        state: 'connected',
+        device: { name, mac },
+        battery: o + 3 < body.length ? Math.round((body[o + 3] / 255) * 100) : undefined,
+      };
+    });
+  }
+
+  /** Start a device-side scan; collect results with getBluetoothScanResults(). */
+  startBluetoothScan(seconds = 10): Promise<void> {
+    return this.exclusive(() => this.command(COMMANDS.BT_SCAN, new Uint8Array([1, seconds & 0xff])));
+  }
+
+  stopBluetoothScan(): Promise<void> {
+    return this.exclusive(() => this.command(COMMANDS.BT_SCAN, new Uint8Array([0, 0])));
+  }
+
+  getBluetoothScanResults(): Promise<BluetoothDevice[]> {
+    return this.exclusive(async () => {
+      const body = await this.request(COMMANDS.BT_DEV_LIST);
+      // Per device after the name and MAC: RSSI (1) + class of device (3)
+      return body ? parseBluetoothList(body, 4).map(({ device, extra }) => {
+        const cod = (extra[1] << 16) | (extra[2] << 8) | extra[3];
+        return { ...device, rssi: (extra[0] << 24) >> 24, audio: ((cod & 0x1f00) >> 8) === 4 };
+      }) : [];
+    });
+  }
+
+  getPairedBluetoothDevices(): Promise<BluetoothDevice[]> {
+    return this.exclusive(async () => {
+      const body = await this.request(COMMANDS.BT_GET_PAIRED_DEV_LIST);
+      // Per device after the name and MAC: pairing sequence (1). Empty slots are 'U'-filled.
+      return body
+        ? parseBluetoothList(body, 1).map(({ device }) => device).filter((d) => !/^U+$/.test(d.name))
+        : [];
+    });
+  }
+
+  connectBluetoothDevice(mac: string): Promise<void> {
+    return this.exclusive(() => this.command(COMMANDS.BLUETOOTH_CMD, new Uint8Array([0, ...parseMac(mac)])));
+  }
+
+  disconnectBluetoothDevice(): Promise<void> {
+    return this.exclusive(() => this.command(COMMANDS.BLUETOOTH_CMD, new Uint8Array([1])));
+  }
+
+  clearPairedBluetoothDevices(): Promise<void> {
+    return this.exclusive(() => this.command(COMMANDS.BT_REMOVE_PAIRED_DEV, new Uint8Array([0])));
+  }
+
+  /** Send a short command and return the reply body, or null when the firmware does not answer. */
+  private async request(commandId: number, body?: Uint8Array): Promise<Uint8Array | null> {
+    const seqId = await this.sendCommand(commandId, body);
+    try {
+      return (await this.receiveResponse(seqId, SETTINGS_TIMEOUT_MS, commandId)).body;
+    } catch (e) {
+      console.warn('[OpenHiNotes] Command %d not answered:', commandId, e);
+      return null;
+    }
+  }
+
+  /** Send a command answered with a status byte (0 = success). */
+  private async command(commandId: number, body?: Uint8Array): Promise<void> {
+    const reply = await this.request(commandId, body);
+    if (!reply) throw new Error('Device did not answer (firmware may not support this setting)');
+    if (reply.length > 0 && reply[0] !== 0) throw new Error('Device rejected the change');
   }
 
   getDeviceName(): string | null {

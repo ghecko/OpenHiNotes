@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, memo } from 'react';
 import { Copy, Check, Pencil, ArrowRightLeft, X, Search, Replace, GitMerge, Scissors, UserCheck, AlertTriangle, ChevronUp, ChevronDown, Undo2, Redo2, BookA } from 'lucide-react';
 import { Transcription, TranscriptionSegment } from '@/types';
 import { FALLBACK_COLOR, getSpeakerColorByIndex } from '@/utils/speakerColors';
@@ -45,6 +45,47 @@ const segmentTokens = (segment: TranscriptionSegment): string[] =>
   segment.words && segment.words.length > 0
     ? segment.words.map((w) => w.word)
     : (segment.text || '').trim().split(/\s+/).filter(Boolean);
+
+const formatTimestamp = (seconds: number) => {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+};
+
+/**
+ * Word-by-word text of a segment with the karaoke highlight. Memoized so that
+ * playback ticks and keystrokes elsewhere only re-render the active segment:
+ * `activeTime` is undefined for every other segment, so their props never change.
+ */
+const SegmentWords = memo(function SegmentWords({
+  words,
+  activeTime,
+}: {
+  words: NonNullable<TranscriptionSegment['words']>;
+  activeTime?: number;
+}) {
+  return (
+    <>
+      {words.map((w, wi) => {
+        const current = activeTime !== undefined && activeTime >= w.start && activeTime < w.end;
+        const lowScore = w.score !== undefined && w.score !== null && w.score < 0.3;
+        return (
+          <span key={wi}>
+            {wi > 0 && ' '}
+            <span
+              className={`rounded transition-colors ${
+                current ? 'bg-primary-200 dark:bg-primary-700/70 text-gray-900 dark:text-white' : ''
+              } ${lowScore ? 'underline decoration-dotted decoration-amber-500/70' : ''}`}
+              title={`${formatTimestamp(w.start)}${lowScore ? ' · not aligned' : ''}`}
+            >
+              {w.word}
+            </span>
+          </span>
+        );
+      })}
+    </>
+  );
+});
 
 /** One occurrence of the search text inside a segment. */
 interface TextMatch {
@@ -187,12 +228,6 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
     navigator.clipboard.writeText(transcription.text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
-
-  const formatTimestamp = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   const getSpeakerColor = (speaker: string | undefined) => {
@@ -1018,7 +1053,7 @@ export function TranscriptionViewer({ transcription, onSpeakerUpdate, onSegmentR
                       : searching
                         ? renderHighlighted(segment, idx)
                         : segment.words && segment.words.length > 0 && currentTime !== undefined
-                          ? renderWords(segment, idx)
+                          ? <SegmentWords words={segment.words} activeTime={isActive ? currentTime : undefined} />
                           : segment.text}
                     {onSegmentTextUpdate && (
                       <Pencil className="w-3 h-3 inline-block ml-1 opacity-0 group-hover:opacity-40 transition-opacity" />

@@ -291,14 +291,53 @@ export type ChatEvent =
   | { done: { model: string; finish_reason: string | null; elapsed: number } }
   | { error: string };
 
+export type DeviceModel =
+  | 'hidock-h1' | 'hidock-h1e' | 'hidock-p1' | 'hidock-p1:mini' | 'hidock-h1:lite' | 'unknown';
+
 export interface HiDockDevice {
   id: string;
   name: string;
+  /** Display label, e.g. "P1". */
   model: string;
+  deviceModel: DeviceModel;
   serialNumber: string;
   firmwareVersion: string;
+  /** Firmware version as 0x00MMmmpp, used for feature gating. */
+  versionNumber: number;
   connected: boolean;
   storageInfo?: StorageInfo;
+}
+
+/** Device-side toggles read with GET_SETTINGS. */
+export interface DeviceSettings {
+  /** Record phone calls automatically. */
+  autoRecord: boolean;
+  /** Keep Vibe-mic (Whisper) recordings on the device (P1 ≥ 1.4.4). */
+  recordOnVibe?: boolean;
+}
+
+export type RecordingQuality = 'standard' | 'high';
+export type AudioInputSource = 'device' | 'bluetooth';
+
+export interface BatteryStatus {
+  state: 'idle' | 'charging' | 'full';
+  percent: number;
+}
+
+export interface BluetoothDevice {
+  name: string;
+  /** "AA-BB-CC-DD-EE-FF" */
+  mac: string;
+  rssi?: number;
+  /** Class of device says headset/microphone. */
+  audio?: boolean;
+}
+
+export interface BluetoothStatus {
+  state: 'disconnected' | 'scanning' | 'connecting' | 'connected';
+  device?: BluetoothDevice;
+  /** Headphone battery, percent. */
+  battery?: number;
 }
 
 export interface StorageInfo {
