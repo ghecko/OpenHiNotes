@@ -589,6 +589,29 @@ class DeviceService {
     }
   }
 
+  /** Whether a USB device is a HiDock (for hot-plug events). */
+  isHiDock(device: USBDevice): boolean {
+    return device.vendorId === VENDOR_ID || device.vendorId === ALTERNATE_VENDOR_ID;
+  }
+
+  /**
+   * The device was unplugged: forget it without touching the dead handle, so
+   * pending operations fail fast and a replug can connect again. Returns true
+   * when it was the connected device.
+   */
+  handleUnplug(device: USBDevice): boolean {
+    const current = this.device;
+    if (!current) return false;
+    const same = device === current ||
+      (device.serialNumber && device.serialNumber === current.serialNumber &&
+        device.productId === current.productId);
+    if (!same) return false;
+    this.device = null;
+    this.receiveBuffer.clear();
+    this.pendingReads = [];
+    return true;
+  }
+
   async getDeviceInfo(): Promise<DeviceInfo> {
     const seqId = await this.sendCommand(COMMANDS.GET_DEVICE_INFO);
     const { body } = await this.receiveResponse(seqId);
@@ -1158,7 +1181,8 @@ class DeviceService {
    * on timeout / USB error.
    */
   private async readToBuffer(inflight = 1, timeoutMs = 2000): Promise<number> {
-    if (!this.device) return -1;
+    // Unplugged mid-operation: fail now instead of waiting for every timeout
+    if (!this.device) throw new Error('Device disconnected');
 
     while (this.pendingReads.length < inflight) {
       this.pendingReads.push(this.issueRead());

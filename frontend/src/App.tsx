@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useAppStore } from '@/store/useAppStore';
+import { useDeviceHotplug } from '@/hooks/useDeviceConnection';
 
 // Auth Pages
 import { Login } from '@/pages/Login';
@@ -31,6 +32,8 @@ import { ProtectedRoute } from '@/components/ProtectedRoute';
 function App() {
   const initialize = useAuthStore((s) => s.initialize);
   const theme = useAppStore((s) => s.theme);
+
+  useDeviceHotplug();
 
   useEffect(() => {
     initialize();
