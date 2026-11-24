@@ -8,6 +8,7 @@ import { QueueIndicator } from '@/components/QueuePanel';
 import { NotificationsBell } from '@/components/NotificationsBell';
 import { OneShotTranscribeModal } from '@/components/OneShotTranscribeModal';
 import { deviceKey, deviceLabel } from '@/utils/audioLocation';
+import { RecordingControl } from '@/components/RecordingControl';
 
 interface HeaderProps {
   title?: string;
@@ -16,7 +17,8 @@ interface HeaderProps {
 export function Header({ title }: HeaderProps) {
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
-  const { theme, setTheme, device, knownDevices, recordingFile } = useAppStore();
+  const { theme, setTheme, device, knownDevices, recording } = useAppStore();
+  const recordingFile = recording?.fileName ?? null;
   const { toggleMobileMenu } = useLayoutStore();
   const deviceConnected = device?.connected ?? false;
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -80,6 +82,8 @@ export function Header({ title }: HeaderProps) {
             </span>
           </button>
         )}
+
+        <RecordingControl />
 
         {/* Queue indicator */}
         <QueueIndicator />

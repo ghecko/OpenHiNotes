@@ -359,6 +359,14 @@ export interface StorageInfo {
   fileCount: number;
 }
 
+/** What the connected HiDock is recording right now. */
+export interface RecordingState {
+  fileName: string;
+  /** Elapsed seconds reported by the device; null when the firmware only gives the file name. */
+  seconds: number | null;
+  type: 'record' | 'whisper' | null;
+}
+
 /** A HiDock this user has connected before, with the files it held when last listed. */
 export interface KnownDevice {
   serial: string;
