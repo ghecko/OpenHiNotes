@@ -1551,7 +1551,11 @@ ${summary.content}
                         : noDeviceCopyMessage
                           ? noDeviceCopyMessage
                           : !device?.connected
-                          ? 'Audio not available — connect device to reload'
+                          ? (sourceLocation?.kind === 'other_device'
+                            ? `Audio not available. Connect ${sourceLocation.device} to reload it`
+                            : sourceLocation?.kind === 'orphan' && sourceLocation.device
+                              ? sourceNotFoundMessage
+                              : 'Audio not available — connect device to reload')
                           : deviceLookupState === 'checking'
                             ? 'Checking device for source recording…'
                             : deviceLookupState === 'not_found'
