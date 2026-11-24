@@ -3,10 +3,11 @@ import { Circle, Loader, Square } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { deviceService } from '@/services/deviceService';
 
+/** "00:09", "12:34", "1:02:03": two-digit minutes so the width does not change at 10 minutes. */
 function formatElapsed(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
   const h = Math.floor(s / 3600);
-  const mm = String(Math.floor((s % 3600) / 60)).padStart(h ? 2 : 1, '0');
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
   const ss = String(s % 60).padStart(2, '0');
   return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
@@ -23,13 +24,23 @@ export function RecordingControl() {
   const [error, setError] = useState<string | null>(null);
   const [, setTick] = useState(0);
 
-  // Let the elapsed time run between two polls
-  const recordingFile = recording?.fileName ?? null;
+  // Count on this computer's clock from the recording's start, re-rendering
+  // right after each whole second: a plain 1 s interval drifts against the
+  // second boundaries and makes the display skip or stall.
+  const startedAt = recording?.startedAt ?? null;
   useEffect(() => {
-    if (!recordingFile) return;
-    const id = setInterval(() => setTick((n) => n + 1), 1000);
-    return () => clearInterval(id);
-  }, [recordingFile]);
+    if (startedAt === null) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      const intoSecond = (Date.now() - startedAt) % 1000;
+      timer = setTimeout(() => {
+        setTick((n) => n + 1);
+        schedule();
+      }, 1000 - intoSecond + 20);
+    };
+    schedule();
+    return () => clearTimeout(timer);
+  }, [startedAt]);
 
   useEffect(() => {
     if (!error) return;
@@ -51,9 +62,7 @@ export function RecordingControl() {
     }
   };
 
-  const elapsed = recording && recording.seconds !== null
-    ? formatElapsed(recording.seconds + (Date.now() - recording.readAt) / 1000)
-    : null;
+  const elapsed = startedAt !== null ? formatElapsed((Date.now() - startedAt) / 1000) : null;
 
   return (
     <div className="flex items-center gap-2">
@@ -71,7 +80,7 @@ export function RecordingControl() {
           : recording
             ? <Square className="w-3 h-3 fill-current" />
             : <Circle className="w-3 h-3 fill-red-500 text-red-500" />}
-        <span className="hidden sm:inline">
+        <span className="hidden sm:inline tabular-nums">
           {recording ? (elapsed ? `Stop ${elapsed}` : 'Stop') : 'Record'}
         </span>
       </button>
