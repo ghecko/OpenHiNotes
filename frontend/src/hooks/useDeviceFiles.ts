@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { devicesApi } from '@/api/devices';
+import { deviceService } from '@/services/deviceService';
 import {
   AudioLocation, AudioLocationContext, deviceKey, heldByOtherDevice, locateAudio,
 } from '@/utils/audioLocation';
@@ -17,6 +18,38 @@ export function useDeviceFileSync() {
   const recordings = useAppStore((s) => s.recordings);
   const listSerial = useAppStore((s) => s.recordingsDeviceSerial);
   const setKnownDevices = useAppStore((s) => s.setKnownDevices);
+  const connected = useAppStore((s) => s.device?.connected ?? false);
+  const connectedKey = useAppStore((s) => (s.device ? deviceKey(s.device) : null));
+
+  // Read the file list once per connection, on whatever page the user is, so
+  // device badges and the registry do not depend on a visit to Recordings.
+  // That page lists the device itself on mount: wait, and step aside if a
+  // listing is running or done.
+  useEffect(() => {
+    if (!isAuthenticated || !connected || !connectedKey) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const attempt = (retriesLeft: number) => {
+      if (cancelled || !deviceService.isConnected()) return;
+      const state = useAppStore.getState();
+      if (state.recordingsDeviceSerial === connectedKey) return;
+      if (deviceService.isBusy()) {
+        if (retriesLeft > 0) timer = setTimeout(() => attempt(retriesLeft - 1), 4000);
+        return;
+      }
+      deviceService.getFileList()
+        .then((recs) => {
+          const now = useAppStore.getState();
+          if (!cancelled && now.device && deviceKey(now.device) === connectedKey) now.setRecordings(recs);
+        })
+        .catch((err) => console.warn('[OpenHiNotes] Could not list device files:', err));
+    };
+    timer = setTimeout(() => attempt(3), 1500);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [isAuthenticated, connected, connectedKey]);
 
   useEffect(() => {
     if (!isAuthenticated) return;

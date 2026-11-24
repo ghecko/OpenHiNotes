@@ -5,7 +5,7 @@ import { parseServerDate } from '@/utils/dates';
 
 const NEUTRAL = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-600 dark:bg-gray-700/60 dark:text-gray-300 flex-shrink-0';
 
-/** Source of a transcription's audio when it is not a recording on the connected HiDock. */
+/** Where a transcription's audio comes from: the HiDock it is on, an upload, or gone. */
 export function AudioLocationBadge({ location }: { location: AudioLocation }) {
   if (location.kind === 'upload') {
     return (
@@ -20,6 +20,17 @@ export function AudioLocationBadge({ location }: { location: AudioLocation }) {
       <span className={NEUTRAL} title="Recorded in the browser, not a device recording">
         <Laptop className="w-3 h-3" />
         Browser
+      </span>
+    );
+  }
+  if (location.kind === 'on_device') {
+    return (
+      <span
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 flex-shrink-0"
+        title={`Source recording is on ${location.device}, which is connected`}
+      >
+        <HardDrive className="w-3 h-3" />
+        {location.device.replace(/^HiDock /, '')}
       </span>
     );
   }

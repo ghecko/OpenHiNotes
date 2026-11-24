@@ -7,16 +7,20 @@ export type SourceKind = 'device' | 'upload' | 'recording';
  * Where the audio of a transcription came from and, for a HiDock recording,
  * where the source file is relative to the device whose file list is loaded:
  *  - upload / recording: uploaded or recorded in the browser, never on a device
- *  - none: nothing to report (no list loaded, combined recording, or the file
- *    is on that device)
- *  - other_device: on another of the user's HiDocks, per the origin recorded
+ *  - on_device: on the connected HiDock (its file list is loaded and has it)
+ *  - other_device: on a HiDock that is not connected, per the origin recorded
  *    at upload or the files that device held the last time it was connected
  *  - orphan: gone from the device it came from, or on none of the known ones
+ *  - none: nothing to report (combined recording, or no device listed yet)
+ *
+ * Without a loaded file list the answer comes from the registry alone, so it
+ * is as old as the last time each device was connected.
  */
 export type AudioLocation =
   | { kind: 'none' }
   | { kind: 'upload' }
   | { kind: 'recording' }
+  | { kind: 'on_device'; device: string }
   | { kind: 'other_device'; device: string; seenAt: string | null }
   | { kind: 'orphan'; device: string | null };
 
@@ -76,7 +80,8 @@ export function locateAudio(t: Located, ctx: AudioLocationContext): AudioLocatio
   const { listSerial, fileNames, known, knownFiles } = ctx;
   if (t.combined_sources && t.combined_sources.length > 0) return { kind: 'none' };
   const name = t.original_filename;
-  if (listSerial && fileNames.has(name)) return { kind: 'none' };
+  const here = () => deviceLabel(listSerial!, known.find((d) => d.serial === listSerial)?.model, known);
+  if (listSerial && fileNames.has(name)) return { kind: 'on_device', device: here() };
 
   const origin = t.source_device_serial || null;
   const kind: SourceKind | null = t.source_kind ?? (origin ? 'device' : null);
@@ -88,11 +93,7 @@ export function locateAudio(t: Located, ctx: AudioLocationContext): AudioLocatio
     if (guess !== 'device' && !known.some((d) => knownFiles.get(d.serial)?.has(name))) return { kind: guess };
   }
 
-  if (!listSerial) return { kind: 'none' };
-  const listed = known.find((d) => d.serial === listSerial);
-  const here = deviceLabel(listSerial, listed?.model, known);
-
-  if (origin === listSerial) return { kind: 'orphan', device: here };
+  if (listSerial && origin === listSerial) return { kind: 'orphan', device: here() };
 
   if (origin) {
     const from = known.find((d) => d.serial === origin);
@@ -110,7 +111,9 @@ export function locateAudio(t: Located, ctx: AudioLocationContext): AudioLocatio
   if (holder) {
     return { kind: 'other_device', device: deviceLabel(holder.serial, holder.model, known), seenAt: holder.files_seen_at };
   }
-  return { kind: 'orphan', device: null };
+  // On no device we know of. That only means something once a device has been listed.
+  const anyListed = listSerial !== null || known.some((d) => !!d.files_seen_at);
+  return anyListed ? { kind: 'orphan', device: null } : { kind: 'none' };
 }
 
 /** Whether a file name is on another known device than the one whose list is loaded. */
