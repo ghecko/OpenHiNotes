@@ -1,5 +1,5 @@
 import {
-  HiDockDevice, StorageInfo, AudioRecording, DeviceModel, DeviceSettings, RecordingQuality,
+  HiDockDevice, StorageInfo, AudioRecording, DeviceModel, DeviceSettings, RecordingQuality, RecordingState,
   AudioInputSource, BatteryStatus, BluetoothStatus, BluetoothDevice,
 } from '@/types';
 
@@ -41,6 +41,8 @@ const COMMANDS = {
   GET_CARD_INFO: 16,
   FORMAT_CARD: 17,
   GET_RECORDING_FILE: 18,
+  SEND_KEY_CODE: 28,
+  GET_RECORDING_STATUS: 29,
   SET_RECORDING_QUALITY: 30,
   GET_RECORDING_QUALITY: 31,
   BLUETOOTH_CMD: 4098,
@@ -85,6 +87,12 @@ const SETTING_INDEX: Record<keyof DeviceSettings, number> = {
   bluetoothTone: 15,       // inverted: 1 = off, 2 = on
   recordOnVibe: 19,
 };
+
+/** SEND_KEY_CODE body that presses the record key: starts a recording, or stops the running one. */
+const KEY_TOGGLE_RECORDING = [2, 3];
+/** How long the device gets to change state after the record key (it took under 1 s on a P1). */
+const RECORDING_SWITCH_TIMEOUT_MS = 5000;
+const RECORDING_SWITCH_POLL_MS = 400;
 
 /** Short commands answer quickly; a missing reply means the firmware lacks the command. */
 const SETTINGS_TIMEOUT_MS = 3000;
@@ -330,6 +338,27 @@ function estimateDuration(version: number, size: number, fileName: string): numb
   return Math.max(0, ms / 1000);
 }
 
+/**
+ * GET_RECORDING_STATUS reply while recording:
+ * [type, N, file name (N bytes), elapsed seconds (u16 BE), M, M level samples].
+ * Returns undefined for anything else; an empty body (idle) is handled by the caller.
+ */
+function parseRecordingStatus(body: Uint8Array): RecordingState | undefined {
+  if (body.length < 5 || (body[0] !== 0 && body[0] !== 1)) return undefined;
+  const nameLength = body[1];
+  if (nameLength === 0 || 2 + nameLength + 2 > body.length) return undefined;
+  let fileName = '';
+  for (let i = 2; i < 2 + nameLength; i++) {
+    if (body[i] === 0) return undefined;
+    fileName += String.fromCharCode(body[i]);
+  }
+  return {
+    fileName,
+    seconds: readU16BE(body, 2 + nameLength),
+    type: body[0] === 1 ? 'whisper' : 'record',
+  };
+}
+
 // ---- Bluetooth helpers ----
 
 function formatMac(bytes: Uint8Array): string {
@@ -492,6 +521,9 @@ class DeviceService {
 
   private model: DeviceModel = 'unknown';
   private versionNumber = 0;
+  /** Command that answers "is it recording" on this connection: 29 (with elapsed
+   *  time), 18 (file name only) on firmware without 29, 0 when neither answers. */
+  private recordingStatusCommand = COMMANDS.GET_RECORDING_STATUS;
 
   /**
    * Tail of the operation chain. The protocol is strictly request/response
@@ -546,6 +578,7 @@ class DeviceService {
         this.usbReadErrors = 0;
         this.model = MODELS_BY_PRODUCT_ID[device.productId] ?? 'unknown';
         this.versionNumber = 0;
+        this.recordingStatusCommand = COMMANDS.GET_RECORDING_STATUS;
 
         if (!device.opened) {
           await device.open();
@@ -920,6 +953,10 @@ class DeviceService {
       battery: p1,
       bluetooth,
       audioInput: bluetooth,
+      /** Start/stop a recording from the app (the record key over USB). Seen
+       *  working on a P1 (1.4.7); the H1E is known from the hidock-next-2
+       *  reference. Other models stay off until someone has tried them. */
+      recordingControl: p1 || h1e,
     };
   }
 
@@ -952,21 +989,69 @@ class DeviceService {
   }
 
   /**
-   * The file the device is recording right now (command 18): its name, null
-   * when it is idle, undefined when the firmware does not answer. A passive
-   * read; the operation queue keeps it from interleaving with a transfer or
-   * a listing, and a poller should skip its turn while isBusy().
+   * What the device is recording right now: the running recording, null when
+   * it is idle, undefined when the firmware does not say. A passive read; the
+   * operation queue keeps it from interleaving with a transfer or a listing,
+   * and a poller should skip its turn while isBusy().
    */
-  getRecordingFile(): Promise<string | null | undefined> {
+  getRecordingState(): Promise<RecordingState | null | undefined> {
+    return this.exclusive(() => this.readRecordingState());
+  }
+
+  /**
+   * Start or stop a recording on the device. The only command for it is the
+   * record key, which toggles: so the state is read first, the key is sent
+   * once and only if the device is not already in the wanted state, and the
+   * new state is read back. Throws when the device does not follow; the key
+   * is never sent a second time.
+   */
+  setRecording(wanted: boolean): Promise<RecordingState | null> {
     return this.exclusive(async () => {
-      const body = await this.request(COMMANDS.GET_RECORDING_FILE);
-      if (!body) return undefined;
-      let name = '';
-      for (const byte of body) {
-        if (byte !== 0) name += String.fromCharCode(byte);
+      if (!this.getCapabilities().recordingControl) {
+        throw new Error('Starting a recording from the app is not available on this device');
       }
-      return name.trim() || null;
+      const before = await this.readRecordingState();
+      if (before === undefined) throw new Error('The device does not report whether it is recording');
+      if ((before !== null) === wanted) return before;
+
+      const reply = await this.request(COMMANDS.SEND_KEY_CODE, new Uint8Array(KEY_TOGGLE_RECORDING));
+      if (!reply) throw new Error('The device did not answer (this firmware may not support it)');
+      if (reply.length > 0 && reply[0] !== 0) {
+        throw new Error(`The device refused to ${wanted ? 'start' : 'stop'} the recording`);
+      }
+
+      const deadline = Date.now() + RECORDING_SWITCH_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, RECORDING_SWITCH_POLL_MS));
+        const now = await this.readRecordingState();
+        if (now !== undefined && (now !== null) === wanted) return now;
+      }
+      throw new Error(wanted ? 'The recording did not start' : 'The recording did not stop');
     });
+  }
+
+  /** Recording state without taking the operation queue (callers hold it). */
+  private async readRecordingState(): Promise<RecordingState | null | undefined> {
+    if (this.recordingStatusCommand === COMMANDS.GET_RECORDING_STATUS) {
+      const body = await this.request(COMMANDS.GET_RECORDING_STATUS);
+      if (body) return body.length === 0 ? null : parseRecordingStatus(body);
+      // No answer: older firmware. Command 18 gives the file name alone.
+      this.recordingStatusCommand = COMMANDS.GET_RECORDING_FILE;
+    }
+    if (this.recordingStatusCommand === COMMANDS.GET_RECORDING_FILE) {
+      const body = await this.request(COMMANDS.GET_RECORDING_FILE);
+      if (!body) {
+        this.recordingStatusCommand = 0;
+        return undefined;
+      }
+      let fileName = '';
+      for (const byte of body) {
+        if (byte !== 0) fileName += String.fromCharCode(byte);
+      }
+      fileName = fileName.trim();
+      return fileName ? { fileName, seconds: null, type: null } : null;
+    }
+    return undefined;
   }
 
   getRecordingQuality(): Promise<RecordingQuality | null> {

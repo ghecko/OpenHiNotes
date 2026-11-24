@@ -2,9 +2,11 @@ import { useEffect } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import { deviceService } from '@/services/deviceService';
 
-const POLL_MS = 5000;
+/** Poll interval while idle, and while a recording runs (its elapsed time is shown). */
+const IDLE_POLL_MS = 4000;
+const RECORDING_POLL_MS = 2000;
 const FIRST_POLL_MS = 1500;
-/** Unanswered polls in a row after which the firmware is taken not to support the command. */
+/** Unanswered polls in a row after which the firmware is taken not to report its state. */
 const MAX_MISSES = 2;
 
 /**
@@ -17,10 +19,10 @@ const MAX_MISSES = 2;
 export function useRecordingStatusPoll() {
   const connected = useAppStore((s) => s.device?.connected ?? false);
   const deviceId = useAppStore((s) => s.device?.id ?? null);
-  const setRecordingFile = useAppStore((s) => s.setRecordingFile);
+  const setRecordingState = useAppStore((s) => s.setRecordingState);
 
   useEffect(() => {
-    setRecordingFile(null);
+    setRecordingState(null);
     if (!connected) return;
 
     let stopped = false;
@@ -31,24 +33,24 @@ export function useRecordingStatusPoll() {
       if (stopped) return;
       if (document.visibilityState === 'visible' && deviceService.isConnected() && !deviceService.isBusy()) {
         try {
-          const file = await deviceService.getRecordingFile();
+          const state = await deviceService.getRecordingState();
           if (stopped) return;
-          if (file === undefined) {
+          if (state === undefined) {
             misses += 1;
             if (misses >= MAX_MISSES) {
               console.info('[OpenHiNotes] Recording status not available on this firmware');
-              setRecordingFile(null);
+              setRecordingState(null);
               return;
             }
           } else {
             misses = 0;
-            setRecordingFile(file);
+            setRecordingState(state);
           }
         } catch {
           // device unplugged mid-poll: the hot-plug handler takes over
         }
       }
-      timer = setTimeout(tick, POLL_MS);
+      timer = setTimeout(tick, useAppStore.getState().recording ? RECORDING_POLL_MS : IDLE_POLL_MS);
     };
 
     timer = setTimeout(tick, FIRST_POLL_MS);
@@ -56,5 +58,5 @@ export function useRecordingStatusPoll() {
       stopped = true;
       clearTimeout(timer);
     };
-  }, [connected, deviceId, setRecordingFile]);
+  }, [connected, deviceId, setRecordingState]);
 }
