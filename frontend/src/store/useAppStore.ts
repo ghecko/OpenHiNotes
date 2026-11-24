@@ -16,6 +16,8 @@ interface AppState {
   recordingsDeviceSerial: string | null;
   /** The user's HiDocks and the files each held when last connected (server registry). */
   knownDevices: KnownDevice[];
+  /** File the connected device is recording right now; null when idle or unknown. */
+  recordingFile: string | null;
   isDeviceConnected: boolean;
   selectedRecordings: string[];
   theme: 'dark' | 'light';
@@ -27,6 +29,7 @@ interface AppState {
   setDevice: (device: HiDockDevice | null) => void;
   setRecordings: (recordings: AudioRecording[]) => void;
   setKnownDevices: (devices: KnownDevice[]) => void;
+  setRecordingFile: (fileName: string | null) => void;
   addRecordings: (recordings: AudioRecording[]) => void;
   toggleRecordingSelection: (id: string) => void;
   clearSelectedRecordings: () => void;
@@ -48,6 +51,7 @@ export const useAppStore = create<AppState>()(
       recordings: [],
       recordingsDeviceSerial: null,
       knownDevices: [],
+      recordingFile: null,
       isDeviceConnected: false,
       selectedRecordings: [],
       theme: 'light',
@@ -79,6 +83,10 @@ export const useAppStore = create<AppState>()(
 
       setKnownDevices: (knownDevices: KnownDevice[]) => {
         set({ knownDevices });
+      },
+
+      setRecordingFile: (recordingFile: string | null) => {
+        set((state) => (state.recordingFile === recordingFile ? state : { recordingFile }));
       },
 
       addRecordings: (recordings: AudioRecording[]) => {

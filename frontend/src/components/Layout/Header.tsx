@@ -16,7 +16,7 @@ interface HeaderProps {
 export function Header({ title }: HeaderProps) {
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
-  const { theme, setTheme, device, knownDevices } = useAppStore();
+  const { theme, setTheme, device, knownDevices, recordingFile } = useAppStore();
   const { toggleMobileMenu } = useLayoutStore();
   const deviceConnected = device?.connected ?? false;
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -65,14 +65,18 @@ export function Header({ title }: HeaderProps) {
         {deviceConnected && (
           <button
             onClick={() => navigate('/device')}
-            title="Device configuration"
-            className="flex items-center gap-2 px-2 sm:px-3 py-1.5 bg-green-50 hover:bg-green-100 dark:bg-green-900/30 dark:hover:bg-green-900/50 border border-green-200/60 dark:border-green-700/40 rounded-full transition-colors">
+            title={recordingFile ? `Recording ${recordingFile}` : 'Device configuration'}
+            className={`flex items-center gap-2 px-2 sm:px-3 py-1.5 border rounded-full transition-colors ${recordingFile
+              ? 'bg-red-50 hover:bg-red-100 dark:bg-red-900/30 dark:hover:bg-red-900/50 border-red-200/60 dark:border-red-700/40'
+              : 'bg-green-50 hover:bg-green-100 dark:bg-green-900/30 dark:hover:bg-green-900/50 border-green-200/60 dark:border-green-700/40'}`}>
             <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${recordingFile ? 'bg-red-400' : 'bg-green-400'}`} />
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${recordingFile ? 'bg-red-500' : 'bg-green-500'}`} />
             </span>
-            <span className="hidden sm:inline text-xs font-medium text-green-700 dark:text-green-300">
-              {device ? `${deviceLabel(deviceKey(device), device.deviceModel, knownDevices)} connected` : 'Device Connected'}
+            <span className={`hidden sm:inline text-xs font-medium ${recordingFile ? 'text-red-700 dark:text-red-300' : 'text-green-700 dark:text-green-300'}`}>
+              {device
+                ? `${deviceLabel(deviceKey(device), device.deviceModel, knownDevices)} ${recordingFile ? 'recording' : 'connected'}`
+                : 'Device Connected'}
             </span>
           </button>
         )}

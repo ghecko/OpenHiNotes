@@ -4,6 +4,7 @@ import { useAuthStore } from '@/store/useAuthStore';
 import { useAppStore } from '@/store/useAppStore';
 import { useDeviceHotplug } from '@/hooks/useDeviceConnection';
 import { useDeviceFileSync } from '@/hooks/useDeviceFiles';
+import { useRecordingStatusPoll } from '@/hooks/useRecordingStatus';
 
 // Auth Pages
 import { Login } from '@/pages/Login';
@@ -36,6 +37,7 @@ function App() {
 
   useDeviceHotplug();
   useDeviceFileSync();
+  useRecordingStatusPoll();
 
   useEffect(() => {
     initialize();
