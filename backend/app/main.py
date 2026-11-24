@@ -23,6 +23,7 @@ from app.routers import export as export_router
 from app.routers import notifications as notifications_router
 from app.routers import search as search_router
 from app.routers import glossary as glossary_router
+from app.routers import devices as devices_router
 from app.models.template import SummaryTemplate
 from app.default_templates import DEFAULT_TEMPLATES
 import logging
@@ -66,6 +67,7 @@ app.include_router(export_router.router, prefix="/api")
 app.include_router(notifications_router.router, prefix="/api")
 app.include_router(search_router.router, prefix="/api")
 app.include_router(glossary_router.router, prefix="/api")
+app.include_router(devices_router.router, prefix="/api")
 
 
 @app.get("/api/health")

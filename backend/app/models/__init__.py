@@ -13,10 +13,11 @@ from app.models.notification import Notification
 from app.models.transcription_speaker_embedding import TranscriptionSpeakerEmbedding
 from app.models.glossary import GlossaryTerm
 from app.models.collection_transcription import CollectionTranscription
+from app.models.user_device import UserDevice
 
 __all__ = [
     "User", "Collection", "Transcription", "SummaryTemplate", "Summary",
     "AppSetting", "ChatConversation", "UserGroup", "user_group_members", "ResourceShare",
     "OIDCProvider", "UserIdentity", "Notification", "TranscriptionSpeakerEmbedding",
-    "GlossaryTerm", "CollectionTranscription",
+    "GlossaryTerm", "CollectionTranscription", "UserDevice",
 ]

@@ -79,6 +79,17 @@ class Transcription(Base):
     # Lets the UI show "auto-identified" badges the user can confirm or reject
     # instead of silently overwriting the speaker name.
     speaker_matches: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Where the audio came from: "device" (pulled from a HiDock), "upload"
+    # (file uploaded in the browser) or "recording" (recorded in the browser).
+    # NULL on combined recordings and rows that predate the column.
+    source_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # The HiDock the audio was pulled from (serial + model id such as
+    # "hidock-p1"). NULL unless source_kind is "device"; for rows that predate
+    # the columns, PUT /devices/{serial}/files stamps them when a connected
+    # device lists the file. Lets the UI tell "deleted from its device" from
+    # "on a device that is not plugged in".
+    source_device_serial: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_device_model: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False

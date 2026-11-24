@@ -7,6 +7,8 @@ import { TranscribeModal } from '@/components/TranscribeModal';
 import { AudioPlayer } from '@/components/AudioPlayer';
 import { AudioRecording, Collection, Transcription } from '@/types';
 import { deviceService } from '@/services/deviceService';
+import { useAudioLocator } from '@/hooks/useDeviceFiles';
+import { deviceKey } from '@/utils/audioLocation';
 import { transcriptionsApi } from '@/api/transcriptions';
 import { collectionsApi } from '@/api/collections';
 import { recordingAliasesApi } from '@/api/recordingAliases';
@@ -314,11 +316,16 @@ export function Recordings() {
   const [deleteModalFile, setDeleteModalFile] = useState<string | null>(null);
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
 
-  // Orphan alias detection
+  // Orphan alias detection: an alias whose recording is neither on this
+  // device nor on another of the user's HiDocks (as last listed). Nothing is
+  // an orphan until this device's file list is loaded.
+  const { locate: locateSource, heldElsewhere, listLoaded } = useAudioLocator();
   const currentFileNames = recordings.map((r) => r.fileName);
-  const orphanAliasKeys = Object.keys(recordingAliases).filter(
-    (key) => !currentFileNames.includes(key)
-  );
+  const orphanAliasKeys = listLoaded
+    ? Object.keys(recordingAliases).filter(
+      (key) => !currentFileNames.includes(key) && !heldElsewhere(key)
+    )
+    : [];
   const orphanCount = orphanAliasKeys.length;
 
   const startEditingAlias = useCallback((fileName: string) => {
@@ -362,9 +369,10 @@ export function Recordings() {
 
   const handleCleanOrphanAliases = useCallback(() => {
     const count = orphanCount;
-    cleanOrphanAliases(currentFileNames);
+    const orphans = new Set(orphanAliasKeys);
+    cleanOrphanAliases(Object.keys(recordingAliases).filter((key) => !orphans.has(key)));
     alert(`Cleaned ${count} orphan alias${count !== 1 ? 'es' : ''}.`);
-  }, [cleanOrphanAliases, currentFileNames, orphanCount]);
+  }, [cleanOrphanAliases, recordingAliases, orphanAliasKeys, orphanCount]);
 
   useEffect(() => {
     if (device?.connected) {
@@ -401,13 +409,15 @@ export function Recordings() {
     transcriptionsApi.getTranscriptions(0, 100, 'newest', 'mine')
       .then((res) => {
         const deviceFileNames = new Set(recordings.map((r) => r.fileName));
+        // Not server-only when the recording still sits on another HiDock
         const serverOnly = res.items.filter(
           (t) => t.audio_available && !deviceFileNames.has(t.original_filename)
+            && locateSource(t).kind !== 'other_device'
         );
         setServerOnlyRecordings(serverOnly);
       })
       .catch(console.error);
-  }, [recordings]);
+  }, [recordings, locateSource]);
 
   const getOrDownloadBlob = async (
     recordingId: string, fileName: string, fileSize: number, fileVersion?: number
@@ -1360,6 +1370,7 @@ export function Recordings() {
         }}
         audioFile={selectedAudio}
         fileName={selectedFileName}
+        sourceDevice={device ? { serial: deviceKey(device), model: device.deviceModel } : undefined}
         initialTitle={recordingAliases[selectedFileName] || undefined}
         initialCollectionId={recordingCollections[selectedFileName] || undefined}
         onComplete={() => {

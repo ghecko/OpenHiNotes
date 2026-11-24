@@ -13,6 +13,7 @@ import { collectionsApi } from '@/api/collections';
 import { settingsApi } from '@/api/settings';
 import { useAppStore } from '@/store/useAppStore';
 import { useDeviceConnection } from '@/hooks/useDeviceConnection';
+import { useAudioLocator } from '@/hooks/useDeviceFiles';
 import { deviceService } from '@/services/deviceService';
 import {
   Transcription, Summary, SummaryTemplate, Collection, VoiceSources,
@@ -216,6 +217,7 @@ export function TranscriptionDetail() {
   // Audio playback
   const recordings = useAppStore((s) => s.recordings);
   const { downloadRecording, device } = useDeviceConnection();
+  const { locate: locateSource } = useAudioLocator();
   const audioRef = useRef<HTMLAudioElement>(null);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioSrc, setAudioSrc] = useState<string>('');
@@ -564,6 +566,21 @@ export function TranscriptionDetail() {
   // single counterpart on the device — audio, if any, lives only on the server.
   const combinedSources = transcription?.combined_sources ?? [];
   const isCombined = combinedSources.length > 0;
+  // With several HiDocks, "not on the connected device" has three meanings
+  const sourceLocation = transcription ? locateSource(transcription) : null;
+  // Uploaded or recorded in the browser: no device ever held this audio
+  const noDeviceCopyMessage =
+    sourceLocation?.kind === 'upload'
+      ? 'This audio was uploaded and was not kept on the server'
+      : sourceLocation?.kind === 'recording'
+        ? 'This audio was recorded in the browser and was not kept on the server'
+        : null;
+  const sourceNotFoundMessage = noDeviceCopyMessage ??
+    (sourceLocation?.kind === 'other_device'
+      ? `Source recording is on ${sourceLocation.device}. Connect that device to load the audio`
+      : sourceLocation?.kind === 'orphan' && sourceLocation.device
+        ? `Source recording is no longer on ${sourceLocation.device}`
+        : 'Source recording not found on device');
 
   // Seed audioDuration from server-side transcription metadata as soon as
   // transcription is loaded. This is the load-bearing fallback for audio
@@ -1531,12 +1548,14 @@ ${summary.content}
                       ? 'Audio stored on server'
                       : isCombined
                         ? 'Combined audio was not kept — re-combine with “Keep combined audio” enabled to play it back'
-                        : !device?.connected
+                        : noDeviceCopyMessage
+                          ? noDeviceCopyMessage
+                          : !device?.connected
                           ? 'Audio not available — connect device to reload'
                           : deviceLookupState === 'checking'
                             ? 'Checking device for source recording…'
                             : deviceLookupState === 'not_found'
-                              ? 'Source recording not found on device'
+                              ? sourceNotFoundMessage
                               : 'Source recording available on device — click to load'}
                   </span>
                   {transcription.audio_available ? (
@@ -1563,7 +1582,7 @@ ${summary.content}
                           : deviceLookupState === 'checking'
                             ? 'Checking device…'
                             : deviceLookupState === 'not_found'
-                              ? 'Recording not found on device'
+                              ? sourceNotFoundMessage
                               : undefined
                       }
                       className="px-4 py-1.5 text-sm font-medium bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"

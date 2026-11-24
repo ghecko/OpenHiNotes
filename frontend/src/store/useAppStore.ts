@@ -5,11 +5,17 @@ import {
   AudioRecording,
   Transcription,
   SummaryTemplate,
+  KnownDevice,
 } from '@/types';
+import { deviceKey } from '@/utils/audioLocation';
 
 interface AppState {
   device: HiDockDevice | null;
   recordings: AudioRecording[];
+  /** Key of the device `recordings` was read from; null until a list is loaded. */
+  recordingsDeviceSerial: string | null;
+  /** The user's HiDocks and the files each held when last connected (server registry). */
+  knownDevices: KnownDevice[];
   isDeviceConnected: boolean;
   selectedRecordings: string[];
   theme: 'dark' | 'light';
@@ -20,6 +26,7 @@ interface AppState {
 
   setDevice: (device: HiDockDevice | null) => void;
   setRecordings: (recordings: AudioRecording[]) => void;
+  setKnownDevices: (devices: KnownDevice[]) => void;
   addRecordings: (recordings: AudioRecording[]) => void;
   toggleRecordingSelection: (id: string) => void;
   clearSelectedRecordings: () => void;
@@ -39,6 +46,8 @@ export const useAppStore = create<AppState>()(
     (set) => ({
       device: null,
       recordings: [],
+      recordingsDeviceSerial: null,
+      knownDevices: [],
       isDeviceConnected: false,
       selectedRecordings: [],
       theme: 'light',
@@ -48,14 +57,28 @@ export const useAppStore = create<AppState>()(
       recordingCollections: {},
 
       setDevice: (device: HiDockDevice | null) => {
-        set({
-          device,
-          isDeviceConnected: device?.connected ?? false,
+        set((state) => {
+          // A different HiDock than the one the file list came from: that
+          // list says nothing about this device, drop it.
+          const otherDevice = !!device && state.recordingsDeviceSerial !== null
+            && state.recordingsDeviceSerial !== deviceKey(device);
+          return {
+            device,
+            isDeviceConnected: device?.connected ?? false,
+            ...(otherDevice ? { recordings: [], recordingsDeviceSerial: null, selectedRecordings: [] } : {}),
+          };
         });
       },
 
       setRecordings: (recordings: AudioRecording[]) => {
-        set({ recordings });
+        set((state) => ({
+          recordings,
+          recordingsDeviceSerial: state.device ? deviceKey(state.device) : state.recordingsDeviceSerial,
+        }));
+      },
+
+      setKnownDevices: (knownDevices: KnownDevice[]) => {
+        set({ knownDevices });
       },
 
       addRecordings: (recordings: AudioRecording[]) => {
@@ -124,6 +147,7 @@ export const useAppStore = create<AppState>()(
         });
       },
 
+      // Keeps the aliases of the given file names, drops the others
       cleanOrphanAliases: (currentFileNames: string[]) => {
         set((state) => {
           const fileSet = new Set(currentFileNames);

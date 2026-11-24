@@ -129,6 +129,12 @@ export interface Transcription {
   num_speakers?: number | null;
   /** Automatic speaker identification results keyed by diarization label */
   speaker_matches?: Record<string, SpeakerMatch> | null;
+  /** The HiDock the audio was pulled from: device key (serial) and model id.
+   *  null for web uploads, combined recordings and rows not matched to a device yet. */
+  source_device_serial?: string | null;
+  source_device_model?: string | null;
+  /** Where the audio came from; null on combined recordings and rows created before it was recorded. */
+  source_kind?: 'device' | 'upload' | 'recording' | null;
   created_at: string;
   updated_at: string;
   permission_level?: PermissionLevel | null;
@@ -351,6 +357,16 @@ export interface StorageInfo {
   usedSpace: number;
   freeSpace: number;
   fileCount: number;
+}
+
+/** A HiDock this user has connected before, with the files it held when last listed. */
+export interface KnownDevice {
+  serial: string;
+  model: string | null;
+  /** Name the user gave the device; null = show the model. */
+  name: string | null;
+  file_names: string[];
+  files_seen_at: string | null;
 }
 
 export interface AudioRecording {

@@ -60,7 +60,7 @@ const MODELS_BY_PRODUCT_ID: Record<number, DeviceModel> = {
   0x2040: 'hidock-p1', 0x2041: 'hidock-p1:mini', 0x0104: 'hidock-h1:lite',
 };
 
-const MODEL_LABELS: Record<DeviceModel, string> = {
+export const MODEL_LABELS: Record<DeviceModel, string> = {
   'hidock-h1': 'H1', 'hidock-h1e': 'H1E', 'hidock-p1': 'P1',
   'hidock-p1:mini': 'P1 mini', 'hidock-h1:lite': 'H1 lite', 'unknown': 'Unknown',
 };

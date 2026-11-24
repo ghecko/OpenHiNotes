@@ -5,12 +5,13 @@ import { transcriptionsApi } from '@/api/transcriptions';
 import { collectionsApi } from '@/api/collections';
 import { CollectionBadge, knownCollections } from '@/components/CollectionBadge';
 import { searchApi, SearchHit } from '@/api/search';
-import { useAppStore } from '@/store/useAppStore';
+import { useAudioLocator } from '@/hooks/useDeviceFiles';
+import { AudioLocationBadge } from '@/components/AudioLocationBadge';
 import { Transcription, RecordingType, Collection } from '@/types';
 import { format } from 'date-fns';
 import {
   Trash2, CheckCircle, AlertCircle, Loader, Search, RefreshCw, FileText,
-  Inbox, Clock, Unplug, ArrowUpDown, Pin, PinOff, X, CheckSquare, Square,
+  Inbox, Clock, ArrowUpDown, Pin, PinOff, X, CheckSquare, Square,
   Mic, MessageSquare, Download, FolderOpen, FolderPlus, FolderMinus, ChevronDown,
 } from 'lucide-react';
 
@@ -31,7 +32,6 @@ function useClickOutside(ref: React.RefObject<HTMLElement>, open: boolean, onClo
 
 export function Transcriptions() {
   const navigate = useNavigate();
-  const recordings = useAppStore((s) => s.recordings);
   const [transcriptions, setTranscriptions] = useState<Transcription[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -60,10 +60,7 @@ export function Transcriptions() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  const deviceFileNames = useMemo(
-    () => new Set(recordings.map((r) => r.fileName)),
-    [recordings],
-  );
+  const { locate: locateSource } = useAudioLocator();
 
   useEffect(() => {
     collectionsApi.list().then(setCollections).catch((err) => console.error('Failed to load collections:', err));
@@ -589,12 +586,7 @@ export function Transcriptions() {
                                 <span className="font-medium text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors duration-150 truncate">
                                   {t.title || t.original_filename}
                                 </span>
-                                {deviceFileNames.size > 0 && !deviceFileNames.has(t.original_filename) && (
-                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 flex-shrink-0" title="Source recording no longer on device">
-                                    <Unplug className="w-3 h-3" />
-                                    Orphan
-                                  </span>
-                                )}
+                                <AudioLocationBadge location={locateSource(t)} />
                               </div>
                               {t.title && (<span className="text-xs text-gray-500 dark:text-gray-400 block truncate">{t.original_filename}</span>)}
                               {snippet && (

@@ -74,6 +74,7 @@ export function Upload() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalAudioFile, setModalAudioFile] = useState<Blob | null>(null);
   const [modalFileName, setModalFileName] = useState('');
+  const [modalSourceKind, setModalSourceKind] = useState<'upload' | 'recording'>('upload');
 
   // ── Cleanup on unmount ──
   useEffect(() => {
@@ -262,6 +263,7 @@ export function Upload() {
     if (!uploadedBlob || !uploadedFile) return;
     setModalAudioFile(uploadedBlob);
     setModalFileName(uploadedFile.name);
+    setModalSourceKind('upload');
     setIsModalOpen(true);
   }, [uploadedBlob, uploadedFile]);
 
@@ -269,6 +271,7 @@ export function Upload() {
     if (!recordedBlob) return;
     setModalAudioFile(recordedBlob);
     setModalFileName(`recording-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.webm`);
+    setModalSourceKind('recording');
     setIsModalOpen(true);
   }, [recordedBlob]);
 
@@ -519,6 +522,7 @@ export function Upload() {
         onClose={() => setIsModalOpen(false)}
         audioFile={modalAudioFile}
         fileName={modalFileName}
+        sourceKind={modalSourceKind}
         onComplete={handleTranscriptionComplete}
       />
     </Layout>

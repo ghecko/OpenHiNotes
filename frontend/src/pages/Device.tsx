@@ -2,8 +2,11 @@ import { useState, useEffect } from 'react';
 import { Usb, Battery, BatteryCharging, Clock, Unplug, HardDrive, AlertCircle, CheckCircle } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { DeviceSettingsPanel } from '@/components/DeviceSettingsPanel';
+import { KnownDevicesCard } from '@/components/KnownDevicesCard';
 import { useDeviceConnection } from '@/hooks/useDeviceConnection';
 import { deviceService } from '@/services/deviceService';
+import { useAppStore } from '@/store/useAppStore';
+import { deviceKey, deviceLabel } from '@/utils/audioLocation';
 import { BatteryStatus } from '@/types';
 
 const GB = 1024 * 1024 * 1024;
@@ -21,6 +24,7 @@ export function Device() {
   const { device, connectDevice, disconnectDevice, formatDevice, syncTime, isLoading, error } = useDeviceConnection();
   const [battery, setBattery] = useState<BatteryStatus | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const knownDevices = useAppStore((s) => s.knownDevices);
 
   const connected = !!device?.connected;
   const caps = connected ? deviceService.getCapabilities() : null;
@@ -45,6 +49,9 @@ export function Device() {
             {isLoading ? 'Connecting...' : 'Connect Device'}
           </button>
           {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
+          <div className="mt-10 w-full max-w-3xl">
+            <KnownDevicesCard />
+          </div>
         </div>
       </Layout>
     );
@@ -85,7 +92,9 @@ export function Device() {
                 <Usb className="w-6 h-6 text-green-600 dark:text-green-400" />
               </div>
               <div>
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{device.name}</h2>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  {deviceLabel(deviceKey(device), device.deviceModel, knownDevices)}
+                </h2>
                 <p className="text-xs text-green-600 dark:text-green-400">Connected</p>
               </div>
             </div>
@@ -138,6 +147,8 @@ export function Device() {
             </button>
           </div>
         </div>
+
+        <KnownDevicesCard />
 
         <DeviceSettingsPanel device={device} />
 

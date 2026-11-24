@@ -347,12 +347,21 @@ export const transcriptionsApi = {
     templateId?: string,
     recordingType?: 'record' | 'whisper',
     numSpeakers?: number | null,
+    /** Where the audio comes from: the HiDock it was pulled from, or how it
+     *  got into the browser (uploaded file, microphone recording). */
+    source?: { serial?: string; model?: string | null; kind?: 'upload' | 'recording' } | null,
   ): Promise<Transcription> {
     const extraFields: Record<string, string> = {
       language,
       keep_audio: keepAudio.toString(),
       auto_summarize: autoSummarize.toString(),
     };
+    if (source?.serial) {
+      extraFields.source_device_serial = source.serial;
+      if (source.model) extraFields.source_device_model = source.model;
+    } else if (source?.kind) {
+      extraFields.source_kind = source.kind;
+    }
     if (templateId) {
       extraFields.template_id = templateId;
     }

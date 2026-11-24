@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useAppStore } from '@/store/useAppStore';
 import { useDeviceHotplug } from '@/hooks/useDeviceConnection';
+import { useDeviceFileSync } from '@/hooks/useDeviceFiles';
 
 // Auth Pages
 import { Login } from '@/pages/Login';
@@ -34,6 +35,7 @@ function App() {
   const theme = useAppStore((s) => s.theme);
 
   useDeviceHotplug();
+  useDeviceFileSync();
 
   useEffect(() => {
     initialize();

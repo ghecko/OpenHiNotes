@@ -175,6 +175,9 @@ class TranscriptionResponse(BaseModel):
     combined_sources: Optional[List[str]] = None
     num_speakers: Optional[int] = None
     speaker_matches: Optional[Dict[str, Any]] = None
+    source_kind: Optional[str] = None
+    source_device_serial: Optional[str] = None
+    source_device_model: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     permission_level: Optional[str] = None
