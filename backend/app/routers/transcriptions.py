@@ -505,13 +505,25 @@ async def queue_transcription(
     template_id: uuid.UUID = Form(None),
     recording_type: str = Form(None),
     num_speakers: Optional[int] = Form(None, ge=1, le=50),
+    source_kind: Optional[str] = Form(None, max_length=16),
+    source_device_serial: Optional[str] = Form(None, max_length=64),
+    source_device_model: Optional[str] = Form(None, max_length=32),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload audio file and add transcription to the background queue.
     Returns immediately with the transcription ID and queue position.
     Optional recording_type overrides auto-detection (for web uploads).
-    Optional num_speakers is forwarded to the diarizer as an exact count."""
+    Optional num_speakers is forwarded to the diarizer as an exact count.
+    Optional source_device_serial / source_device_model name the HiDock the
+    file was pulled from; otherwise source_kind says whether the audio was
+    uploaded ("upload") or recorded in the browser ("recording")."""
+    source_device_serial = (source_device_serial or "").strip() or None
+    source_device_model = (source_device_model or "").strip() or None
+    if source_device_serial:
+        source_kind = "device"
+    elif source_kind not in ("upload", "recording"):
+        source_kind = None
     # Enforce admin keep_audio setting
     if keep_audio:
         from app.models.app_settings import AppSetting
@@ -555,6 +567,9 @@ async def queue_transcription(
         audio_available=True,
         auto_summarize=auto_summarize,
         auto_summarize_template_id=template_id,
+        source_kind=source_kind,
+        source_device_serial=source_device_serial,
+        source_device_model=source_device_model if source_device_serial else None,
     )
     db.add(transcription)
     await db.commit()

@@ -20,6 +20,10 @@ interface TranscribeModalProps {
   initialTitle?: string;
   /** If set, automatically assigns the transcription to this collection after transcribe */
   initialCollectionId?: string;
+  /** The HiDock the audio was pulled from; leave unset for web uploads. */
+  sourceDevice?: { serial: string; model?: string | null };
+  /** Without a source device: uploaded file or recorded in the browser. */
+  sourceKind?: 'upload' | 'recording';
   onComplete: (transcription: Transcription) => void;
 }
 
@@ -43,6 +47,8 @@ export function TranscribeModal({
   fileName,
   initialTitle,
   initialCollectionId,
+  sourceDevice,
+  sourceKind,
   onComplete,
 }: TranscribeModalProps) {
   const navigate = useNavigate();
@@ -138,6 +144,7 @@ export function TranscribeModal({
         autoSummarize ? selectedTemplate : undefined,
         recordingType,
         recordingType === 'record' && Number.isFinite(parsedSpeakers) && parsedSpeakers > 0 ? parsedSpeakers : null,
+        sourceDevice ?? (sourceKind ? { kind: sourceKind } : null),
       );
 
       // Apply user-chosen title (falls back to initialTitle prop if untouched)

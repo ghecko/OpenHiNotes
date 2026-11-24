@@ -7,6 +7,7 @@ import { useLayoutStore } from '@/store/useLayoutStore';
 import { QueueIndicator } from '@/components/QueuePanel';
 import { NotificationsBell } from '@/components/NotificationsBell';
 import { OneShotTranscribeModal } from '@/components/OneShotTranscribeModal';
+import { deviceKey, deviceLabel } from '@/utils/audioLocation';
 
 interface HeaderProps {
   title?: string;
@@ -15,7 +16,7 @@ interface HeaderProps {
 export function Header({ title }: HeaderProps) {
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
-  const { theme, setTheme, device } = useAppStore();
+  const { theme, setTheme, device, knownDevices } = useAppStore();
   const { toggleMobileMenu } = useLayoutStore();
   const deviceConnected = device?.connected ?? false;
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -70,7 +71,9 @@ export function Header({ title }: HeaderProps) {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
             </span>
-            <span className="hidden sm:inline text-xs font-medium text-green-700 dark:text-green-300">Device Connected</span>
+            <span className="hidden sm:inline text-xs font-medium text-green-700 dark:text-green-300">
+              {device ? `${deviceLabel(deviceKey(device), device.deviceModel, knownDevices)} connected` : 'Device Connected'}
+            </span>
           </button>
         )}
 
