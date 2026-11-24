@@ -17,9 +17,10 @@ interface AppState {
   recordingsDeviceSerial: string | null;
   /** The user's HiDocks and the files each held when last connected (server registry). */
   knownDevices: KnownDevice[];
-  /** What the connected device is recording right now (null when idle or unknown),
-   *  with the time it was read so the elapsed time can tick between polls. */
-  recording: (RecordingState & { readAt: number }) | null;
+  /** What the connected device is recording right now (null when idle or unknown).
+   *  startedAt (ms, this computer's clock) is when that recording began, null when
+   *  the firmware does not report elapsed time. */
+  recording: (RecordingState & { startedAt: number | null }) | null;
   isDeviceConnected: boolean;
   selectedRecordings: string[];
   theme: 'dark' | 'light';
@@ -90,7 +91,16 @@ export const useAppStore = create<AppState>()(
       setRecordingState: (next: RecordingState | null) => {
         set((state) => {
           if (!next) return state.recording ? { recording: null } : state;
-          return { recording: { ...next, readAt: Date.now() } };
+          const prev = state.recording && state.recording.fileName === next.fileName ? state.recording : null;
+          // The device reports whole seconds, so now - seconds is late by up to
+          // a second: the earliest estimate over the polls is the closest one.
+          // Keeping it fixed is what lets the display count second by second.
+          const estimate = next.seconds !== null ? Date.now() - next.seconds * 1000 : null;
+          const startedAt = estimate !== null && prev?.startedAt != null
+            ? Math.min(prev.startedAt, estimate)
+            : estimate ?? prev?.startedAt ?? null;
+          if (prev && prev.startedAt === startedAt && prev.type === next.type) return state;
+          return { recording: { ...next, startedAt } };
         });
       },
 

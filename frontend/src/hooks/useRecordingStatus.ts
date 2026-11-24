@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import { deviceService } from '@/services/deviceService';
 
@@ -8,6 +8,10 @@ const RECORDING_POLL_MS = 2000;
 const FIRST_POLL_MS = 1500;
 /** Unanswered polls in a row after which the firmware is taken not to report its state. */
 const MAX_MISSES = 2;
+/** After a recording ends: when to re-read the file list, and when to try once
+ *  more if the new file is not in it yet (the device needs a moment to close it). */
+const LIST_AFTER_STOP_MS = 1000;
+const LIST_RETRY_MS = 2500;
 
 /**
  * Ask the connected HiDock whether it is recording, every few seconds, and
@@ -20,6 +24,36 @@ export function useRecordingStatusPoll() {
   const connected = useAppStore((s) => s.device?.connected ?? false);
   const deviceId = useAppStore((s) => s.device?.id ?? null);
   const setRecordingState = useAppStore((s) => s.setRecordingState);
+  const recordingFile = useAppStore((s) => s.recording?.fileName ?? null);
+  const lastRecordingFile = useRef<string | null>(null);
+
+  // A recording just ended (Stop in the app or the button on the device):
+  // re-read the file list so the new recording shows up without a reload.
+  useEffect(() => {
+    const ended = lastRecordingFile.current;
+    lastRecordingFile.current = recordingFile;
+    if (!ended || recordingFile || !connected) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = (retry: boolean) => {
+      if (cancelled || !deviceService.isConnected()) return;
+      deviceService.getFileList()
+        .then((recs) => {
+          if (cancelled || !deviceService.isConnected()) return;
+          useAppStore.getState().setRecordings(recs);
+          if (retry && !recs.some((r) => r.fileName === ended)) {
+            timer = setTimeout(() => refresh(false), LIST_RETRY_MS);
+          }
+        })
+        .catch((err) => console.warn('[OpenHiNotes] Could not refresh recordings after stop:', err));
+    };
+    timer = setTimeout(() => refresh(true), LIST_AFTER_STOP_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [recordingFile, connected]);
 
   useEffect(() => {
     setRecordingState(null);
