@@ -40,6 +40,7 @@ const COMMANDS = {
   GET_FILE_BLOCK: 13,
   GET_CARD_INFO: 16,
   FORMAT_CARD: 17,
+  GET_RECORDING_FILE: 18,
   SET_RECORDING_QUALITY: 30,
   GET_RECORDING_QUALITY: 31,
   BLUETOOTH_CMD: 4098,
@@ -499,10 +500,19 @@ class DeviceService {
    */
   private opQueue: Promise<unknown> = Promise.resolve();
 
+  /** Operations running or queued; the recording poll skips its turn when > 0. */
+  private pendingOps = 0;
+
   private exclusive<T>(op: () => Promise<T>): Promise<T> {
-    const run = this.opQueue.then(op, op);
+    this.pendingOps++;
+    const run = this.opQueue.then(op, op).finally(() => { this.pendingOps--; });
     this.opQueue = run.catch(() => undefined);
     return run;
+  }
+
+  /** True while a command, a listing or a transfer is running or queued. */
+  isBusy(): boolean {
+    return this.pendingOps > 0;
   }
 
   // ---- Public API ----
@@ -939,6 +949,24 @@ class DeviceService {
     const body = new Uint8Array(index + 1);
     body[index] = on ? 1 : 2;
     return this.exclusive(() => this.command(COMMANDS.SET_SETTINGS, body));
+  }
+
+  /**
+   * The file the device is recording right now (command 18): its name, null
+   * when it is idle, undefined when the firmware does not answer. A passive
+   * read; the operation queue keeps it from interleaving with a transfer or
+   * a listing, and a poller should skip its turn while isBusy().
+   */
+  getRecordingFile(): Promise<string | null | undefined> {
+    return this.exclusive(async () => {
+      const body = await this.request(COMMANDS.GET_RECORDING_FILE);
+      if (!body) return undefined;
+      let name = '';
+      for (const byte of body) {
+        if (byte !== 0) name += String.fromCharCode(byte);
+      }
+      return name.trim() || null;
+    });
   }
 
   getRecordingQuality(): Promise<RecordingQuality | null> {
